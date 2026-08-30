@@ -132,6 +132,46 @@ class TestAssembly:
         assert len(leftover) == 1
         assert leftover[0].arguments is None
 
+    def test_fragments_after_firing_do_not_corrupt_the_payload(self) -> None:
+        """Regression, found running against Ollama.
+
+        Fragments kept arriving for an index after its JSON had balanced. The
+        buffer grew past its valid JSON, and on the next loop iteration litellm's
+        Ollama transform called json.loads on it and raised "Extra data: line 1
+        column 196", killing a turn that had already applied an edit.
+        """
+        assembler = ToolCallAssembler()
+        chunks = list(call_tool("rewrite_text", {"nid": "blt_aaaaa", "value": "New."}))
+        # The provider repeats the field after the object closed.
+        chunks.append(ToolCallDelta(index=0, arguments='{"nid": "blt_aaaaa"}'))
+
+        calls = [
+            event for event in drain(assembler, chunks) if isinstance(event, AssembledCall)
+        ]
+        assert len(calls) == 1
+
+        import json as _json
+
+        arguments = assembler.assistant_message()["tool_calls"][0]["function"]["arguments"]
+        # The whole point: whatever we hand back must parse.
+        assert _json.loads(arguments) == {"nid": "blt_aaaaa", "value": "New."}
+
+    def test_assistant_message_arguments_always_parse(self) -> None:
+        """Even a truncated call must not produce an unparseable field."""
+        import json as _json
+
+        assembler = ToolCallAssembler()
+        drain(
+            assembler,
+            [
+                ToolCallDelta(index=0, id="c1", name="rewrite_text", arguments=""),
+                ToolCallDelta(index=0, arguments='{"nid": "blt_a", "val'),
+            ],
+        )
+        assembler.unfired()
+        arguments = assembler.assistant_message()["tool_calls"][0]["function"]["arguments"]
+        assert _json.loads(arguments) == {}
+
     def test_assistant_message_round_trips_calls(self) -> None:
         assembler = ToolCallAssembler()
         drain(assembler, call_tool("rewrite_text", {"nid": "blt_a", "value": "x"}))

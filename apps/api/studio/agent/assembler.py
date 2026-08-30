@@ -36,6 +36,14 @@ class PendingCall:
     name: str = ""
     buffer: str = ""
     fired: bool = False
+    # The buffer as it stood when the call fired.
+    #
+    # Fragments can keep arriving for an index after its JSON has balanced —
+    # a provider repeating the field, or a chat template appending a trailer.
+    # Left unfrozen, the buffer grows past its valid JSON, and the next loop
+    # iteration hands litellm arguments it cannot parse ("Extra data: line 1
+    # column 196"), which kills the turn. Observed against Ollama.
+    payload: str = ""
 
     # Depth bookkeeping, updated incrementally so each fragment costs O(len)
     # rather than rescanning the whole buffer.
@@ -148,17 +156,20 @@ class ToolCallAssembler:
             pending.id = chunk.id
         if chunk.name:
             pending.name = chunk.name
-        if chunk.arguments:
+        # Once a call has fired its payload is frozen; anything further for
+        # that index is a provider artefact and must not corrupt it.
+        if chunk.arguments and not pending.fired:
             pending.feed(chunk.arguments)
 
         # Fire as soon as the arguments close. Waiting for the stream to end
         # would batch every edit in a turn into one visible jump.
         if not pending.fired and pending.name and pending.balanced:
             pending.fired = True
+            pending.payload = pending.buffer
             yield AssembledCall(
                 call_id=pending.id or f"call_{pending.index}",
                 name=pending.name,
-                raw_arguments=pending.buffer,
+                raw_arguments=pending.payload,
                 arguments=pending.parse(),
             )
 
@@ -174,11 +185,12 @@ class ToolCallAssembler:
             if pending.fired or not pending.name:
                 continue
             pending.fired = True
+            pending.payload = pending.buffer
             out.append(
                 AssembledCall(
                     call_id=pending.id or f"call_{pending.index}",
                     name=pending.name,
-                    raw_arguments=pending.buffer,
+                    raw_arguments=pending.payload,
                     arguments=pending.parse(),
                 )
             )
@@ -190,6 +202,12 @@ class ToolCallAssembler:
         Built locally rather than from a provider helper: the loop must be able
         to continue a conversation identically whatever backend produced it,
         including the scripted one used in tests.
+
+        Arguments are re-serialised from the parsed object whenever parsing
+        succeeded. Providers parse this field on the way back out — litellm's
+        Ollama transform calls json.loads on it — so echoing a raw buffer that
+        is merely *nearly* valid turns a recoverable model quirk into a dead
+        turn.
         """
         message: dict[str, Any] = {"role": "assistant", "content": self.text or ""}
         if self.calls:
@@ -199,10 +217,24 @@ class ToolCallAssembler:
                     "type": "function",
                     "function": {
                         "name": pending.name,
-                        "arguments": pending.buffer or "{}",
+                        "arguments": _safe_arguments(pending),
                     },
                 }
                 for pending in sorted(self.calls.values(), key=lambda call: call.index)
                 if pending.name
             ]
         return message
+
+
+def _safe_arguments(pending: PendingCall) -> str:
+    """A guaranteed-parseable arguments string for one call."""
+    parsed = pending.parse()
+    if parsed is not None:
+        return json.dumps(parsed)
+    # Unparseable even after freezing: send an empty object rather than
+    # something that will raise inside the provider's request transform.
+    logger.warning(
+        "Tool call %s had unparseable arguments; sending an empty object",
+        pending.name or pending.index,
+    )
+    return "{}"
