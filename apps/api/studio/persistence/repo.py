@@ -222,6 +222,47 @@ class DocumentRepo:
             rejected,
         )
 
+    async def replace(
+        self, document_id: str, doc: StudioDoc, *, reason: str = "replace"
+    ) -> DocumentState:
+        """Overwrite the document wholesale, bumping the version.
+
+        Used only by the drift guards, which correct a document *after* ops
+        have already been applied and so cannot express their correction as
+        ops against the version they started from. Deliberately not exposed
+        through the API: every other write goes through ``apply`` so that it
+        passes the gates and lands in the ops log.
+        """
+        async with self._session() as session:
+            row = await session.get(Document, document_id)
+            if row is None:
+                raise KeyError(document_id)
+
+            digest = content_hash(doc)
+            row.doc = doc.model_dump(mode="json")
+            row.version += 1
+            row.content_hash = digest
+            session.add(
+                DocumentOp(
+                    document_id=document_id,
+                    version=row.version,
+                    seq=0,
+                    op={"op": "replace", "reason": reason},
+                    inverse=None,
+                    actor="system",
+                )
+            )
+            await session.commit()
+
+            return DocumentState(
+                id=document_id,
+                doc=doc,
+                version=row.version,
+                content_hash=digest,
+                title=row.title,
+                settings=row.settings,
+            )
+
     async def checkpoint(
         self, document_id: str, *, label: str = "", turn_id: str | None = None
     ) -> str:
