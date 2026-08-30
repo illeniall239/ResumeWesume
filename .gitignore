@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.hypothesis/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.secret_key
+
+# Data
+*.db
+*.db-shm
+*.db-wal
+apps/api/data/
+
+# Generated contracts are committed on purpose (they are the cross-language
+# contract), but their build artifacts are not.
+packages/contracts/.cache/
+
+# OS
+.DS_Store
+Thumbs.db
