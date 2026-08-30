@@ -288,3 +288,205 @@ body {
     break-inside: avoid;
   }
 }
+
+/* --- assistant pane ------------------------------------------------------ */
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.chat__scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.toolbar--doc {
+  width: 210mm;
+  max-width: 100%;
+}
+
+.empty {
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.suggestions {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chip {
+  border: 1px solid var(--rule);
+  background: var(--paper);
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+
+.chip:hover {
+  border-color: var(--ink);
+}
+
+.msg {
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.msg--user .msg__body {
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  padding: 8px 10px;
+  white-space: pre-wrap;
+}
+
+.msg--assistant .msg__body {
+  white-space: pre-wrap;
+}
+
+.msg__body--muted,
+.msg__status {
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+.thinking {
+  font-size: 12px;
+  color: var(--ink-faint);
+  margin-bottom: 6px;
+}
+
+.thinking pre {
+  white-space: pre-wrap;
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+
+/* Tool calls, rendered as they happen. The left rule reads as a timeline so a
+   burst of edits looks like a sequence rather than a list. */
+.activities {
+  margin-top: 8px;
+  border-left: 2px solid var(--rule);
+  padding-left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.activity {
+  display: flex;
+  gap: 8px;
+  font-size: 12.5px;
+  align-items: baseline;
+}
+
+.activity__glyph {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  width: 1em;
+  flex-shrink: 0;
+}
+
+.activity--applied .activity__glyph {
+  color: #15803d;
+}
+
+.activity--rejected .activity__glyph {
+  color: #b45309;
+}
+
+.activity--running .activity__glyph {
+  color: var(--ink-faint);
+}
+
+.activity__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.activity__detail {
+  color: var(--ink-faint);
+  font-size: 11.5px;
+}
+
+.activity__code {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.confirm {
+  border: 1px solid var(--ink);
+  background: #fff7ed;
+  padding: 12px;
+  font-size: 13px;
+}
+
+.confirm pre {
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: var(--paper);
+  padding: 8px;
+  margin: 8px 0;
+  border: 1px solid var(--rule);
+}
+
+.confirm__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.composer {
+  border-top: 1px solid var(--ink);
+  padding: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  background: var(--paper);
+}
+
+.composer textarea {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px;
+  border: 1px solid var(--ink);
+  border-radius: 0;
+  resize: vertical;
+}
+
+.composer textarea:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.link {
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+}
+
+.notice--error {
+  background: #fef2f2;
+  border-color: #dc2626;
+}
+
+.badge--live {
+  color: var(--accent);
+  font-weight: 700;
+}

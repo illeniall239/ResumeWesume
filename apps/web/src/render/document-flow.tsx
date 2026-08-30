@@ -33,6 +33,8 @@ export interface DocumentFlowProps {
   /** Node the agent is currently writing to. */
   locked?: ReadonlySet<string>;
   onEditText?: (nid: string, value: string) => void;
+  /** Focus tells the server the user holds this node, so the agent is refused there. */
+  onFocusNode?: (nid: string | null) => void;
   editable?: boolean;
 }
 
@@ -53,12 +55,14 @@ function Bullet({
   locked,
   editable,
   onEditText,
+  onFocusNode,
 }: {
   node: TextNode;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
+  onFocusNode?: (nid: string | null) => void;
 }) {
   const isLocked = locked?.has(node.nid) ?? false;
   return (
@@ -69,7 +73,9 @@ function Bullet({
       // markup into what is fundamentally a data field.
       contentEditable={editable && !isLocked ? 'plaintext-only' : undefined}
       suppressContentEditableWarning
+      onFocus={() => onFocusNode?.(node.nid)}
       onBlur={(event) => {
+        onFocusNode?.(null);
         const next = event.currentTarget.textContent ?? '';
         if (next !== node.text) onEditText?.(node.nid, next);
       }}
@@ -85,6 +91,7 @@ function Bullets(props: {
   locked?: ReadonlySet<string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
+  onFocusNode?: (nid: string | null) => void;
 }) {
   if (props.bullets.length === 0) return null;
   return (

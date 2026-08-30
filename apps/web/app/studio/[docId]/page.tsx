@@ -2,17 +2,18 @@
 
 import { use, useEffect } from 'react';
 
+import ChatPanel from '@/chat/chat-panel';
 import DocumentFlow from '@/render/document-flow';
 import { pdfUrl } from '@/lib/api';
+import { useChat } from '@/store/chat';
 import { useStudio } from '@/store/studio';
 
 /**
- * The studio: chat on the left, live document on the right.
+ * The studio: assistant on the left, live document on the right.
  *
- * In P0 the left pane is a placeholder. The document pane is real — it renders
- * from the store, supports direct inline editing, and every edit round-trips
- * through the same op pipeline the agent will use, so wiring the agent in later
- * needs no changes on this side.
+ * Both panes read from stores rather than from each other. A token of assistant
+ * text must not re-render the resume, and a patch landing must not re-render the
+ * transcript, so the two are kept in separate stores with per-field selectors.
  */
 export default function StudioPage({ params }: { params: Promise<{ docId: string }> }) {
   const { docId } = use(params);
@@ -25,53 +26,37 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
   const error = useStudio((state) => state.error);
   const changed = useStudio((state) => state.changed);
   const locked = useStudio((state) => state.locked);
-  const rejected = useStudio((state) => state.rejected);
   const load = useStudio((state) => state.load);
   const edit = useStudio((state) => state.edit);
+  const setFocus = useStudio((state) => state.setFocus);
+
+  const streaming = useChat((state) => state.streaming);
+  const resetChat = useChat((state) => state.reset);
 
   useEffect(() => {
     void load(docId);
-  }, [docId, load]);
+    return () => resetChat();
+  }, [docId, load, resetChat]);
 
   return (
     <main className="studio">
       <aside className="pane">
-        <div className="toolbar">
-          <strong>Assistant</strong>
-          <span className="toolbar__spacer" />
-          <span className="badge">P1</span>
-        </div>
-        <div className="notice">
-          The assistant arrives in P1. The document beside it is already live:
-          click any bullet and type, and the edit goes through the same
-          validated op pipeline the agent will use.
-        </div>
-        {rejected.length > 0 && (
-          <div className="notice">
-            <strong>Rejected</strong>
-            <ul>
-              {rejected.map((entry, index) => (
-                <li key={index}>
-                  <code>{entry.code}</code> — {entry.message}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
+        <ChatPanel documentId={docId} />
       </aside>
 
       <section className="pane pane--doc">
-        <div className="toolbar" style={{ width: '210mm', maxWidth: '100%' }}>
+        <div className="toolbar toolbar--doc">
           <strong>{title || 'Resume'}</strong>
           <span className="badge">v{version}</span>
           {saving && <span className="badge">saving…</span>}
+          {streaming && <span className="badge badge--live">assistant editing</span>}
           <span className="toolbar__spacer" />
           <a className="button" href={pdfUrl(docId)} target="_blank" rel="noreferrer">
             Export PDF
           </a>
         </div>
 
-        {error && <div className="notice">{error}</div>}
+        {error && <div className="notice notice--error">{error}</div>}
         {loading && <div className="notice">Loading…</div>}
 
         {doc && (
@@ -81,6 +66,7 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
               changed={changed}
               locked={locked}
               editable
+              onFocusNode={setFocus}
               onEditText={(nid, value) => {
                 void edit([{ op: 'set_text', nid, value }]);
               }}
