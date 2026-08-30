@@ -10,14 +10,30 @@ watch them happen one at a time.
 
 ## Status
 
-**P0, in progress.** The document engine is built and tested. No UI yet.
+**P0 complete.** You can create a resume, edit it live in the browser, and
+export a PDF. No AI yet, by design: the assistant arrives in P1 on top of an
+engine that is already proven.
 
 | Piece | State |
 |---|---|
 | Node identity, document schema | done |
 | The 8 primitive ops + `apply_ops` gates | done |
 | Legacy import/export | done |
-| Persistence, agent loop, streaming, web app | not started |
+| Persistence with version/ETag concurrency | done |
+| API, PDF export, live document, inline editing | done |
+| Generated TypeScript contract | done |
+| Agent loop, tools, streaming | P1-P3 |
+
+## Running it
+
+```bash
+make install
+make api     # :8000
+make web     # :3000  (separate terminal)
+```
+
+Open <http://localhost:3000>, click **New from sample**, edit a bullet, and hit
+**Export PDF**.
 
 ## Why the engine came first
 
