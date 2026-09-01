@@ -90,7 +90,7 @@ export default function Home() {
 
   return (
     <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px 24px' }}>
-      <h1 style={{ marginBottom: 4 }}>ResumeResume</h1>
+      <h1 style={{ marginBottom: 4 }}>ResumeWesume</h1>
       <p style={{ color: '#374151', marginTop: 0 }}>
         A chat sidebar beside a live document. The assistant lands in P1; the
         document engine underneath it is already working.

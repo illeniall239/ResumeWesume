@@ -24,7 +24,7 @@ import { cancelImport, startImport, type StreamEvent } from '@/stream/ndjson';
 
 /** Survives a reload of the review page, which would otherwise discard a
  *  parse that took minutes of local model time to produce. */
-const STASH_KEY = 'resumeresume.import';
+const STASH_KEY = 'resumewesume.import';
 
 export type ImportStatus =
   | 'idle'

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'ResumeResume',
+  title: 'ResumeWesume',
   description: 'An agentic resume editor: chat beside a live document.',
 };
 

@@ -1,4 +1,4 @@
-# ResumeResume
+# ResumeWesume
 
 An agentic resume editor: a chat sidebar beside a live document, where the AI
 calls typed tools that mutate a structured document and the page re-renders as
@@ -157,4 +157,3 @@ prompt is advisory and a model under pressure will ignore it, so grounding is
 checked server-side against something the model cannot fabricate. Job
 description text is never treated as the user's message, so an instruction
 hidden inside a posting cannot authorise anything.
-# ResumeWesume
