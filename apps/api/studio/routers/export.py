@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Request, Response
 
 from studio.config import settings
-from studio.export.pdf import describe_failure, render_pdf
+from studio.export.pdf import describe_failure, failure_detail, render_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,9 @@ async def export_pdf(
         pdf = await render_pdf(url, page_size=page_size)
     except Exception as error:
         # Detail server-side, generic-but-actionable to the client.
-        logger.error("PDF export failed for %s: %s", document_id, error)
+        logger.error(
+            "PDF export failed for %s: %s", document_id, failure_detail(error)
+        )
         raise HTTPException(
             status_code=503, detail=describe_failure(error, url)
         ) from None

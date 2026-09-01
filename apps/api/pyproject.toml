@@ -14,6 +14,7 @@ dependencies = [
     "litellm==1.86.2",
     "markitdown[docx]==0.1.4",
     "pdfminer.six==20260107",
+    "pillow==12.3.0",
     "playwright==1.58.0",
     "python-dotenv==1.2.2",
 ]
