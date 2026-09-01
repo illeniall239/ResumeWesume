@@ -107,6 +107,38 @@ class SetSection(_Op):
     order: int | None = None
 
 
+class SetGeometry(_Op):
+    """Move or resize a placed element.
+
+    Every field is optional so a gesture compiles to exactly what it changed --
+    a drag is ``{x, y}``, a resize is ``{w, h}`` -- which is what lets a stream
+    of them coalesce into one op per gesture instead of one per pointer event.
+
+    Deliberately its own op rather than widening ``SetField``. ``tier_of``
+    derives a tier from the *attribute name*, so ``x`` and ``fill`` would both
+    fall through its default and every drag would demand consent.
+    """
+
+    op: Literal["set_geometry"] = "set_geometry"
+    nid: NodeId
+    x: float | None = None
+    y: float | None = None
+    w: float | None = None
+    h: float | None = None
+    rotation: float | None = None
+    # Compared with a small tolerance, not for equality: geometry arrives as
+    # floats from a browser and exact comparison would reject honest values.
+    expect: dict[str, float] | None = None
+
+
+class SetElementStyle(_Op):
+    """Change how a placed element looks, never what it says."""
+
+    op: Literal["set_element_style"] = "set_element_style"
+    nid: NodeId
+    patch: dict[str, Any] = Field(default_factory=dict)
+
+
 DocOp = Annotated[
     Union[
         SetText,
@@ -117,6 +149,8 @@ DocOp = Annotated[
         Reorder,
         SetStyle,
         SetSection,
+        SetGeometry,
+        SetElementStyle,
     ],
     Field(discriminator="op"),
 ]

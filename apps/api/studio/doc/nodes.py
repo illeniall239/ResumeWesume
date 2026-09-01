@@ -40,6 +40,16 @@ class NodeKind(StrEnum):
     CUSTOM_ITEM = "cit"
     SUMMARY = "sum"
 
+    # Layout. Content says what the resume says; these say where it sits. They
+    # are separate kinds rather than one "element" kind so that a check like
+    # "you cannot set a fill colour on a frame" is answerable from the prefix
+    # alone, which is the argument the whole id scheme rests on.
+    PAGE = "pag"
+    FRAME = "frm"
+    IMAGE = "img"
+    SHAPE = "shp"
+    BLOCK = "txb"
+
 
 NodeId = str
 

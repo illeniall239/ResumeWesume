@@ -97,8 +97,86 @@ export interface SectionMeta {
   order: number;
 }
 
+// --- Layout ---------------------------------------------------------------
+// Where content sits, kept in its own subtree so the ATS export, the importer
+// and the agent's tools can all keep addressing content without knowing that
+// pages exist. A frame does not hold content, it points at it.
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ElementStyle {
+  align: 'left' | 'center' | 'right';
+  font_scale: number;
+  color: string | null;
+  background: string | null;
+  padding: number;
+  radius: number;
+  opacity: number;
+}
+
+export interface FrameElement {
+  nid: NodeId;
+  /** A section key or a content nid. Renders that subtree. */
+  ref: string;
+  rect: Rect;
+  rotation: number;
+  autogrow: 'none' | 'height';
+  visible: boolean;
+  locked: boolean;
+  /** Placed by hand: the reflow pass leaves this frame where it is. */
+  pinned: boolean;
+  style: ElementStyle;
+}
+
+export interface ImageElement {
+  nid: NodeId;
+  asset: string;
+  rect: Rect;
+  rotation: number;
+  fit: 'cover' | 'contain';
+  crop: Rect | null;
+  alt: string;
+  visible: boolean;
+  locked: boolean;
+  style: ElementStyle;
+}
+
+export interface ShapeElement {
+  nid: NodeId;
+  shape: 'rect' | 'ellipse' | 'line';
+  rect: Rect;
+  rotation: number;
+  fill: string | null;
+  stroke: string | null;
+  stroke_width: number;
+  visible: boolean;
+  locked: boolean;
+}
+
+export type AnyElement = FrameElement | ImageElement | ShapeElement;
+
+export interface PageNode {
+  nid: NodeId;
+  size: 'A4' | 'Letter';
+  orientation: 'portrait' | 'landscape';
+  background: string | null;
+  /** Z-order IS list order: the last element paints on top. */
+  elements: AnyElement[];
+}
+
+export interface TextBlockNode {
+  nid: NodeId;
+  role: 'heading' | 'body' | 'caption' | 'contact' | 'none';
+  lines: TextNode[];
+}
+
 export interface StudioDoc {
-  schema_version: 1;
+  schema_version: 1 | 2;
   personal: PersonalInfo;
   summary: TextNode | null;
   experience: ExperienceNode[];
@@ -107,11 +185,16 @@ export interface StudioDoc {
   skills: SkillGroup[];
   custom: CustomSectionNode[];
   sections: SectionMeta[];
+  blocks: TextBlockNode[];
+  /** Empty means "render as one flowing column". */
+  pages: PageNode[];
+  reading_order: NodeId[] | null;
 }
 
 // --- Operations -----------------------------------------------------------
-// The eight primitives. Every agent tool call and every direct user edit
+// The ten primitives. Every agent tool call and every direct user edit
 // compiles to one of these, so the client mirror only has to implement these.
+// Eight touch content; two touch layout.
 
 export interface SetTextOp {
   op: 'set_text';
@@ -174,6 +257,25 @@ export interface SetSectionOp {
   reason?: string;
 }
 
+export interface SetGeometryOp {
+  op: 'set_geometry';
+  nid: NodeId;
+  x?: number | null;
+  y?: number | null;
+  w?: number | null;
+  h?: number | null;
+  rotation?: number | null;
+  expect?: Record<string, number> | null;
+  reason?: string;
+}
+
+export interface SetElementStyleOp {
+  op: 'set_element_style';
+  nid: NodeId;
+  patch: Record<string, unknown>;
+  reason?: string;
+}
+
 export type DocOp =
   | SetTextOp
   | SetFieldOp
@@ -182,7 +284,9 @@ export type DocOp =
   | MoveNodeOp
   | ReorderOp
   | SetStyleOp
-  | SetSectionOp;
+  | SetSectionOp
+  | SetGeometryOp
+  | SetElementStyleOp;
 
 export interface AppliedOp {
   op: DocOp;

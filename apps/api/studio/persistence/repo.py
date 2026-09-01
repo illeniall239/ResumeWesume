@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from studio.doc.apply import OpContext, apply_ops, invert
 from studio.doc.hashing import content_hash, etag
+from studio.doc.migrate import load_doc
+from studio.doc.history import VersionGroup, version_to_redo, version_to_undo
 from studio.doc.ops import AppliedOp, DocOp, RejectedOp
 from studio.doc.schema import StudioDoc
-from studio.persistence.models import Base, Checkpoint, Document, DocumentOp
+from studio.persistence.models import Asset, Base, Checkpoint, Document, DocumentOp
 
 
 class VersionConflict(Exception):
@@ -55,6 +57,48 @@ class DocumentRepo:
     async def dispose(self) -> None:
         await self._engine.dispose()
 
+    # --- assets -----------------------------------------------------------
+    #
+    # Content-addressed, so `store` is idempotent: the same bytes uploaded
+    # twice return the same row rather than making a second copy. That falls
+    # out of using the hash as the primary key and is worth having -- the same
+    # headshot on three documents is one row.
+
+    async def store_asset(
+        self,
+        *,
+        sha256: str,
+        document_id: str | None,
+        mime: str,
+        data: bytes,
+        width: int,
+        height: int,
+        filename: str = "",
+    ) -> Asset:
+        async with self._session() as session:
+            existing = await session.get(Asset, sha256)
+            if existing is not None:
+                return existing
+
+            asset = Asset(
+                id=sha256,
+                document_id=document_id,
+                mime=mime,
+                data=data,
+                width=width,
+                height=height,
+                byte_size=len(data),
+                filename=filename[:255],
+            )
+            session.add(asset)
+            await session.commit()
+            await session.refresh(asset)
+            return asset
+
+    async def get_asset(self, asset_id: str) -> Asset | None:
+        async with self._session() as session:
+            return await session.get(Asset, asset_id)
+
     async def create(
         self,
         doc: StudioDoc,
@@ -87,7 +131,7 @@ class DocumentRepo:
                 return None
             return DocumentState(
                 id=row.id,
-                doc=StudioDoc.model_validate(row.doc),
+                doc=load_doc(row.doc),
                 version=row.version,
                 content_hash=row.content_hash,
                 title=row.title,
@@ -102,7 +146,7 @@ class DocumentRepo:
             return [
                 DocumentState(
                     id=row.id,
-                    doc=StudioDoc.model_validate(row.doc),
+                    doc=load_doc(row.doc),
                     version=row.version,
                     content_hash=row.content_hash,
                     title=row.title,
@@ -146,7 +190,7 @@ class DocumentRepo:
                     await self._ops_since(session, document_id, expected_version),
                 )
 
-            current = StudioDoc.model_validate(row.doc)
+            current = load_doc(row.doc)
             updated, applied, rejected = apply_ops(current, ops, ctx)
 
             if not applied:
@@ -221,6 +265,78 @@ class DocumentRepo:
             applied,
             rejected,
         )
+
+    async def reverse(
+        self, document_id: str, *, direction: Literal["undo", "redo"]
+    ) -> tuple[DocumentState, int] | None:
+        """Undo or redo one committed batch.
+
+        Returns ``None`` when there is nothing to reverse, which the router
+        turns into a 409 rather than an error — "nothing to undo" is a normal
+        state, not a failure.
+
+        Reversal goes through ``apply_ops`` like every other write. It is not a
+        snapshot restore: the inverses are ops, so they pass the same gates, log
+        their own inverses, and become redoable in turn. That is what lets redo
+        be nothing more than "undo the undo".
+        """
+        async with self._session() as session:
+            row = await session.get(Document, document_id)
+            if row is None:
+                raise KeyError(document_id)
+
+            groups = await self._version_groups(session, document_id)
+            chooser = version_to_undo if direction == "undo" else version_to_redo
+            target = chooser(groups)
+            if target is None:
+                return None
+
+            rows = (
+                await session.execute(
+                    select(DocumentOp)
+                    .where(
+                        DocumentOp.document_id == document_id,
+                        DocumentOp.version == target,
+                    )
+                    .order_by(DocumentOp.seq.desc())
+                )
+            ).scalars().all()
+
+            # Reverse seq order: the last op applied is the first undone, or a
+            # remove-then-insert pair would restore into a list that has not
+            # been put back yet.
+            ops: list[DocOp] = []
+            for entry in rows:
+                if entry.inverse is None:
+                    return None  # not fully invertible; refuse rather than half-undo
+                rebuilt = _rebuild_op(entry.inverse)
+                if rebuilt is None:
+                    return None
+                ops.append(rebuilt)
+
+        if not ops:
+            return None
+
+        state, applied, rejected = await self.apply(
+            document_id,
+            ops,
+            ctx=OpContext(granted_tiers={"A", "B", "C"}, actor=direction),
+        )
+        if rejected or not applied:
+            return None
+        return state, target
+
+    async def _version_groups(
+        self, session: AsyncSession, document_id: str
+    ) -> list[VersionGroup]:
+        rows = (
+            await session.execute(
+                select(DocumentOp.version, DocumentOp.actor)
+                .where(DocumentOp.document_id == document_id)
+                .distinct()
+            )
+        ).all()
+        return [VersionGroup(version, actor) for version, actor in rows]
 
     async def replace(
         self, document_id: str, doc: StudioDoc, *, reason: str = "replace"
@@ -297,7 +413,7 @@ class DocumentRepo:
             if snapshot is None or row is None or snapshot.document_id != document_id:
                 raise KeyError(checkpoint_id)
 
-            restored = StudioDoc.model_validate(snapshot.doc)
+            restored = load_doc(snapshot.doc)
             digest = content_hash(restored)
             row.doc = snapshot.doc
             row.version += 1

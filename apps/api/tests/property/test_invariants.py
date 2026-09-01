@@ -17,6 +17,7 @@ from studio.doc.apply import OpContext, apply_ops
 from studio.doc.nodes import NodeKind, kind_of, mint
 from studio.doc.ops import (
     InsertNode,
+    MoveNode,
     RemoveNode,
     Reorder,
     SetField,
@@ -115,6 +116,18 @@ ops = st.one_of(
     ),
     st.builds(Reorder, parent=st.sampled_from([EXP, GROUP, "ghost"]), order=st.lists(nids, max_size=5)),
     st.builds(SetSection, key=st.sampled_from(["summary", "experience", "ghost"])),
+    # MoveNode was missing from this strategy, and had no example-based test
+    # either. That gap is exactly why `_do_move` could coerce a bullet into an
+    # ExperienceNode for months without anything noticing: the one suite that
+    # would have generated the case could not see the op.
+    st.builds(
+        MoveNode,
+        nid=nids,
+        parent=st.sampled_from(
+            ["experience", "education", "skills", EXP, GROUP, "nowhere", ""]
+        ),
+        index=st.integers(min_value=-3, max_value=5),
+    ),
 )
 
 op_lists = st.lists(ops, max_size=12)
@@ -182,6 +195,42 @@ def test_every_id_remains_well_formed(op_list) -> None:
         fields = getattr(type(current), "model_fields", None)
         if fields:
             stack.extend(getattr(current, name) for name in fields)
+
+
+@given(op_lists)
+@SETTINGS
+def test_every_node_lives_in_a_list_of_its_own_kind(op_list) -> None:
+    """A node's id prefix always agrees with the list it sits in.
+
+    This is the invariant `_do_move` violated. Checking that an id *parses* is
+    not enough -- ``blt_aaaaa`` is a perfectly well-formed id, and the bug put
+    it in the experience list, where the batch revalidation then coerced the
+    bullet into an ExperienceNode and dropped everything it could not map.
+
+    Stated as a property because that is the only form that survives: the
+    engine has five typed top-level lists and five nested ones, and the next op
+    to touch them should fail here rather than in someone's resume.
+    """
+    result, _, _ = apply_ops(base_doc(), op_list, OpContext(granted_tiers={"A", "B", "C"}))
+
+    expected: list[tuple[list, NodeKind, str]] = [
+        (result.experience, NodeKind.EXPERIENCE, "experience"),
+        (result.education, NodeKind.EDUCATION, "education"),
+        (result.projects, NodeKind.PROJECT, "projects"),
+        (result.skills, NodeKind.SKILL_GROUP, "skills"),
+        (result.custom, NodeKind.CUSTOM_SECTION, "custom"),
+    ]
+    for entry in result.experience + result.projects:
+        expected.append((entry.bullets, NodeKind.BULLET, f"{entry.nid}.bullets"))
+    for group in result.skills:
+        expected.append((group.items, NodeKind.SKILL, f"{group.nid}.items"))
+    for section in result.custom:
+        expected.append((section.items, NodeKind.CUSTOM_ITEM, f"{section.nid}.items"))
+
+    for container, kind, where in expected:
+        for node in container:
+            nid = getattr(node, "nid", None)
+            assert kind_of(nid) is kind, f"{nid!r} is not a {kind.value} but sits in {where}"
 
 
 @given(op_lists)

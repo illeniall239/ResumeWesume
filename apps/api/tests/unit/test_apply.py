@@ -13,6 +13,7 @@ from studio.doc.apply import OpContext, apply_ops, invert, tier_of
 from studio.doc.nodes import NodeKind, is_valid, kind_of, mint
 from studio.doc.ops import (
     InsertNode,
+    MoveNode,
     RejectCode,
     RemoveNode,
     Reorder,
@@ -153,6 +154,83 @@ class TestGates:
         assert rejected[0].code == RejectCode.STALE_EXPECT
         # Models fix this ~90% of the time when handed the real value.
         assert rejected[0].hint["actual"] == "Rebuilt the payments ledger."
+
+    def test_the_truncated_text_the_agent_was_shown_is_accepted(self) -> None:
+        """The agent reads an outline that clips every value to a snippet.
+
+        A bullet longer than that snippet is only ever *visible* to the model
+        truncated, so quoting it back honestly used to be rejected forever --
+        on one real resume that was all eighteen bullets, none of which could
+        be rewritten at all.
+        """
+        from studio.agent.context import _clip
+
+        doc = make_doc()
+        long_text = (
+            "Consolidated and standardized data from four disparate sources in "
+            "Excel, resolving inconsistencies to improve reporting accuracy."
+        )
+        doc.experience[0].bullets[0].text = long_text
+        shown = _clip(long_text)
+        assert shown.endswith("…"), "the outline must actually be clipping here"
+
+        result, applied, rejected = apply_ops(
+            doc,
+            [SetText(nid=BULLET_A, value="Standardised four data sources.", expect=shown)],
+            all_tiers(),
+        )
+        assert rejected == []
+        assert len(applied) == 1
+        assert result.experience[0].bullets[0].text == "Standardised four data sources."
+
+    def test_a_truncated_expect_still_catches_a_stale_edit(self) -> None:
+        """The property the gate exists for, kept: text that changed underneath
+        does not match the prefix either."""
+        doc = make_doc()
+        doc.experience[0].bullets[0].text = (
+            "Consolidated and standardized data from four disparate sources."
+        )
+        _, _, rejected = apply_ops(
+            doc,
+            [
+                SetText(
+                    nid=BULLET_A,
+                    value="new",
+                    expect="Consolidated and standardized data from NINE disparate…",
+                )
+            ],
+            all_tiers(),
+        )
+        assert rejected[0].code == RejectCode.STALE_EXPECT
+
+    def test_a_two_character_stub_is_not_a_claim_about_the_value(self) -> None:
+        """Otherwise "C…" would authorise rewriting anything starting with C."""
+        doc = make_doc()
+        _, _, rejected = apply_ops(
+            doc, [SetText(nid=BULLET_A, value="new", expect="Re…")], all_tiers()
+        )
+        assert rejected[0].code == RejectCode.STALE_EXPECT
+
+    def test_an_ascii_ellipsis_is_accepted_too(self) -> None:
+        """Models emit "..." as readily as "…"."""
+        doc = make_doc()
+        doc.experience[0].bullets[0].text = "Rebuilt the payments ledger end to end."
+        _, applied, rejected = apply_ops(
+            doc,
+            [SetText(nid=BULLET_A, value="new", expect="Rebuilt the payments ledger...")],
+            all_tiers(),
+        )
+        assert rejected == []
+        assert len(applied) == 1
+
+    def test_a_truncation_of_a_different_node_is_still_refused(self) -> None:
+        doc = make_doc()
+        _, _, rejected = apply_ops(
+            doc,
+            [SetText(nid=BULLET_A, value="new", expect="Owned the design system used by…")],
+            all_tiers(),
+        )
+        assert rejected[0].code == RejectCode.STALE_EXPECT
 
     def test_matching_expect_applies(self) -> None:
         doc = make_doc()
@@ -347,6 +425,85 @@ class TestStructural:
         assert rejected[0].code == RejectCode.DUPLICATE
 
 
+class TestMoveKinds:
+    """Moving a node must respect the destination's type.
+
+    ``_do_move`` used to discard the element type that ``_resolve_container``
+    returns, while ``_do_insert`` checked it. The destination list is typed, so
+    the batch revalidation *coerced* the node rather than failing -- every case
+    below applied with zero rejections and silently corrupted the document.
+    ``MoveNode`` had no test anywhere and was absent from the property suite,
+    which is how it survived.
+    """
+
+    def test_a_bullet_cannot_be_moved_into_the_experience_list(self) -> None:
+        # Produced a phantom empty job still carrying its blt_ id.
+        doc = make_doc()
+        result, applied, rejected = apply_ops(
+            doc, [MoveNode(nid=BULLET_A, parent="experience", index=0)], all_tiers()
+        )
+        assert applied == []
+        assert rejected[0].code == RejectCode.KIND_MISMATCH
+        assert result.model_dump() == doc.model_dump()
+
+    def test_an_experience_entry_cannot_be_moved_into_education(self) -> None:
+        # Produced an EducationNode keeping the exp_ prefix, bullets dropped.
+        doc = make_doc()
+        result, applied, rejected = apply_ops(
+            doc, [MoveNode(nid=EXP, parent="education", index=0)], all_tiers()
+        )
+        assert applied == []
+        assert rejected[0].code == RejectCode.KIND_MISMATCH
+        assert result.education == []
+        assert result.model_dump() == doc.model_dump()
+
+    def test_a_skill_cannot_be_moved_into_the_skills_group_list(self) -> None:
+        """"skills" holds groups, not items -- the same trap `_do_insert`
+        already guards."""
+        doc = make_doc()
+        _, applied, rejected = apply_ops(
+            doc, [MoveNode(nid=SKILL_PY, parent="skills", index=0)], all_tiers()
+        )
+        assert applied == []
+        assert rejected[0].code == RejectCode.KIND_MISMATCH
+
+    def test_a_node_cannot_be_moved_into_itself(self) -> None:
+        """Pops the node out of the tree, then inserts it into a list nothing
+        can reach any more -- a deletion wearing a move's clothes."""
+        doc = make_doc()
+        result, applied, rejected = apply_ops(
+            doc, [MoveNode(nid=EXP, parent=EXP, index=0)], all_tiers()
+        )
+        assert applied == []
+        assert rejected[0].code in {RejectCode.KIND_MISMATCH, RejectCode.INVALID_ARGS}
+        assert result.model_dump() == doc.model_dump()
+
+    def test_a_bullet_moves_between_jobs(self) -> None:
+        """The cross-parent move that is legitimate, and must keep working."""
+        doc = make_doc()
+        doc.experience.append(
+            ExperienceNode(nid="exp_22222", title="Engineer", company="Contoso")
+        )
+        result, applied, rejected = apply_ops(
+            doc, [MoveNode(nid=BULLET_A, parent="exp_22222", index=0)], all_tiers()
+        )
+        assert rejected == []
+        assert len(applied) == 1
+        assert [b.nid for b in result.experience[0].bullets] == [BULLET_B]
+        assert [b.nid for b in result.experience[1].bullets] == [BULLET_A]
+
+    def test_an_entry_moves_within_its_own_list(self) -> None:
+        doc = make_doc()
+        doc.experience.append(
+            ExperienceNode(nid="exp_22222", title="Engineer", company="Contoso")
+        )
+        result, _, rejected = apply_ops(
+            doc, [MoveNode(nid=EXP, parent="experience", index=1)], all_tiers()
+        )
+        assert rejected == []
+        assert [e.nid for e in result.experience] == ["exp_22222", EXP]
+
+
 class TestReorderSalvage:
     def test_pure_permutation(self) -> None:
         doc = make_doc()
@@ -372,6 +529,25 @@ class TestReorderSalvage:
 # --------------------------------------------------------------------------
 
 
+    def test_a_repeated_id_does_not_discard_the_batch(self) -> None:
+        """A duplicated id used to insert the same object twice, which gate 7
+        then read as a duplicate nid and rolled the whole batch back -- so one
+        careless id threw away every other op the caller sent."""
+        doc = make_doc()
+        result, applied, rejected = apply_ops(
+            doc,
+            [
+                Reorder(parent=EXP, order=[BULLET_B, BULLET_B, BULLET_A]),
+                SetText(nid=BULLET_A, value="survived"),
+            ],
+            all_tiers(),
+        )
+        assert rejected == []
+        assert len(applied) == 2
+        assert [b.nid for b in result.experience[0].bullets] == [BULLET_B, BULLET_A]
+        assert result.experience[0].bullets[1].text == "survived"
+
+
 class TestInvert:
     def test_set_text_round_trips(self) -> None:
         doc = make_doc()
@@ -383,19 +559,94 @@ class TestInvert:
         twice, _, _ = apply_ops(once, [undo], all_tiers())
         assert twice.model_dump() == doc.model_dump()
 
-    def test_remove_round_trips(self) -> None:
+    def test_remove_round_trips_to_the_original_position(self) -> None:
+        """A restored node goes back where it was, not onto the end.
+
+        This test used to patch ``undo.parent`` by hand and assert the bullet
+        came back last, because the inverse shipped ``parent=""`` -- which the
+        engine cannot resolve -- and ``index=-1``. Both were the recorded
+        ``before`` being too thin, and undoing a delete quietly reordered the
+        document.
+        """
         doc = make_doc()
         op = RemoveNode(nid=BULLET_A)
         once, _, _ = apply_ops(doc, [op], all_tiers())
+
         undo = invert(op)
         assert undo is not None
-        undo.parent = EXP
-        twice, _, _ = apply_ops(once, [undo], all_tiers())
-        assert [b.nid for b in twice.experience[0].bullets] == [BULLET_B, BULLET_A]
+        twice, applied, rejected = apply_ops(once, [undo], all_tiers())
+
+        assert rejected == []
+        assert len(applied) == 1
+        assert twice.model_dump() == doc.model_dump()
+
+    def test_insert_round_trips(self) -> None:
+        doc = make_doc()
+        op = InsertNode(parent=EXP, index=0, node={"nid": "blt_ccccc", "text": "New."})
+        once, _, _ = apply_ops(doc, [op], all_tiers())
+        assert len(once.experience[0].bullets) == 3
+
+        undo = invert(op)
+        assert undo is not None
+        twice, _, rejected = apply_ops(once, [undo], all_tiers())
+        assert rejected == []
+        assert twice.model_dump() == doc.model_dump()
+
+    def test_move_round_trips(self) -> None:
+        """Undoing a move needs the node's *old* parent and index, which
+        ``_do_move`` records and ``invert`` previously ignored."""
+        doc = make_doc()
+        op = MoveNode(nid=BULLET_A, parent=EXP, index=1)
+        once, _, _ = apply_ops(doc, [op], all_tiers())
+        assert [b.nid for b in once.experience[0].bullets] == [BULLET_B, BULLET_A]
+
+        undo = invert(op)
+        assert undo is not None
+        twice, _, rejected = apply_ops(once, [undo], all_tiers())
+        assert rejected == []
+        assert twice.model_dump() == doc.model_dump()
+
+    def test_set_section_round_trips(self) -> None:
+        doc = make_doc()
+        op = SetSection(key="experience", visible=False, order=9)
+        once, _, _ = apply_ops(doc, [op], all_tiers())
+
+        undo = invert(op)
+        assert undo is not None
+        twice, _, rejected = apply_ops(once, [undo], all_tiers())
+        assert rejected == []
+        assert twice.model_dump() == doc.model_dump()
+
+    def test_every_op_kind_is_invertible_once_applied(self) -> None:
+        """Undo is only as good as its least-covered op.
+
+        Three of the eight returned None even where the handler had already
+        recorded what was needed, so a document could be edited in ways that
+        could not be undone.
+        """
+        doc = make_doc()
+        ops: list = [
+            SetText(nid=BULLET_A, value="changed"),
+            SetStyle(nid=BULLET_A, style="plain"),
+            SetField(target=f"{EXP}.years", value="2020 - 2024"),
+            RemoveNode(nid=BULLET_B),
+            InsertNode(parent=EXP, index=0, node={"nid": "blt_ddddd", "text": "X"}),
+            MoveNode(nid=BULLET_A, parent=EXP, index=0),
+            Reorder(parent=EXP, order=[BULLET_A]),
+            SetSection(key="skills", order=1),
+        ]
+        for op in ops:
+            fresh = make_doc()
+            once, applied, rejected = apply_ops(fresh, [op], all_tiers())
+            assert rejected == [], f"{op.op} was rejected: {rejected}"
+            assert invert(op) is not None, f"{op.op} has no inverse after applying"
 
     def test_unapplied_op_has_no_inverse(self) -> None:
         # Honest None rather than a no-op that silently corrupts an undo stack.
         assert invert(SetText(nid=BULLET_A, value="x")) is None
+        assert invert(MoveNode(nid=BULLET_A, parent=EXP, index=0)) is None
+        assert invert(InsertNode(parent=EXP, node={"nid": "blt_zzzzz"})) is None
+        assert invert(SetSection(key="skills", order=2)) is None
 
 
 # --------------------------------------------------------------------------
@@ -502,3 +753,53 @@ class TestCoercion:
         assert len(result.experience[0].bullets) == 1
         assert result.experience[0].bullets[0].nid == BULLET_B
         assert result.experience[0].bullets[0].style == "bullet"
+
+
+class TestAgentEllipsis:
+    """The other half of the truncation bug.
+
+    The agent reads an outline that marks every clipped value with "…". Having
+    read forty of them it writes one into the replacement text, and a resume
+    bullet trailing off mid-thought is a defect the user must spot and fix by
+    hand. Observed live: "Architected RAG-based CMS with Qdrant and Kimi..."
+    """
+
+    def rewrite(self, value: str) -> str:
+        from studio.agent.tools import RewriteText, RewriteTextArgs
+
+        ops = RewriteText().compile(
+            RewriteTextArgs(nid=BULLET_A, value=value), make_doc()
+        )
+        return ops[0].value
+
+    def test_a_trailing_unicode_ellipsis_is_dropped(self) -> None:
+        assert self.rewrite("Architected a RAG-based CMS with Qdrant…") == (
+            "Architected a RAG-based CMS with Qdrant"
+        )
+
+    def test_a_trailing_ascii_ellipsis_is_dropped(self) -> None:
+        assert self.rewrite("Architected a RAG-based CMS with Qdrant...") == (
+            "Architected a RAG-based CMS with Qdrant"
+        )
+
+    def test_dangling_punctuation_goes_with_it(self) -> None:
+        assert self.rewrite("Cut latency, improved throughput, …") == (
+            "Cut latency, improved throughput"
+        )
+
+    def test_ordinary_text_is_untouched(self) -> None:
+        for value in (
+            "Rebuilt the payments ledger.",
+            "Cut p99 latency from 1.8s to 340ms",
+            "Owned CI/CD for 40 services",
+        ):
+            assert self.rewrite(value) == value
+
+    def test_an_ellipsis_mid_sentence_is_left_alone(self) -> None:
+        value = "Handled the long tail… and everything else."
+        assert self.rewrite(value) == value
+
+    def test_a_value_that_is_only_an_ellipsis_is_left_for_the_engine(self) -> None:
+        """Stripping it would produce an empty rewrite, which is a different
+        and worse failure than a visibly silly one."""
+        assert self.rewrite("…") == "…"

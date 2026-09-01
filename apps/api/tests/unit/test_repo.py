@@ -205,3 +205,47 @@ class TestHashStability:
         )
         partial = StudioDoc.model_validate({"personal": {"name": "Alex"}})
         assert content_hash(full) == content_hash(partial)
+
+
+class TestSourceText:
+    """The import provenance column.
+
+    A document created from an uploaded file carries the text it was parsed
+    from. Nothing reads it back during editing by design, so without a test the
+    write is unobservable and could rot silently.
+    """
+
+    async def test_source_text_round_trips(self, repo: DocumentRepo) -> None:
+        from sqlalchemy import select
+
+        from studio.persistence.models import Document
+
+        source = "ALEX MORGAN\nalex@example.com\n\nEXPERIENCE\nNorthwind — 2021"
+        state = await repo.create(make_doc(), source_markdown=source)
+
+        async with repo._session() as session:
+            row = (
+                await session.execute(
+                    select(Document).where(Document.id == state.id)
+                )
+            ).scalar_one()
+        assert row.source_markdown == source
+
+    async def test_source_text_defaults_to_null(self, repo: DocumentRepo) -> None:
+        """A document from a template has no source, and must not get "".
+
+        An empty string would read as "we imported this and found nothing",
+        which is a different claim from "this was never imported".
+        """
+        from sqlalchemy import select
+
+        from studio.persistence.models import Document
+
+        state = await repo.create(make_doc())
+        async with repo._session() as session:
+            row = (
+                await session.execute(
+                    select(Document).where(Document.id == state.id)
+                )
+            ).scalar_one()
+        assert row.source_markdown is None

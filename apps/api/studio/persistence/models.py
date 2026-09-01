@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -48,8 +48,14 @@ class Document(Base):
     # because changing a template is not an edit to its content.
     settings: Mapped[dict[str, Any] | None] = mapped_column(JSON, default=None)
 
-    # Kept only to power date-precision recovery at import time; never consulted
-    # during editing.
+    # The text a document was imported from, when it came from an uploaded file
+    # rather than a template. Never consulted during editing: it is here so that
+    # a later question about what the source actually said -- a mangled date, a
+    # bullet the parser dropped -- can be answered from the original rather than
+    # guessed at. Named "markdown" from when import was expected to go through a
+    # markdown converter; it now holds extracted plain text. Not renamed because
+    # schema creation is ``create_all`` with no migration tooling, so a rename
+    # would silently no-op on existing databases and then fail at insert.
     source_markdown: Mapped[str | None] = mapped_column(Text, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
@@ -102,4 +108,47 @@ class Checkpoint(Base):
     doc: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     label: Mapped[str] = mapped_column(String(200), default="")
     turn_id: Mapped[str | None] = mapped_column(String(36), default=None)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class Asset(Base):
+    """A stored image, addressed by content hash.
+
+    Deliberately its own table rather than a field on ``documents``. The ``doc``
+    JSON is deep-copied on every op batch, rehashed by ``content_hash`` and
+    walked by four drift guards; a 2MB photo living inside it would make every
+    keystroke pay for itself. The document holds only an id.
+
+    Rows are **content-addressed**: ``id`` is the sha256 of the sanitised bytes,
+    so uploading the same headshot to three documents stores it once and a
+    re-upload is idempotent. ``document_id`` records which document first
+    introduced it -- provenance for a cleanup pass, not ownership, since the
+    same bytes may now be referenced from several places.
+
+    Nothing here is ever mutated. An edited image is different bytes and
+    therefore a different row.
+    """
+
+    __tablename__ = "assets"
+
+    #: sha256 of `data`, hex. Not a UUID: the hash *is* the identity.
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+
+    document_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("documents.id", ondelete="SET NULL"), index=True
+    )
+
+    #: Always one of the three we re-encode to; never the browser's claim.
+    mime: Mapped[str] = mapped_column(String(40), nullable=False)
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+
+    #: Pixel dimensions after sanitising, so a placed image can be given its
+    #: true aspect ratio without decoding the bytes again.
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    #: What the user called it. Display only -- never used to build a path.
+    filename: Mapped[str] = mapped_column(String(255), default="")
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

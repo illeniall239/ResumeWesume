@@ -13,6 +13,7 @@ instead of surfacing as a mystery runtime error in the browser.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -62,7 +63,16 @@ def _union(values: list[str]) -> str:
 
 
 def build() -> str:
-    from studio.doc.schema import StudioDoc
+    from studio.doc.schema import (
+        ElementStyle,
+        FrameElement,
+        ImageElement,
+        PageNode,
+        Rect,
+        ShapeElement,
+        StudioDoc,
+        TextBlockNode,
+    )
 
     lines: list[str] = [HEADER]
 
@@ -155,8 +165,86 @@ export interface SectionMeta {
   order: number;
 }
 
+// --- Layout ---------------------------------------------------------------
+// Where content sits, kept in its own subtree so the ATS export, the importer
+// and the agent's tools can all keep addressing content without knowing that
+// pages exist. A frame does not hold content, it points at it.
+
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface ElementStyle {
+  align: 'left' | 'center' | 'right';
+  font_scale: number;
+  color: string | null;
+  background: string | null;
+  padding: number;
+  radius: number;
+  opacity: number;
+}
+
+export interface FrameElement {
+  nid: NodeId;
+  /** A section key or a content nid. Renders that subtree. */
+  ref: string;
+  rect: Rect;
+  rotation: number;
+  autogrow: 'none' | 'height';
+  visible: boolean;
+  locked: boolean;
+  /** Placed by hand: the reflow pass leaves this frame where it is. */
+  pinned: boolean;
+  style: ElementStyle;
+}
+
+export interface ImageElement {
+  nid: NodeId;
+  asset: string;
+  rect: Rect;
+  rotation: number;
+  fit: 'cover' | 'contain';
+  crop: Rect | null;
+  alt: string;
+  visible: boolean;
+  locked: boolean;
+  style: ElementStyle;
+}
+
+export interface ShapeElement {
+  nid: NodeId;
+  shape: 'rect' | 'ellipse' | 'line';
+  rect: Rect;
+  rotation: number;
+  fill: string | null;
+  stroke: string | null;
+  stroke_width: number;
+  visible: boolean;
+  locked: boolean;
+}
+
+export type AnyElement = FrameElement | ImageElement | ShapeElement;
+
+export interface PageNode {
+  nid: NodeId;
+  size: 'A4' | 'Letter';
+  orientation: 'portrait' | 'landscape';
+  background: string | null;
+  /** Z-order IS list order: the last element paints on top. */
+  elements: AnyElement[];
+}
+
+export interface TextBlockNode {
+  nid: NodeId;
+  role: 'heading' | 'body' | 'caption' | 'contact' | 'none';
+  lines: TextNode[];
+}
+
 export interface StudioDoc {
-  schema_version: 1;
+  schema_version: 1 | 2;
   personal: PersonalInfo;
   summary: TextNode | null;
   experience: ExperienceNode[];
@@ -165,14 +253,19 @@ export interface StudioDoc {
   skills: SkillGroup[];
   custom: CustomSectionNode[];
   sections: SectionMeta[];
+  blocks: TextBlockNode[];
+  /** Empty means "render as one flowing column". */
+  pages: PageNode[];
+  reading_order: NodeId[] | null;
 }
 """
     )
 
     lines.append(
         """// --- Operations -----------------------------------------------------------
-// The eight primitives. Every agent tool call and every direct user edit
+// The ten primitives. Every agent tool call and every direct user edit
 // compiles to one of these, so the client mirror only has to implement these.
+// Eight touch content; two touch layout.
 
 export interface SetTextOp {
   op: 'set_text';
@@ -235,6 +328,25 @@ export interface SetSectionOp {
   reason?: string;
 }
 
+export interface SetGeometryOp {
+  op: 'set_geometry';
+  nid: NodeId;
+  x?: number | null;
+  y?: number | null;
+  w?: number | null;
+  h?: number | null;
+  rotation?: number | null;
+  expect?: Record<string, number> | null;
+  reason?: string;
+}
+
+export interface SetElementStyleOp {
+  op: 'set_element_style';
+  nid: NodeId;
+  patch: Record<string, unknown>;
+  reason?: string;
+}
+
 export type DocOp =
   | SetTextOp
   | SetFieldOp
@@ -243,7 +355,9 @@ export type DocOp =
   | MoveNodeOp
   | ReorderOp
   | SetStyleOp
-  | SetSectionOp;
+  | SetSectionOp
+  | SetGeometryOp
+  | SetElementStyleOp;
 
 export interface AppliedOp {
   op: DocOp;
@@ -272,29 +386,43 @@ export interface ApplyResponse extends DocumentResponse {
 """
     )
 
-    # Assert the Python model has not grown a field the hand-written block
-    # above is missing. This is what makes the generator a real gate rather
-    # than a convenience.
-    declared = set(StudioDoc.model_fields)
-    covered = {
-        "schema_version",
-        "personal",
-        "summary",
-        "experience",
-        "education",
-        "projects",
-        "skills",
-        "custom",
-        "sections",
-    }
-    missing = declared - covered
-    if missing:
-        raise SystemExit(
-            f"StudioDoc has fields the TypeScript contract does not cover: "
-            f"{sorted(missing)}. Update scripts/gen_contracts.py."
-        )
+    rendered = "\n".join(lines)
 
-    return "\n".join(lines)
+    # Assert the Python models have not grown fields the hand-written blocks
+    # above are missing. This is what makes the generator a real gate rather
+    # than a convenience.
+    #
+    # Model by model, because only `StudioDoc` was checked before: a field
+    # added to a *nested* model -- an element, a page, a rect -- reached
+    # neither the contract nor this gate, which is exactly the drift the
+    # generator exists to catch. `pinned` on `FrameElement` went straight
+    # through that hole and had to be noticed by hand.
+    for model in (
+        StudioDoc,
+        Rect,
+        ElementStyle,
+        FrameElement,
+        ImageElement,
+        ShapeElement,
+        PageNode,
+        TextBlockNode,
+    ):
+        missing = set(model.model_fields) - _fields_in_block(rendered, model.__name__)
+        if missing:
+            raise SystemExit(
+                f"{model.__name__} has fields the TypeScript contract does not "
+                f"cover: {sorted(missing)}. Update scripts/gen_contracts.py."
+            )
+
+    return rendered
+
+
+def _fields_in_block(rendered: str, name: str) -> set[str]:
+    """Property names declared in one ``export interface`` of the output."""
+    match = re.search(rf"export interface {name}\b[^{{]*{{(.*?)\n}}", rendered, re.S)
+    if not match:
+        raise SystemExit(f"No TypeScript interface for {name}.")
+    return set(re.findall(r"^\s*(\w+)\??:", match.group(1), re.M))
 
 
 def main() -> int:

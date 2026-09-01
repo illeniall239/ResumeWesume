@@ -12,6 +12,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from studio.doc.apply import OpContext
+from studio.doc.autolayout import layout
 from studio.doc.legacy import from_resume_data, to_resume_data
 from studio.doc.ops import DocOp
 from studio.doc.schema import DEFAULT_SECTIONS, StudioDoc
@@ -26,6 +27,10 @@ class CreateRequest(BaseModel):
     # export or parser produces.
     doc: dict[str, Any] | None = None
     resume_data: dict[str, Any] | None = None
+    # The text an import was parsed from, when this document came from a file.
+    # Stored verbatim and never consulted during editing; it exists so a later
+    # question about what the source actually said has an answer.
+    source_markdown: str | None = None
 
 
 class DocumentResponse(BaseModel):
@@ -91,7 +96,16 @@ async def create_document(request: Request, body: CreateRequest) -> DocumentResp
     else:
         doc = StudioDoc(sections=list(DEFAULT_SECTIONS))
 
-    state = await _repo(request).create(doc, title=body.title)
+    # A document without a page cannot be placed on a canvas. Laid out here, at
+    # the one point every new document passes through, rather than lazily on
+    # first open -- the importer and the templates then need to know nothing
+    # about pages at all.
+    if not doc.pages:
+        doc.pages = layout(doc)
+
+    state = await _repo(request).create(
+        doc, title=body.title, source_markdown=body.source_markdown
+    )
     return _as_response(state)
 
 
@@ -177,6 +191,51 @@ async def revert_document(
     except KeyError:
         raise HTTPException(status_code=404, detail="Checkpoint not found") from None
     return _as_response(state)
+
+
+class HistoryResponse(DocumentResponse):
+    """A document plus which version the reversal touched.
+
+    The version is returned so a client can keep its own cursor honest without
+    re-deriving the stack; it is informational, not something the next call
+    needs handed back.
+    """
+
+    reversed_version: int
+
+
+@router.post("/{document_id}/undo", response_model=HistoryResponse)
+async def undo_document(request: Request, document_id: str) -> HistoryResponse:
+    return await _reverse(request, document_id, "undo")
+
+
+@router.post("/{document_id}/redo", response_model=HistoryResponse)
+async def redo_document(request: Request, document_id: str) -> HistoryResponse:
+    return await _reverse(request, document_id, "redo")
+
+
+async def _reverse(request: Request, document_id: str, direction: str) -> HistoryResponse:
+    try:
+        result = await _repo(request).reverse(document_id, direction=direction)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Document not found") from None
+
+    if result is None:
+        # Not an error: an empty stack is an ordinary state, and a 4xx here
+        # lets the client disable its button without special-casing a message.
+        raise HTTPException(
+            status_code=409, detail=f"Nothing to {direction}."
+        )
+
+    state, version = result
+    return HistoryResponse(
+        id=state.id,
+        title=state.title,
+        version=state.version,
+        hash=state.content_hash,
+        doc=state.doc,
+        reversed_version=version,
+    )
 
 
 @router.delete("/{document_id}", status_code=204)

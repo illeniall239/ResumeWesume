@@ -159,6 +159,46 @@ class NodeIndex:
                     field="strings",
                 )
 
+        # Free text blocks. Indexed like any other content so the assistant can
+        # find and rewrite them; text it cannot address is text the product
+        # cannot help with.
+        for position, block in enumerate(doc.blocks):
+            self._add(
+                block,
+                container=doc.blocks,
+                position=position,
+                parent_nid=None,
+                field="blocks",
+            )
+            for line_position, line in enumerate(block.lines):
+                self._add(
+                    line,
+                    container=block.lines,
+                    position=line_position,
+                    parent_nid=block.nid,
+                    field="lines",
+                )
+
+        # Layout. ``parent_nid`` on an element is its page, which is what makes
+        # a cross-page move undoable: without it the recorded "before" names no
+        # container and the inverse has nowhere to put the element back.
+        for position, page in enumerate(doc.pages):
+            self._add(
+                page,
+                container=doc.pages,
+                position=position,
+                parent_nid=None,
+                field="pages",
+            )
+            for element_position, element in enumerate(page.elements):
+                self._add(
+                    element,
+                    container=page.elements,
+                    position=element_position,
+                    parent_nid=page.nid,
+                    field="elements",
+                )
+
     def get(self, nid: NodeId) -> Location | None:
         return self._by_id.get(nid)
 

@@ -30,21 +30,27 @@ from studio.doc.ops import (
     RejectedOp,
     Reorder,
     RemoveNode,
+    SetElementStyle,
     SetField,
+    SetGeometry,
     SetSection,
     SetStyle,
     SetText,
     Tier,
 )
 from studio.doc.schema import (
+    AnyElement,
     CustomItemNode,
+    FrameElement,
     CustomSectionNode,
     EducationNode,
     ExperienceNode,
     ProjectNode,
+    PageNode,
     SkillGroup,
     SkillItem,
     StudioDoc,
+    TextBlockNode,
     TextNode,
 )
 
@@ -69,6 +75,8 @@ _TOP_LEVEL_LISTS: dict[str, str] = {
     "projects": "projects",
     "skills": "skills",
     "custom": "custom",
+    "blocks": "blocks",
+    "pages": "pages",
 }
 
 # What each top-level list actually holds. Note "skills" holds *groups*, not
@@ -79,7 +87,25 @@ _TOP_LEVEL_ELEMENT: dict[str, type[Any]] = {
     "projects": ProjectNode,
     "skills": SkillGroup,
     "custom": CustomSectionNode,
+    "blocks": TextBlockNode,
+    "pages": PageNode,
 }
+
+# Kinds a page's element list accepts. Unlike every other container this one is
+# genuinely heterogeneous, so the single-type check the others use does not
+# apply and membership is tested against this set instead.
+_ELEMENT_KINDS: frozenset[NodeKind] = frozenset(
+    {NodeKind.FRAME, NodeKind.IMAGE, NodeKind.SHAPE}
+)
+
+# Kinds that describe layout rather than content. Nothing in this set may be
+# reached by ``set_field``, which would otherwise be a back door: it gates on
+# the attribute *name* existing, so ``frm_x.rect`` would pass the per-op check
+# and fail only at the whole-batch revalidation -- discarding the user's work
+# alongside the bad op.
+_LAYOUT_KINDS: frozenset[NodeKind] = frozenset(
+    {NodeKind.PAGE, NodeKind.FRAME, NodeKind.IMAGE, NodeKind.SHAPE}
+)
 
 _ENTRY_KINDS: frozenset[NodeKind] = frozenset(
     {NodeKind.EXPERIENCE, NodeKind.EDUCATION, NodeKind.PROJECT}
@@ -119,8 +145,19 @@ class OpContext:
         return tier == "C" and ref in self.consent_tokens
 
 
+# How much of a value a truncated ``expect`` must still carry before it counts
+# as a claim about that value. The outline clips at 72 characters, so a genuine
+# one carries about seventy.
+_MIN_TRUNCATED_EXPECT = 20
+
+
 def _norm(value: Any) -> str:
     return str(value or "").strip().casefold()
+
+
+def _flat(value: Any) -> str:
+    """``_norm``, with internal whitespace collapsed as the outline collapses it."""
+    return " ".join(_norm(value).split())
 
 
 def _matches(actual: Any, expect: str | None) -> bool:
@@ -130,10 +167,33 @@ def _matches(actual: Any, expect: str | None) -> bool:
     (``improver.py:212``): case- and whitespace-insensitive, and a missing
     ``expect`` means "no claim about the current value", not "match anything
     dangerous" — callers decide whether to require it.
+
+    The ellipsis clause is not a loosening of that guarantee, it is a fix for a
+    hole we dug ourselves. The agent reads the document as an outline that
+    clips every value to a snippet, so a bullet longer than that is only ever
+    *visible* to the model in truncated form. The model then quotes back what
+    it was shown, exactly and honestly, and an equality check rejects it — on
+    one real document that was all eighteen bullets, none of which could be
+    rewritten at all.
+
+    Accepting the truncation keeps the property ``expect`` exists for. It is a
+    staleness check: it asks "is this still what you read?". A prefix answers
+    that just as well, because text that changed underneath would not match the
+    prefix either. The floor stops a two-character stub from standing in for a
+    claim about the whole value.
     """
     if expect is None:
         return True
-    return _norm(actual) == _norm(expect)
+
+    actual_flat, expect_flat = _flat(actual), _flat(expect)
+    if actual_flat == expect_flat:
+        return True
+
+    for mark in ("…", "..."):
+        if expect_flat.endswith(mark):
+            head = expect_flat[: -len(mark)].strip()
+            return len(head) >= _MIN_TRUNCATED_EXPECT and actual_flat.startswith(head)
+    return False
 
 
 def _split_target(target: str) -> tuple[str, str]:
@@ -157,11 +217,44 @@ def tier_of(op: DocOp, index: NodeIndex) -> Tier:
         location = index.get(op.nid)
         if location is None:
             return "A"
+        # Deleting a page can take a lot of layout with it; deleting one box
+        # cannot lose content, because the coverage gate refuses to strand it.
+        if location.kind is NodeKind.PAGE:
+            return "C"
+        if location.kind in _ELEMENT_KINDS:
+            return "B"
         if location.kind in _ENTRY_KINDS or location.kind is NodeKind.CUSTOM_SECTION:
+            return "C"
+        # A free text block is the only home its words have -- the reasoning
+        # above ("deleting a box cannot lose content") is exactly what does not
+        # hold here, because there is no flow for them to return to. Without
+        # this it falls through to the default below and the model can delete
+        # a hand-placed caption under a Tier A grant. Constrains only the model:
+        # the author is granted every tier (routers/documents.py).
+        if location.kind is NodeKind.BLOCK:
             return "C"
         return "B" if location.kind is NodeKind.SKILL else "A"
 
+    if isinstance(op, SetGeometry):
+        # Cannot change a word and cannot delete anything, and is exactly
+        # invertible. Moving a box is not a claim about the person.
+        return "A"
+
+    if isinstance(op, SetElementStyle):
+        # Read off the payload, not declared -- same rule as SetSection: making
+        # something invisible is a content-loss shape however it is spelled.
+        return "C" if op.patch.get("visible") is False else "A"
+
     if isinstance(op, InsertNode):
+        # Blank paper and placed boxes destroy nothing. Without these two
+        # branches "pages" falls into the top-level rule below and adding a
+        # page would demand consent.
+        if op.parent == "pages":
+            return "A"
+        if kind_of(op.parent) is NodeKind.PAGE:
+            return "A"
+        if op.parent == "blocks":
+            return "A"
         if op.parent in _TOP_LEVEL_LISTS and op.parent != "skills":
             return "C"
         return "B" if op.parent == "skills" else "A"
@@ -176,6 +269,37 @@ def tier_of(op: DocOp, index: NodeIndex) -> Tier:
         return "C" if op.visible is False else "A"
 
     return "A"
+
+
+def _kind_fits(kind: NodeKind | None, element_type: type[Any] | None) -> bool:
+    """Whether a node of ``kind`` may live in a container holding ``element_type``.
+
+    ``element_type is None`` means the page element list, which is the one
+    genuinely heterogeneous container in the document; membership there is a set
+    test rather than a type equality.
+    """
+    if kind is None:
+        return True  # an unparseable id is caught by validation, not here
+    if element_type is None:
+        return kind in _ELEMENT_KINDS
+    expected = _KIND_OF_TYPE.get(element_type)
+    return expected is None or kind is expected
+
+
+def _expected_label(element_type: type[Any] | None) -> str:
+    if element_type is None:
+        return "frame, image or shape"
+    expected = _KIND_OF_TYPE.get(element_type)
+    return expected.value if expected else element_type.__name__
+
+
+def _validate_element(element_type: type[Any] | None, raw: dict[str, Any]) -> Any:
+    """Build a node for a container, homogeneous or not."""
+    if element_type is not None:
+        return element_type.model_validate(raw)
+    from pydantic import TypeAdapter
+
+    return TypeAdapter(AnyElement).validate_python(raw)
 
 
 def _resolve_container(
@@ -204,6 +328,12 @@ def _resolve_container(
         return node.items, SkillItem
     if isinstance(node, CustomSectionNode):
         return node.items, CustomItemNode
+    if isinstance(node, TextBlockNode):
+        return node.lines, TextNode
+    if isinstance(node, PageNode):
+        # Heterogeneous: frames, images and shapes share one list, so there is
+        # no single element type to return. Callers test against _ELEMENT_KINDS.
+        return node.elements, None
     return None, None
 
 
@@ -252,6 +382,24 @@ def apply_ops(
             ],
         )
 
+    # Gate 7: coverage. Every content node must be rendered by exactly one
+    # frame, or free placement becomes a way to lose a job without being told.
+    # Checked after the whole batch, so "delete this box and the job in it"
+    # succeeds as one batch while "delete the box and strand the job" does not.
+    orphan = _first_orphan(working)
+    if orphan is not None:
+        return (
+            doc,
+            [],
+            [
+                RejectedOp(
+                    op={},
+                    code=RejectCode.INVARIANT_VIOLATION,
+                    message=f"Nothing on the page would render {orphan}",
+                )
+            ],
+        )
+
     duplicate = _first_duplicate(working)
     if duplicate is not None:
         return (
@@ -275,6 +423,72 @@ def _touched(op: DocOp) -> list[str]:
         if isinstance(value, str) and value:
             return [value]
     return []
+
+
+# Content that a frame can be bound to. A frame naming one of these covers it
+# and everything beneath it.
+_COVERABLE_SECTIONS: tuple[str, ...] = (
+    "personal",
+    "summary",
+    "experience",
+    "education",
+    "projects",
+    "skills",
+    "custom",
+    "blocks",
+)
+
+
+def _section_roots(doc: StudioDoc) -> dict[str, list[Any]]:
+    return {
+        "summary": [doc.summary] if doc.summary is not None else [],
+        "experience": list(doc.experience),
+        "education": list(doc.education),
+        "projects": list(doc.projects),
+        "skills": list(doc.skills),
+        "custom": list(doc.custom),
+        "blocks": list(doc.blocks),
+    }
+
+
+def _first_orphan(doc: StudioDoc) -> str | None:
+    """The first content node no frame would render, or None.
+
+    Coverage is checked over *containers*, not leaves: a frame bound to
+    ``"experience"`` covers every job and every bullet under it, so a bullet
+    added later is covered automatically by its ancestor. That is the property
+    that stops this becoming a second structure which can silently drift out of
+    step with the content it describes.
+
+    A document with no pages is a flowing document, which renders everything by
+    definition -- so the gate is skipped entirely and v1 documents, fresh
+    imports and the ATS path are all unaffected.
+    """
+    if not doc.pages:
+        return None
+
+    bound = {
+        element.ref
+        for page in doc.pages
+        for element in page.elements
+        if isinstance(element, FrameElement)
+    }
+
+    # A frame pointing at nothing is its own kind of orphan: it renders an
+    # empty box and the content it claimed is covered by no one.
+    index = NodeIndex(doc)
+    for ref in bound:
+        if ref not in _COVERABLE_SECTIONS and index.get(ref) is None:
+            return ref
+
+    for key, roots in _section_roots(doc).items():
+        if key in bound:
+            continue
+        for node in roots:
+            nid = getattr(node, "nid", None)
+            if nid and nid not in bound:
+                return nid
+    return None
 
 
 def _first_duplicate(doc: StudioDoc) -> str | None:
@@ -350,6 +564,10 @@ def _apply_one(
         return _do_reorder(doc, index, op)
     if isinstance(op, SetSection):
         return _do_set_section(doc, op)
+    if isinstance(op, SetGeometry):
+        return _do_set_geometry(index, op)
+    if isinstance(op, SetElementStyle):
+        return _do_set_element_style(index, op)
     return _reject(op, RejectCode.INVALID_ARGS, "Unknown operation")
 
 
@@ -421,6 +639,16 @@ def _do_set_field(doc: StudioDoc, index: NodeIndex, op: SetField) -> RejectedOp 
             f"No node {owner}",
             {"candidates": index.nearest(owner)},
         )
+    # Layout is not reachable from here. This gate checks only that an
+    # attribute *name* exists, so without this a `set_field` on `frm_x.rect`
+    # would pass and be caught only by the whole-batch revalidation -- which
+    # rolls everything back, discarding the user's other work alongside it.
+    if location.kind in _LAYOUT_KINDS:
+        return _reject(
+            op,
+            RejectCode.INVALID_ARGS,
+            f"{owner} is a layout element; use set_geometry or set_element_style",
+        )
     if attribute not in type(location.node).model_fields:
         return _reject(
             op,
@@ -461,42 +689,54 @@ def _do_remove(index: NodeIndex, op: RemoveNode) -> RejectedOp | None:
             "The node you are deleting is not what you expected",
             {"actual": text},
         )
-    op.before = location.node.model_dump(mode="json")
+    # Where it was, not just what it was. The node dump alone cannot be undone:
+    # the inverse has nowhere to put it back, and an append would silently move
+    # a bullet to the bottom of its job.
+    op.before = {
+        "parent": location.parent_nid or location.field,
+        "index": location.position,
+        "node": location.node.model_dump(mode="json"),
+    }
     location.container.pop(location.position)
     return None
 
 
 def _do_insert(doc: StudioDoc, index: NodeIndex, op: InsertNode) -> RejectedOp | None:
     container, element_type = _resolve_container(doc, index, op.parent)
-    if container is None or element_type is None:
+    if container is None:
         return _reject(
             op, RejectCode.UNKNOWN_NODE, f"No list to insert into at {op.parent!r}"
         )
     try:
-        node = element_type.model_validate(op.node)
+        node = _validate_element(element_type, op.node)
     except ValidationError as exc:
+        name = element_type.__name__ if element_type is not None else "element"
         return _reject(
             op,
             RejectCode.INVALID_ARGS,
-            f"Not a well-formed {element_type.__name__} for {op.parent!r}",
+            f"Not a well-formed {name} for {op.parent!r}",
             {"errors": exc.error_count()},
         )
     # Gate 2 for inserts: a node's own id must agree with the list it is going
     # into, so a bullet can never land in the experience list.
     supplied_kind = kind_of(str(op.node.get("nid", "")))
-    expected_kind = _KIND_OF_TYPE.get(element_type)
-    if supplied_kind is not None and expected_kind is not None and supplied_kind is not expected_kind:
+    if not _kind_fits(supplied_kind, element_type):
+        expected = _expected_label(element_type)
         return _reject(
             op,
             RejectCode.KIND_MISMATCH,
-            f"{op.parent!r} holds {expected_kind.value} nodes, not {supplied_kind.value}",
+            f"{op.parent!r} holds {expected} nodes, not "
+            f"{supplied_kind.value if supplied_kind else 'unknown'}",
         )
     if getattr(node, "nid", None) and node.nid in index:
         return _reject(op, RejectCode.DUPLICATE, f"{node.nid} already exists")
 
     position = len(container) if op.index < 0 else min(op.index, len(container))
     container.insert(position, node)
-    op.before = None
+    # The id that actually landed, which is what the inverse removes. An insert
+    # has no prior state to restore, so ``before`` records the effect rather
+    # than a value -- without it an insert is simply not undoable.
+    op.before = {"nid": getattr(node, "nid", None)}
     return None
 
 
@@ -504,12 +744,37 @@ def _do_move(doc: StudioDoc, index: NodeIndex, op: MoveNode) -> RejectedOp | Non
     location = index.get(op.nid)
     if location is None or location.container is None or location.position is None:
         return _reject(op, RejectCode.UNKNOWN_NODE, f"No movable node {op.nid}")
-    target, _ = _resolve_container(doc, index, op.parent)
+    target, element_type = _resolve_container(doc, index, op.parent)
     if target is None:
         return _reject(op, RejectCode.UNKNOWN_NODE, f"No list at {op.parent!r}")
 
+    # Kind agreement, exactly as ``_do_insert`` checks it. Without this, a move
+    # is a silent corruption rather than a rejection: the destination list is
+    # typed, so gate 6's revalidation *coerces* the node into the new type
+    # instead of failing. A bullet moved into "experience" became a phantom
+    # empty job still carrying its blt_ id; an experience entry moved into
+    # "education" became an EducationNode that kept its exp_ prefix and lost
+    # every bullet. Neither produced a single rejection.
+    if not _kind_fits(location.kind, element_type):
+        return _reject(
+            op,
+            RejectCode.KIND_MISMATCH,
+            f"{op.parent!r} holds {_expected_label(element_type)} nodes, "
+            f"not {location.kind.value}",
+        )
+
+    # A node cannot contain itself. Left unchecked this pops the node out of the
+    # tree and then inserts it into a list that is no longer reachable, which
+    # deletes it.
+    if op.parent == op.nid:
+        return _reject(
+            op, RejectCode.INVALID_ARGS, "A node cannot be moved into itself"
+        )
+
     op.before = {"parent": location.parent_nid or location.field, "index": location.position}
     node = location.container.pop(location.position)
+    # Note the index is interpreted against the list *after* removal, which for
+    # an intra-list move shifts everything below the old position up by one.
     position = len(target) if op.index < 0 else min(op.index, len(target))
     target.insert(position, node)
     return None
@@ -527,11 +792,114 @@ def _do_reorder(doc: StudioDoc, index: NodeIndex, op: Reorder) -> RejectedOp | N
     # for, drop ones we do not, and append anything omitted so nothing is ever
     # silently lost. Carried over from the reorder handling in apply_diffs,
     # where rejecting the whole list over one bad id proved far too brittle.
-    reordered = [by_id[nid] for nid in op.order if nid in by_id]
+    # De-duplicated as it goes, keeping the first mention. A repeated id would
+    # otherwise put the same object in the list twice, which gate 7 then reads
+    # as a duplicate nid and discards the whole batch -- so one careless id in
+    # a reorder would throw away every other op the caller sent.
+    seen: set[str] = set()
+    reordered = []
+    for nid in op.order:
+        if nid in by_id and nid not in seen:
+            seen.add(nid)
+            reordered.append(by_id[nid])
     placed = {id(node) for node in reordered}
     reordered.extend(node for node in container if id(node) not in placed)
 
     container[:] = reordered
+    return None
+
+
+# Geometry arrives as floats from a browser, so ``expect`` is compared with a
+# tolerance. Exact equality would reject honest values over the last bit of a
+# float, which is a maddening thing to debug and buys nothing.
+_GEOMETRY_TOLERANCE = 0.5
+
+_GEOMETRY_FIELDS = ("x", "y", "w", "h")
+
+
+def _do_set_geometry(index: NodeIndex, op: SetGeometry) -> RejectedOp | None:
+    location = index.get(op.nid)
+    if location is None:
+        return _reject(
+            op,
+            RejectCode.UNKNOWN_NODE,
+            f"No node {op.nid}",
+            {"candidates": index.nearest(op.nid)},
+        )
+    if location.kind not in _ELEMENT_KINDS:
+        return _reject(
+            op,
+            RejectCode.KIND_MISMATCH,
+            f"{op.nid} is not a placed element",
+        )
+
+    rect = location.node.rect
+    if op.expect is not None:
+        for field in _GEOMETRY_FIELDS:
+            wanted = op.expect.get(field)
+            if wanted is None:
+                continue
+            if abs(getattr(rect, field) - float(wanted)) > _GEOMETRY_TOLERANCE:
+                return _reject(
+                    op,
+                    RejectCode.STALE_EXPECT,
+                    "The element has moved since you read it",
+                    {"actual": rect.model_dump()},
+                )
+
+    op.before = {
+        "x": rect.x,
+        "y": rect.y,
+        "w": rect.w,
+        "h": rect.h,
+        "rotation": getattr(location.node, "rotation", 0.0),
+    }
+    for field in _GEOMETRY_FIELDS:
+        value = getattr(op, field)
+        if value is not None:
+            setattr(rect, field, float(value))
+    if op.rotation is not None:
+        location.node.rotation = float(op.rotation)
+    return None
+
+
+def _do_set_element_style(index: NodeIndex, op: SetElementStyle) -> RejectedOp | None:
+    location = index.get(op.nid)
+    if location is None:
+        return _reject(
+            op,
+            RejectCode.UNKNOWN_NODE,
+            f"No node {op.nid}",
+            {"candidates": index.nearest(op.nid)},
+        )
+    if location.kind not in _ELEMENT_KINDS:
+        return _reject(
+            op, RejectCode.KIND_MISMATCH, f"{op.nid} is not a placed element"
+        )
+    if not op.patch:
+        return _reject(op, RejectCode.INVALID_ARGS, "Nothing to change")
+
+    node = location.node
+    # Keys are validated against the element's own model and its style model, so
+    # a typo is a rejection the caller can read rather than a silently ignored
+    # field that leaves the UI showing a change that never happened.
+    style_fields = set(type(node.style).model_fields) if hasattr(node, "style") else set()
+    own_fields = set(type(node).model_fields) - {"nid", "rect", "rotation", "style"}
+
+    unknown = [k for k in op.patch if k not in style_fields and k not in own_fields]
+    if unknown:
+        return _reject(
+            op,
+            RejectCode.INVALID_ARGS,
+            f"No such element property: {', '.join(sorted(unknown))}",
+        )
+
+    before: dict[str, Any] = {}
+    for key, value in op.patch.items():
+        target = node.style if key in style_fields else node
+        before[key] = getattr(target, key, None)
+        setattr(target, key, value)
+    op.before = before
     return None
 
 
@@ -553,25 +921,80 @@ def invert(op: DocOp) -> DocOp | None:
     Returns None when the op was never applied (no ``before`` recorded), which
     is the honest answer rather than a no-op that silently corrupts an undo
     stack.
+
+    Total across all eight ops. It was not always: ``move_node``, ``insert_node``
+    and ``set_section`` returned None even where the handler had already
+    recorded everything needed, so a document could be edited in ways that could
+    not be undone -- tolerable while the only writer was a chat turn with its
+    own checkpoint, and not tolerable the moment a user can drag something.
     """
     if isinstance(op, SetText):
         if op.before is None:
             return None
         return SetText(nid=op.nid, value=str(op.before), reason="undo")
+
     if isinstance(op, SetStyle):
         if op.before is None:
             return None
         return SetStyle(nid=op.nid, style=op.before, reason="undo")
+
     if isinstance(op, SetField):
+        # No ``before is None`` guard here would clear the field on an
+        # unapplied op, so an inverse is only offered once one was recorded.
+        if op.before is None:
+            return None
         return SetField(target=op.target, value=op.before, reason="undo")
+
     if isinstance(op, RemoveNode):
+        if not isinstance(op.before, dict) or "node" not in op.before:
+            return None
+        return InsertNode(
+            parent=str(op.before.get("parent") or ""),
+            index=int(op.before.get("index", -1)),
+            node=op.before["node"],
+            reason="undo",
+        )
+
+    if isinstance(op, InsertNode):
+        if not isinstance(op.before, dict) or not op.before.get("nid"):
+            return None
+        return RemoveNode(nid=str(op.before["nid"]), reason="undo")
+
+    if isinstance(op, MoveNode):
         if not isinstance(op.before, dict):
             return None
-        return InsertNode(parent="", index=-1, node=op.before, reason="undo")
+        return MoveNode(
+            nid=op.nid,
+            parent=str(op.before.get("parent") or ""),
+            index=int(op.before.get("index", -1)),
+            reason="undo",
+        )
+
     if isinstance(op, Reorder):
         if not isinstance(op.before, list):
             return None
         return Reorder(parent=op.parent, order=op.before, reason="undo")
+
+    if isinstance(op, SetSection):
+        if not isinstance(op.before, dict):
+            return None
+        return SetSection(
+            key=op.key,
+            visible=op.before.get("visible"),
+            order=op.before.get("order"),
+            reason="undo",
+        )
+
+    if isinstance(op, SetGeometry):
+        if not isinstance(op.before, dict):
+            return None
+        return SetGeometry(nid=op.nid, reason="undo", **op.before)
+
+    if isinstance(op, SetElementStyle):
+        if not isinstance(op.before, dict):
+            return None
+        return SetElementStyle(nid=op.nid, patch=op.before, reason="undo")
+
     return None
 
 
