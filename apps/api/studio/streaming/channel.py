@@ -46,7 +46,9 @@ class TurnChannel:
     """One turn's event stream."""
 
     turn_id: str
-    document_id: str
+    # Empty for an import, which has no document until the user confirms one.
+    # Read in exactly one place (the turn status endpoint) and otherwise inert.
+    document_id: str = ""
 
     _queue: asyncio.Queue[Event | None] = field(default_factory=asyncio.Queue, init=False)
     _replay: deque[Event] = field(
@@ -141,7 +143,7 @@ class TurnRegistry:
         self._turns: dict[str, TurnChannel] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
 
-    def create(self, turn_id: str, document_id: str) -> TurnChannel:
+    def create(self, turn_id: str, document_id: str = "") -> TurnChannel:
         self._sweep()
         channel = TurnChannel(turn_id=turn_id, document_id=document_id)
         self._turns[turn_id] = channel

@@ -66,12 +66,14 @@ class ScriptedBackend(ChatBackend):
         tool_choice: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 2048,
+        think: bool | None = None,
     ) -> AsyncIterator[ModelChunk]:
         self.received.append(
             {
                 "messages": messages,
                 "tools": [tool["function"]["name"] for tool in tools or []],
                 "tool_choice": tool_choice,
+                "think": think,
             }
         )
 

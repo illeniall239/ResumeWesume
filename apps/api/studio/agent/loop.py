@@ -593,10 +593,19 @@ def _risk_of(name: str) -> str:
 
 
 def _consent_ref(name: str, args: BaseModel) -> str:
-    for attribute in ("nid", "field"):
+    """What a confirmation is *for*.
+
+    The token is `tool:ref`, so this decides how narrow a "yes" is. `page` is
+    included because without it every page-removal shares the empty ref -- and
+    confirming "remove the blank page 3" would silently authorise removing
+    page 1 later in the same turn.
+    """
+    for attribute in ("nid", "field", "page"):
         value = getattr(args, attribute, None)
         if isinstance(value, str):
             return value
+        if isinstance(value, int):
+            return str(value)
     return ""
 
 

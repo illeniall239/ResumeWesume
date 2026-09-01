@@ -24,6 +24,8 @@ from typing import Any, Callable, ClassVar, Literal
 
 from pydantic import BaseModel, Field
 
+from studio.doc.arrange import ArrangeError
+from studio.doc.arrange import arrange as arrange_ops
 from studio.doc.nodes import NodeKind, mint
 from studio.doc.ops import (
     DocOp,
@@ -31,7 +33,9 @@ from studio.doc.ops import (
     MoveNode,
     RemoveNode,
     Reorder,
+    SetElementStyle,
     SetField,
+    SetGeometry,
     SetSection,
     SetStyle,
     SetText,
@@ -133,6 +137,68 @@ class FindText(ToolSpec):
 # --- Tier A: prose ----------------------------------------------------------
 
 
+def frames_bound_to(doc: StudioDoc, ref: str) -> list[str]:
+    """Ids of every placed frame rendering ``ref``.
+
+    Content and layout are separate subtrees, so removing one leaves the other
+    dangling unless the caller says otherwise. This is the lookup that lets a
+    delete take its own boxes with it.
+    """
+    return [
+        element.nid
+        for page in doc.pages
+        for element in page.elements
+        if getattr(element, "ref", None) == ref
+    ]
+
+
+def orphaned_blocks(doc: StudioDoc, removing: list[str]) -> list[str]:
+    """Free text blocks that nothing would render once ``removing`` is gone.
+
+    The mirror image of :func:`frames_bound_to`. A frame bound to a section is a
+    *view* of content that lives in the resume, so removing it deletes nothing
+    and the words return to the flow. A frame bound to a ``txb_`` block is the
+    only home those words have -- leave the block behind and the coverage gate
+    calls it stranded and refuses the whole batch.
+    """
+    doomed = set(removing)
+    surviving = {
+        element.ref
+        for page in doc.pages
+        for element in page.elements
+        if getattr(element, "ref", None) is not None and element.nid not in doomed
+    }
+
+    blocks: list[str] = []
+    for page in doc.pages:
+        for element in page.elements:
+            ref = getattr(element, "ref", None)
+            if element.nid not in doomed or ref is None:
+                continue
+            if not ref.startswith("txb_") or ref in surviving or ref in blocks:
+                continue
+            blocks.append(ref)
+    return blocks
+
+
+def _without_trailing_ellipsis(value: str) -> str:
+    """Drop a trailing ellipsis the model copied from its own reading material.
+
+    The agent reads the document as an outline that clips long values and marks
+    the cut with "…". After forty such lines it writes one into the replacement
+    text, and a resume bullet that trails off mid-thought is a defect the user
+    has to notice and fix by hand.
+
+    Only the agent's output is normalised, never a direct edit: a person typing
+    an ellipsis into their own resume meant to.
+    """
+    trimmed = value.rstrip()
+    for mark in ("…", "..."):
+        if trimmed.endswith(mark):
+            return trimmed[: -len(mark)].rstrip(" ,;:-–—") or value
+    return value
+
+
 class RewriteTextArgs(BaseModel):
     nid: str = Field(description="Node id, e.g. blt_9c21x or sum_00001.")
     value: str = Field(description="The replacement text.")
@@ -155,7 +221,10 @@ class RewriteText(ToolSpec):
     def compile(self, args: RewriteTextArgs, doc: StudioDoc) -> list[DocOp]:
         return [
             SetText(
-                nid=args.nid, value=args.value, expect=args.expect, reason=args.reason
+                nid=args.nid,
+                value=_without_trailing_ellipsis(args.value),
+                expect=args.expect,
+                reason=args.reason,
             )
         ]
 
@@ -467,7 +536,16 @@ class RemoveEntry(ToolSpec):
     Args = RemoveEntryArgs
 
     def compile(self, args: RemoveEntryArgs, doc: StudioDoc) -> list[DocOp]:
-        return [RemoveNode(nid=args.nid, reason=args.reason)]
+        # Take the boxes that were showing it with it. Deleting the content
+        # alone would leave a frame pointing at nothing, which the coverage
+        # gate refuses -- so the tool would simply stop working the moment a
+        # document had a layout. Expanded here rather than cascaded inside
+        # ``_do_remove`` so that each removal stays one op with one inverse,
+        # which is what keeps undo total.
+        return [
+            *(RemoveNode(nid=nid, reason=args.reason) for nid in frames_bound_to(doc, args.nid)),
+            RemoveNode(nid=args.nid, reason=args.reason),
+        ]
 
     def grants(self, args: RemoveEntryArgs, doc: StudioDoc) -> list[IntentGrant]:
         return [IntentGrant(GrantScope.ENTRY_REMOVE, args.nid, origin="consent")]
@@ -548,7 +626,7 @@ class SetSectionTool(ToolSpec):
     Args = SetSectionArgs
 
     def compile(self, args: SetSectionArgs, doc: StudioDoc) -> list[DocOp]:
-        return [
+        ops: list[DocOp] = [
             SetSection(
                 key=args.key,
                 visible=args.visible,
@@ -557,8 +635,256 @@ class SetSectionTool(ToolSpec):
             )
         ]
 
+        # A section's visibility is a fact about content, but on a canvas the
+        # frames are what actually draw it. Setting one without the other means
+        # "hide my education" leaves education fully visible -- the flag flips
+        # and nothing on the page changes.
+        if args.visible is not None:
+            for nid in frames_bound_to(doc, args.key):
+                ops.append(
+                    SetElementStyle(nid=nid, patch={"visible": args.visible}, reason=args.reason)
+                )
+        return ops
+
     def grants(self, args: SetSectionArgs, doc: StudioDoc) -> list[IntentGrant]:
         return [IntentGrant(GrantScope.SECTION, args.key)]
+
+
+class AddPageArgs(BaseModel):
+    after: int | None = Field(
+        default=None,
+        description="1-based page number to insert after. Omit to add at the end.",
+    )
+    reason: str = ""
+
+
+class AddPage(ToolSpec):
+    name = "add_page"
+    tier = "A"
+    description = """
+    Add a blank page. Tier A because blank paper destroys nothing: it adds
+    space without touching a word of the resume.
+    """
+    Args = AddPageArgs
+
+    def compile(self, args: AddPageArgs, doc: StudioDoc) -> list[DocOp]:
+        index = -1 if args.after is None else min(max(args.after, 0), len(doc.pages))
+        return [
+            InsertNode(
+                parent="pages",
+                index=index,
+                node={
+                    "nid": mint(NodeKind.PAGE),
+                    "size": "A4",
+                    "orientation": "portrait",
+                    "background": None,
+                    "elements": [],
+                },
+                reason=args.reason,
+            )
+        ]
+
+
+class RemoveElementArgs(BaseModel):
+    nid: str = Field(description="Id of the image, shape or box to remove.")
+    reason: str = ""
+
+
+class RemoveElement(ToolSpec):
+    name = "remove_element"
+    tier = "B"
+    description = """
+    Remove an image, a shape, or a box from the page. Removing a box that was
+    showing part of the resume does not delete those words -- they return to
+    the normal flow. Removing a box of free text you or the user added does
+    delete its words, because that box is the only place they exist. To delete
+    a job or a bullet outright, use remove_entry.
+    """
+    Args = RemoveElementArgs
+
+    def compile(self, args: RemoveElementArgs, doc: StudioDoc) -> list[DocOp]:
+        # Restricted by prefix, and raised from `compile` because that is the
+        # only hook the loop actually calls -- a separate `validate` method
+        # would look like a guard while never running. A model asked to
+        # "remove the photo" that reaches for a bullet id gets told what it did
+        # wrong; without this the bullet is quietly deleted instead.
+        if args.nid.startswith("pag_"):
+            raise ToolError(
+                f"{args.nid} is a page. Use remove_page, which will tell you if "
+                "the page still holds part of the resume."
+            )
+        if not args.nid.startswith(("img_", "shp_", "frm_")):
+            raise ToolError(
+                f"{args.nid} is not a page element. This tool removes images, "
+                "shapes and boxes; use remove_entry for resume content."
+            )
+        return [
+            # A box bound to a free text block is the only thing rendering it.
+            # Removing the frame alone leaves the block covered by nothing,
+            # which the coverage gate reads as stranded content and refuses --
+            # so without this the tool simply fails on the one kind of box a
+            # user is most likely to ask to remove. Cascading in the same batch
+            # rather than inside the engine keeps one op to one effect and the
+            # whole removal to one undo step, as ``remove_entry`` does.
+            *(
+                RemoveNode(nid=nid, reason=args.reason)
+                for nid in orphaned_blocks(doc, [args.nid])
+            ),
+            RemoveNode(nid=args.nid, reason=args.reason),
+        ]
+
+
+class ArrangeArgs(BaseModel):
+    preset: Literal[
+        "align_left",
+        "align_right",
+        "align_top",
+        "align_bottom",
+        "align_horizontal_centers",
+        "align_vertical_centers",
+        "distribute_horizontally",
+        "distribute_vertically",
+        "center_on_page_horizontally",
+        "center_on_page_vertically",
+        "center_on_page",
+        "match_width",
+        "match_height",
+    ] = Field(description="Which arrangement to apply.")
+    nids: list[str] = Field(
+        description=(
+            "Ids of the boxes, images or shapes to arrange, as listed under "
+            "LAYOUT. All must be on the same page."
+        )
+    )
+    reason: str = ""
+
+
+class Arrange(ToolSpec):
+    name = "arrange"
+    tier = "A"
+    description = """
+    Line up, space out, centre or size-match the boxes, images and shapes on a
+    page. You choose the arrangement and which elements it applies to; the
+    positions are worked out here, so you never give coordinates.
+
+    Presets: align_left, align_right, align_top, align_bottom,
+    align_horizontal_centers, align_vertical_centers, distribute_horizontally,
+    distribute_vertically (three or more elements), center_on_page_horizontally,
+    center_on_page_vertically, center_on_page, match_width, match_height.
+
+    This is the only way to change where anything sits. There is no tool that
+    takes a position, and nothing here can move an element off the page.
+    """
+    Args = ArrangeArgs
+
+    def compile(self, args: ArrangeArgs, doc: StudioDoc) -> list[DocOp]:
+        # Raised from `compile` because it is the only hook the loop calls, and
+        # every message names the thing to do differently -- a model told
+        # "those are on different pages" retries usefully, where a silent empty
+        # list would have it report success for a layout that never changed.
+        try:
+            ops = arrange_ops(doc, args.preset, args.nids)
+        except ArrangeError as error:
+            raise ToolError(str(error)) from error
+
+        if not ops:
+            raise ToolError(
+                "Those elements are already arranged that way; nothing to do."
+            )
+
+        # A frame the assistant places is placed by hand as surely as one the
+        # user drags: without this the reflow pass owns it again and stacks it
+        # back into the column on the next load, so the arrangement would
+        # survive the turn and be gone by morning.
+        #
+        # Every frame in the arrangement, not only the ones that moved. A box
+        # already sitting on the target line is still part of a deliberate
+        # arrangement, and leaving it unpinned means the reflow shifts it later
+        # and breaks the alignment that everything else was moved to make.
+        pinned: list[DocOp] = [
+            SetElementStyle(nid=nid, patch={"pinned": True}, reason=args.reason)
+            for nid in dict.fromkeys(args.nids)
+            if _is_unpinned_frame(doc, nid)
+        ]
+        for op in ops:
+            op.reason = args.reason
+        return [*pinned, *ops]
+
+    def label(self, args: ArrangeArgs) -> str:
+        return f"arranged {len(args.nids)} element(s)"
+
+
+def _is_unpinned_frame(doc: StudioDoc, nid: str) -> bool:
+    for page in doc.pages:
+        for element in page.elements:
+            if element.nid == nid:
+                return hasattr(element, "pinned") and not element.pinned
+    return False
+
+
+class RemovePageArgs(BaseModel):
+    page: int = Field(description="1-based page number to remove.", ge=1)
+    reason: str = ""
+
+
+class RemovePage(ToolSpec):
+    name = "remove_page"
+    tier = "C"
+    description = """
+    Remove a page. Only works on a page that holds nothing but images, shapes
+    and boxes -- a page still showing part of the resume cannot be deleted
+    until that content is moved somewhere else.
+    """
+    Args = RemovePageArgs
+
+    def compile(self, args: RemovePageArgs, doc: StudioDoc) -> list[DocOp]:
+        if args.page > len(doc.pages):
+            raise ToolError(
+                f"There is no page {args.page}; the resume has {len(doc.pages)}."
+            )
+        if len(doc.pages) <= 1:
+            raise ToolError("A resume needs at least one page.")
+
+        page = doc.pages[args.page - 1]
+        # Refused here rather than left to the coverage gate, so the model is
+        # told *why* and can offer to move the content instead. The gate would
+        # reject the batch with a node id, which is not something the user can
+        # act on.
+        covered_elsewhere = {
+            element.ref
+            for other in doc.pages
+            if other.nid != page.nid
+            for element in other.elements
+            if hasattr(element, "ref")
+        }
+        stranded = [
+            element.ref
+            for element in page.elements
+            if hasattr(element, "ref")
+            and not element.ref.startswith("txb_")
+            and element.ref not in covered_elsewhere
+        ]
+        if stranded:
+            raise ToolError(
+                f"Page {args.page} is the only place showing {', '.join(stranded)}. "
+                "Move that onto another page first, or ask to delete the content itself."
+            )
+
+        # Hand-placed text dies with its box; leaving it behind would keep the
+        # words in the ATS export while being invisible in the editor.
+        blocks = [
+            element.ref
+            for element in page.elements
+            if hasattr(element, "ref") and element.ref.startswith("txb_")
+        ]
+        return [
+            *(RemoveNode(nid=nid, reason=args.reason) for nid in blocks),
+            RemoveNode(nid=page.nid, reason=args.reason),
+        ]
+
+    def grants(self, args: RemovePageArgs, doc: StudioDoc) -> list[IntentGrant]:
+        page = doc.pages[args.page - 1] if args.page <= len(doc.pages) else None
+        return [IntentGrant(GrantScope.ENTRY_REMOVE, page.nid, origin="consent")] if page else []
 
 
 # --- registry ---------------------------------------------------------------
@@ -601,6 +927,10 @@ def _default_specs() -> list[ToolSpec]:
         SetBulletStyle(),
         MoveEntry(),
         SetSectionTool(),
+        AddPage(),
+        Arrange(),
+        RemoveElement(),
+        RemovePage(),
         AddSkill(),
         RemoveSkill(),
         SetEntryField(),
@@ -636,6 +966,17 @@ _TIER_C_HINTS = (
     "job title",
     "degree",
     "university",
+    # Pages. Without these a confirmation follow-up ("yes, remove page 3")
+    # matches no hint, tier C is not exposed, and the assistant reports that it
+    # has no tool for something it proposed one turn earlier.
+    "page",
+    "pages",
+    "blank page",
+    "get rid of",
+    "yes",
+    "go ahead",
+    "confirm",
+    "do it",
 )
 
 

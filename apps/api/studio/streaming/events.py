@@ -16,6 +16,13 @@ matters because a local model turn can legitimately run for minutes.
 The type set is closed and versioned. Both the UI and the model-facing repair
 messages key off ``code`` values, so a new failure mode must be named here
 rather than described in free text.
+
+Two disjoint subsets share the envelope. The turn events describe an agent
+editing an existing document; the import events at the bottom describe a PDF
+being turned into one, which has no document and no version until the user
+confirms it. They share ``seq``, replay and heartbeats because an import has
+exactly the same problem a turn does -- minutes of silence while a local model
+works -- and none of that machinery is turn-specific.
 """
 
 from __future__ import annotations
@@ -178,3 +185,99 @@ class Heartbeat(Event):
     """
 
     type: Literal["heartbeat"] = "heartbeat"
+
+
+# --------------------------------------------------------------------------
+# Import
+#
+# A resume being read out of an uploaded file. ``turn_id`` on the envelope
+# carries the import id; nothing else is shared with a turn, and no event here
+# refers to a document, because an import has not created one yet -- that
+# happens only if the user confirms what they are shown.
+# --------------------------------------------------------------------------
+
+
+class ImportStarted(Event):
+    type: Literal["import_started"] = "import_started"
+    filename: str
+    pages: int = 0
+    chars: int = 0
+    # 1 or 2. Reported because a wrongly detected second column is the failure
+    # most likely to make a parse look inexplicably scrambled.
+    columns: int = 1
+    warnings: list[str] = Field(default_factory=list)
+
+
+class SectionFound(Event):
+    """Emitted for every section up front, before any parsing starts.
+
+    Gives the client the whole checklist immediately, so the user can see what
+    was found in their resume within a second of uploading it rather than
+    watching an empty box for a minute.
+    """
+
+    type: Literal["section_found"] = "section_found"
+    key: str
+    heading: str = ""
+    chars: int = 0
+    order: int = 0
+    # False for the sections parsed deterministically, so the UI can show them
+    # resolving instantly instead of implying a model call that never happens.
+    needs_model: bool = False
+
+
+class SectionStarted(Event):
+    type: Literal["section_started"] = "section_started"
+    key: str
+
+
+class SectionParsed(Event):
+    type: Literal["section_parsed"] = "section_parsed"
+    key: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    # The text this was parsed from, so the review screen can show the result
+    # beside its source rather than asking the user to take it on trust.
+    source_text: str = ""
+    ms: int = 0
+
+
+class SectionFailed(Event):
+    """A section that could not be parsed.
+
+    Carries its source text like a successful one. A section that failed is
+    exactly the section the user most needs to see, and dropping it silently
+    would hide the failure this whole design exists to make visible.
+    """
+
+    type: Literal["section_failed"] = "section_failed"
+    key: str
+    code: Literal["no_json", "invalid_shape", "timeout", "provider_error", "empty"]
+    message: str = ""
+    source_text: str = ""
+
+
+class SectionSkipped(Event):
+    """A section we recognised but do not import yet."""
+
+    type: Literal["section_skipped"] = "section_skipped"
+    key: str
+    heading: str = ""
+    source_text: str = ""
+
+
+class ImportReady(Event):
+    """The parse is finished and is waiting on the user.
+
+    Carries both shapes on purpose. ``doc`` is for rendering the preview and
+    its ids are throwaway; ``resume_data`` is what the client posts back to
+    create the document, so ids get minted once, server-side, by the one
+    function that has ever minted them.
+    """
+
+    type: Literal["import_ready"] = "import_ready"
+    title: str = ""
+    resume_data: dict[str, Any] = Field(default_factory=dict)
+    doc: dict[str, Any] = Field(default_factory=dict)
+    source_text: str = ""
+    parsed: int = 0
+    failed: int = 0

@@ -123,6 +123,7 @@ class EntryIntegrityGuard:
                     list(original_entries).index(nid), len(current_entries)
                 )
                 current_entries.insert(position, entry.model_copy(deep=True))
+                _restore_frames(before, result, nid)
                 reports.append(
                     DriftReport(
                         guard=self.name,
@@ -286,6 +287,39 @@ class QualityGuard:
         return after, reports
 
 
+def _restore_frames(before: StudioDoc, result: StudioDoc, nid: str) -> None:
+    """Put back the boxes that were rendering a restored entry.
+
+    Restoring content without its layout leaves a node no frame will draw. The
+    coverage gate would refuse that as an op batch, but a guard correction is
+    written through ``repo.replace`` and never passes through it -- so the
+    invalid document persists silently, and the *next* edit the user makes is
+    rejected for a state they did not create.
+
+    Only frames that are actually missing are restored, and only onto pages
+    that still exist, so a correction never duplicates a box or resurrects a
+    page the user legitimately deleted. Coverage is over containers, so this is
+    usually a no-op: a section frame already covers the entry, and this matters
+    only when the user has arranged that section by hand.
+    """
+    present = {
+        element.nid
+        for page in result.pages
+        for element in page.elements
+    }
+    live_pages = {page.nid: page for page in result.pages}
+
+    for page in before.pages:
+        target = live_pages.get(page.nid)
+        if target is None:
+            continue
+        for index, element in enumerate(page.elements):
+            if getattr(element, "ref", None) != nid or element.nid in present:
+                continue
+            # Back at its old position in the list, which is paint order.
+            target.elements.insert(min(index, len(target.elements)), element.model_copy(deep=True))
+
+
 def _all_text(doc: StudioDoc) -> list[str]:
     out: list[str] = []
     if doc.summary:
@@ -298,6 +332,12 @@ def _all_text(doc: StudioDoc) -> list[str]:
             out.append(entry.detail.text)
     for group in doc.skills:
         out.extend(item.text for item in group.items)
+    for section in doc.custom:
+        out.extend(item.text for item in section.items)
+    # Hand-placed text is content like any other. Without it the quality guard
+    # reads a word-count collapse on a turn that touched nothing.
+    for block in doc.blocks:
+        out.extend(line.text for line in block.lines)
     return out
 
 

@@ -15,6 +15,8 @@ the right one. Full text is available per section, on request, through
 
 from __future__ import annotations
 
+from typing import Any
+
 from studio.doc.schema import StudioDoc
 
 # Enough to identify a line, not enough to reproduce it.
@@ -82,7 +84,55 @@ def outline(doc: StudioDoc, *, section: str | None = None) -> str:
         for custom in doc.custom:
             lines.append(f"  [{custom.nid}] {custom.label or custom.key}")
 
+    if wanted("blocks") and doc.blocks:
+        lines.append("TEXT BOXES:")
+        for block in doc.blocks:
+            for line in block.lines:
+                lines.append(f"  [{line.nid}] {_clip(line.text)}")
+
+    if section is None:
+        lines.extend(_layout_preamble(doc))
+
     return "\n".join(lines) if lines else "(the resume is empty)"
+
+
+def _layout_preamble(doc: StudioDoc) -> list[str]:
+    """What sits on which page, and what each thing is called.
+
+    **Still no coordinates.** The assistant can name an element and say which
+    page it is on; it cannot read a position or a size, because it has no tool
+    that takes one. ``arrange`` takes a preset and a list of ids and does the
+    arithmetic server-side, so ids are exactly what it needs and numbers are
+    exactly what it must not have -- a model given coordinates it cannot act on
+    invents instructions the user cannot follow.
+
+    Ids rather than only section names, because ``arrange`` addresses elements:
+    without them the assistant would have to guess a ``frm_`` id, and a guess
+    is a rejected op.
+    """
+    if not doc.pages:
+        return []
+
+    lines = [f"LAYOUT: {len(doc.pages)} page(s). Ids below are for `arrange`."]
+    for number, page in enumerate(doc.pages, start=1):
+        named = [f"{element.nid} ({_describes(element)})" for element in page.elements]
+        parts = ", ".join(named) if named else "empty"
+        lines.append(f"  page {number}: {parts}")
+    return lines
+
+
+def _describes(element: Any) -> str:
+    """What an element is, in the words the user would use for it."""
+    ref = getattr(element, "ref", None)
+    if ref is None:
+        if getattr(element, "asset", None) is not None:
+            return "image"
+        return f"{getattr(element, 'shape', 'shape')} shape"
+    if ref.startswith("txb_"):
+        return "text box"
+    if ref.startswith(("exp_", "edu_", "prj_")):
+        return f"entry {ref}"
+    return ref
 
 
 def full_section(doc: StudioDoc, section: str) -> str:
@@ -115,6 +165,12 @@ def full_section(doc: StudioDoc, section: str) -> str:
             lines.append(f"[{group.nid}] {group.label}")
             for item in group.items:
                 lines.append(f"  [{item.nid}] {item.text} (source: {item.source})")
+
+    if section in {"blocks", "text"}:
+        for block in doc.blocks:
+            lines.append(f"[{block.nid}] {block.role} text box")
+            for line in block.lines:
+                lines.append(f"  [{line.nid}] {line.text}")
 
     return "\n".join(lines) if lines else f"(no {section})"
 
@@ -160,6 +216,15 @@ def find(doc: StudioDoc, query: str, limit: int = 5) -> list[dict[str, str]]:
     for group in doc.skills:
         for item in group.items:
             consider(item.nid, "skill", item.text)
+    for section in doc.custom:
+        for item in section.items:
+            consider(item.nid, "custom", item.text)
+    # Text the user placed by hand. Without this the assistant cannot act on
+    # "change the note next to my photo" -- it would search, find nothing, and
+    # report that the resume does not contain it.
+    for block in doc.blocks:
+        for line in block.lines:
+            consider(line.nid, "text box", line.text)
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [payload for _, payload in scored[:limit]]

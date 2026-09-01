@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from studio.config import settings
 from studio.llm.factory import BackendFactory, health
 from studio.persistence.repo import DocumentRepo
-from studio.routers import documents, export, turns
+from studio.routers import assets, documents, export, ingest, turns
 from studio.streaming.channel import TurnRegistry
 
 logging.basicConfig(
@@ -56,6 +56,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.repo = repo
     app.state.turns = TurnRegistry()
+    # A registry of its own, so an import and a turn cannot collide on an id
+    # and so shutting one down never touches the other.
+    app.state.imports = TurnRegistry()
     app.state.backends = BackendFactory()
 
     logger.info(
@@ -69,6 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # Stop in-flight turns before the database goes away, or a turn's final
         # write lands on a disposed engine.
         await app.state.turns.shutdown()
+        await app.state.imports.shutdown()
         await repo.dispose()
 
 
@@ -80,9 +84,9 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     # The browser cannot read these on a cross-origin response unless they are
-    # exposed. ETag drives optimistic concurrency; X-Turn-Id lets a client
-    # reattach to a stream it lost.
-    expose_headers=["ETag", "X-Turn-Id"],
+    # exposed. ETag drives optimistic concurrency; X-Turn-Id and X-Import-Id
+    # let a client reattach to a stream it lost.
+    expose_headers=["ETag", "X-Turn-Id", "X-Import-Id"],
 )
 
 
@@ -133,6 +137,8 @@ async def observability(request: Request, call_next):
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
 app.include_router(turns.router, prefix="/api/v1")
+app.include_router(ingest.router, prefix="/api/v1")
+app.include_router(assets.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")

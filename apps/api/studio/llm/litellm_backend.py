@@ -103,6 +103,7 @@ class LiteLLMBackend(ChatBackend):
         tool_choice: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 2048,
+        think: bool | None = None,
     ) -> AsyncIterator[ModelChunk]:
         import litellm
 
@@ -120,6 +121,12 @@ class LiteLLMBackend(ChatBackend):
         }
         if self.spec.api_base:
             kwargs["api_base"] = self.spec.api_base
+        if think is not None:
+            # Ollama's own switch: its chat template turns this into the
+            # /think or /no_think token the model was trained on. Passing that
+            # token as message text does nothing, because the template appends
+            # its own. Providers that do not know the parameter drop it above.
+            kwargs["think"] = think
         if tools and self.spec.supports_tools:
             kwargs["tools"] = tools
             if tool_choice:

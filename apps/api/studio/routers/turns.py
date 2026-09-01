@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, AsyncIterator
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -19,18 +19,12 @@ from pydantic import BaseModel, Field
 
 from studio.agent.loop import TurnRequest, TurnRunner
 from studio.streaming.channel import TurnChannel
+from studio.streaming.http import MEDIA_TYPE, STREAM_HEADERS, ndjson
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/turns", tags=["turns"])
 
-# Chunked NDJSON. Buffering proxies are the enemy of a streaming UI, and
-# X-Accel-Buffering is the one nginx respects.
-_STREAM_HEADERS = {
-    "Cache-Control": "no-cache, no-transform",
-    "X-Accel-Buffering": "no",
-    "Connection": "keep-alive",
-}
 
 
 class StartTurnRequest(BaseModel):
@@ -42,14 +36,6 @@ class StartTurnRequest(BaseModel):
     # person holding the caret outranks the assistant.
     busy_nids: list[str] = Field(default_factory=list)
     consent_tokens: list[str] = Field(default_factory=list)
-
-
-def _ndjson(channel: TurnChannel, *, from_seq: int = 0) -> AsyncIterator[bytes]:
-    async def generate() -> AsyncIterator[bytes]:
-        async for event in channel.drain(from_seq=from_seq):
-            yield event.line().encode("utf-8")
-
-    return generate()
 
 
 @router.post("")
@@ -85,9 +71,9 @@ async def start_turn(request: Request, body: StartTurnRequest) -> StreamingRespo
     app.state.turns.attach(turn_id, task)
 
     return StreamingResponse(
-        _ndjson(channel),
-        media_type="application/x-ndjson",
-        headers={**_STREAM_HEADERS, "X-Turn-Id": turn_id},
+        ndjson(channel),
+        media_type=MEDIA_TYPE,
+        headers={**STREAM_HEADERS, "X-Turn-Id": turn_id},
     )
 
 
@@ -110,9 +96,9 @@ async def resume_turn(
         )
 
     return StreamingResponse(
-        _ndjson(channel, from_seq=from_seq),
-        media_type="application/x-ndjson",
-        headers={**_STREAM_HEADERS, "X-Turn-Id": turn_id},
+        ndjson(channel, from_seq=from_seq),
+        media_type=MEDIA_TYPE,
+        headers={**STREAM_HEADERS, "X-Turn-Id": turn_id},
     )
 
 

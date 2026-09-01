@@ -74,6 +74,43 @@ class TestCreate:
         assert response.status_code == 200
         assert len(response.json()) == 1
 
+    async def test_create_stores_source_text(self, client: AsyncClient) -> None:
+        """An imported document keeps the text it was parsed from.
+
+        Nothing reads it back during editing, so this is the only place the
+        wiring is observable.
+        """
+        from sqlalchemy import select
+
+        from studio.main import app
+        from studio.persistence.models import Document
+
+        source = "ALEX MORGAN\n\nEXPERIENCE\nNorthwind, 2021 - Present"
+        response = await client.post(
+            "/api/v1/documents",
+            json={"title": "Alex", "resume_data": SEED, "source_markdown": source},
+        )
+        assert response.status_code == 201
+
+        repo = app.state.repo
+        async with repo._session() as session:
+            row = (
+                await session.execute(
+                    select(Document).where(Document.id == response.json()["id"])
+                )
+            ).scalar_one()
+        assert row.source_markdown == source
+
+    async def test_source_text_is_not_echoed_in_the_response(
+        self, client: AsyncClient
+    ) -> None:
+        """It can be tens of kilobytes and no client needs it back."""
+        response = await client.post(
+            "/api/v1/documents",
+            json={"title": "Alex", "resume_data": SEED, "source_markdown": "x" * 100},
+        )
+        assert "source_markdown" not in response.json()
+
 
 class TestFetch:
     async def test_get_sets_etag(self, client: AsyncClient) -> None:
@@ -190,3 +227,149 @@ class TestDelete:
         assert (
             await client.get(f"/api/v1/documents/{created['id']}")
         ).status_code == 404
+
+
+class TestUndoRedo:
+    """Undo through the real stack.
+
+    The point of routing reversal through ``apply_ops`` rather than restoring a
+    snapshot is that it works identically whoever made the edit -- a direct
+    edit, a drag, or an agent turn -- and that each undo is itself an ordinary
+    version, so it can be redone.
+    """
+
+    async def undo(self, client: AsyncClient, doc_id: str):
+        return await client.post(f"/api/v1/documents/{doc_id}/undo")
+
+    async def redo(self, client: AsyncClient, doc_id: str):
+        return await client.post(f"/api/v1/documents/{doc_id}/redo")
+
+    async def edit(self, client: AsyncClient, doc: dict, ops: list) -> dict:
+        response = await client.post(
+            f"/api/v1/documents/{doc['id']}/ops",
+            headers={"If-Match": f'W/"{doc["version"]}-"'},
+            json={"ops": ops},
+        )
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    def first_bullet(self, body: dict) -> str:
+        return body["doc"]["experience"][0]["bullets"][0]["text"]
+
+    async def test_a_text_edit_round_trips(self, client: AsyncClient) -> None:
+        doc = await seed(client)
+        nid = doc["doc"]["experience"][0]["bullets"][0]["nid"]
+        original = doc["doc"]["experience"][0]["bullets"][0]["text"]
+
+        edited = await self.edit(
+            client, doc, [{"op": "set_text", "nid": nid, "value": "Changed it."}]
+        )
+        assert self.first_bullet(edited) == "Changed it."
+
+        undone = await self.undo(client, doc["id"])
+        assert undone.status_code == 200
+        assert self.first_bullet(undone.json()) == original
+        assert undone.json()["reversed_version"] == edited["version"]
+
+        redone = await self.redo(client, doc["id"])
+        assert redone.status_code == 200
+        assert self.first_bullet(redone.json()) == "Changed it."
+
+    async def test_a_delete_comes_back_in_its_original_place(
+        self, client: AsyncClient
+    ) -> None:
+        """The case the old partial `invert` got wrong: it restored to the end."""
+        doc = await seed(client)
+        exp = doc["doc"]["experience"][0]
+        before = [b["nid"] for b in exp["bullets"]]
+        assert len(before) >= 1
+
+        await self.edit(
+            client, doc, [{"op": "insert_node", "parent": exp["nid"], "index": -1,
+                           "node": {"nid": "blt_zzzz1", "text": "Second."}}]
+        )
+        current = (await client.get(f"/api/v1/documents/{doc['id']}")).json()
+        await self.edit(
+            client, current, [{"op": "remove_node", "nid": before[0]}]
+        )
+
+        undone = await self.undo(client, doc["id"])
+        assert undone.status_code == 200
+        restored = [b["nid"] for b in undone.json()["doc"]["experience"][0]["bullets"]]
+        assert restored[0] == before[0], "restored to the wrong position"
+
+    async def test_a_move_round_trips(self, client: AsyncClient) -> None:
+        doc = await seed(client)
+        exp = doc["doc"]["experience"][0]
+        await self.edit(
+            client, doc, [{"op": "insert_node", "parent": exp["nid"], "index": -1,
+                           "node": {"nid": "blt_zzzz2", "text": "Second."}}]
+        )
+        current = (await client.get(f"/api/v1/documents/{doc['id']}")).json()
+        order = [b["nid"] for b in current["doc"]["experience"][0]["bullets"]]
+
+        await self.edit(
+            client, current,
+            [{"op": "move_node", "nid": order[0], "parent": exp["nid"], "index": 1}],
+        )
+        moved = (await client.get(f"/api/v1/documents/{doc['id']}")).json()
+        assert [b["nid"] for b in moved["doc"]["experience"][0]["bullets"]] == order[::-1]
+
+        undone = await self.undo(client, doc["id"])
+        assert [b["nid"] for b in undone.json()["doc"]["experience"][0]["bullets"]] == order
+
+    async def test_undo_walks_back_through_several_edits(
+        self, client: AsyncClient
+    ) -> None:
+        doc = await seed(client)
+        nid = doc["doc"]["experience"][0]["bullets"][0]["nid"]
+        original = doc["doc"]["experience"][0]["bullets"][0]["text"]
+
+        current = doc
+        for value in ("one", "two", "three"):
+            current = await self.edit(
+                client, current, [{"op": "set_text", "nid": nid, "value": value}]
+            )
+
+        for expected in ("two", "one", original):
+            body = (await self.undo(client, doc["id"])).json()
+            assert self.first_bullet(body) == expected
+
+    async def test_nothing_to_undo_is_a_409_not_an_error(
+        self, client: AsyncClient
+    ) -> None:
+        doc = await seed(client)
+        response = await self.undo(client, doc["id"])
+        assert response.status_code == 409
+        assert "undo" in response.json()["detail"].lower()
+
+    async def test_nothing_to_redo_before_an_undo(self, client: AsyncClient) -> None:
+        doc = await seed(client)
+        nid = doc["doc"]["experience"][0]["bullets"][0]["nid"]
+        await self.edit(client, doc, [{"op": "set_text", "nid": nid, "value": "x"}])
+        assert (await self.redo(client, doc["id"])).status_code == 409
+
+    async def test_a_new_edit_clears_the_redo_stack(self, client: AsyncClient) -> None:
+        """Otherwise redo would resurrect work from before the branch and
+        overwrite what the user just did."""
+        doc = await seed(client)
+        nid = doc["doc"]["experience"][0]["bullets"][0]["nid"]
+
+        edited = await self.edit(
+            client, doc, [{"op": "set_text", "nid": nid, "value": "first"}]
+        )
+        await self.undo(client, doc["id"])
+
+        current = (await client.get(f"/api/v1/documents/{doc['id']}")).json()
+        await self.edit(
+            client, current, [{"op": "set_text", "nid": nid, "value": "second"}]
+        )
+
+        assert (await self.redo(client, doc["id"])).status_code == 409
+        final = (await client.get(f"/api/v1/documents/{doc['id']}")).json()
+        assert self.first_bullet(final) == "second"
+
+    async def test_undo_on_an_unknown_document_is_a_404(
+        self, client: AsyncClient
+    ) -> None:
+        assert (await self.undo(client, "nope")).status_code == 404

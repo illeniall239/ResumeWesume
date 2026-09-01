@@ -97,11 +97,24 @@ class ChatBackend(Protocol):
         tool_choice: str | None = None,
         temperature: float = 0.2,
         max_tokens: int = 2048,
+        think: bool | None = None,
     ) -> AsyncIterator[ModelChunk]:
         """Yield chunks until the model stops.
 
         Implementations must yield exactly one ``StreamEnd`` last, even on a
         provider error, so the caller has a single place to finalise a turn.
+
+        ``think`` asks a reasoning model to skip reasoning; ``None`` leaves the
+        model's default alone. It earns a place in this deliberately small
+        protocol because on a reasoning model it is not a tuning knob but the
+        difference between a working call and a failing one: qwen3 spends
+        several hundred tokens thinking before its first character of output,
+        so a transcription call sized for its answer hits the token ceiling
+        mid-thought and returns nothing at all. Measured on qwen3:14b, one
+        section: 35.2s with reasoning, 4.0s without, same output.
+
+        Turns leave it alone, because there the reasoning is the point -- the
+        chat pane has a control for showing it.
         """
         ...
 
