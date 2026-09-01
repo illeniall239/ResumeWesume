@@ -1,9 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 import type { DocumentResponse } from '@/contracts/doc';
 import { createDocument, listDocuments } from '@/lib/api';
+import { useImport } from '@/store/import';
 
 const SAMPLE = {
   personalInfo: {
@@ -54,6 +56,9 @@ const SAMPLE = {
 };
 
 export default function Home() {
+  const router = useRouter();
+  const startImport = useImport((state) => state.start);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -73,7 +78,10 @@ export default function Home() {
           ? { title: 'Alex Morgan (sample)', resume_data: SAMPLE }
           : { title: 'Untitled resume' }
       );
-      window.location.href = `/studio/${created.id}`;
+      // Client navigation, not a document load. Assigning to
+      // window.location.href tears down the module-scoped zustand stores,
+      // which would kill an import running in the background.
+      router.push(`/studio/${created.id}`);
     } catch (cause) {
       setError((cause as Error).message);
       setBusy(false);
@@ -91,13 +99,38 @@ export default function Home() {
       {error && <div className="notice">{error}</div>}
 
       <div style={{ display: 'flex', gap: 12, margin: '24px 0' }}>
+        <button
+          className="button button--primary"
+          onClick={() => fileInput.current?.click()}
+          disabled={busy}
+        >
+          Upload a resume
+        </button>
         <button className="button" onClick={() => create(true)} disabled={busy}>
           New from sample
         </button>
         <button className="button" onClick={() => create(false)} disabled={busy}>
           New blank
         </button>
+        <input
+          ref={fileInput}
+          type="file"
+          accept="application/pdf,.pdf"
+          hidden
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            // Cleared so choosing the same file twice in a row still fires.
+            event.target.value = '';
+            if (!file) return;
+            startImport(file);
+            router.push('/import');
+          }}
+        />
       </div>
+      <p style={{ color: '#6b7280', marginTop: -12, fontSize: 13 }}>
+        PDF only for now. Your resume is read on this machine and nothing is
+        saved until you have checked it.
+      </p>
 
       <h2 style={{ fontSize: 16 }}>Documents</h2>
       {documents.length === 0 && <p style={{ color: '#6b7280' }}>Nothing yet.</p>}

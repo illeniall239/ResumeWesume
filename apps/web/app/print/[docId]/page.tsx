@@ -1,3 +1,4 @@
+import { PageCanvas } from '@/canvas/page-canvas';
 import DocumentFlow from '@/render/document-flow';
 import { fetchDocument } from '@/lib/api';
 
@@ -8,18 +9,23 @@ import { fetchDocument } from '@/lib/api';
  * client JavaScript. Headless Chromium navigates here and waits for
  * `[data-print-root]`, which DocumentFlow carries.
  *
- * It renders the *same* DocumentFlow as the studio, so what you export is what
- * you saw. Keeping those on separate code paths is what made screen-versus-PDF
- * divergence a recurring bug in the previous app.
+ * Two templates share this route. `?template=ats` renders the content subtree
+ * through DocumentFlow -- the plain single column, geometry ignored -- and
+ * anything else renders the placed canvas. Both are the same components the
+ * studio uses, because screen-versus-PDF divergence was a recurring bug in the
+ * previous app whenever those were separate code paths.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function PrintPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ docId: string }>;
+  searchParams: Promise<{ template?: string }>;
 }) {
   const { docId } = await params;
+  const { template } = await searchParams;
 
   let doc = null;
   try {
@@ -31,9 +37,17 @@ export default async function PrintPage({
     return <div data-print-root />;
   }
 
-  return (
-    <div className="page">
-      <DocumentFlow doc={doc} />
-    </div>
-  );
+  // The ATS export ignores layout entirely and renders the content subtree
+  // through the flowing renderer. Nothing is reverse-engineered from boxes:
+  // it is the same component, on the same content, that produced every PDF
+  // this app has ever exported.
+  if (template === 'ats' || !doc.pages.length) {
+    return (
+      <div className="page">
+        <DocumentFlow doc={doc} />
+      </div>
+    );
+  }
+
+  return <PageCanvas doc={doc} />;
 }

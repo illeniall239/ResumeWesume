@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { applyOp, applyOps } from '@/doc/apply';
-import type { StudioDoc } from '@/contracts/doc';
+import type { DocOp, StudioDoc } from '@/contracts/doc';
 
 const BULLET_A = 'blt_aaaaa';
 const BULLET_B = 'blt_bbbbb';
@@ -50,6 +50,10 @@ function doc(): StudioDoc {
     ],
     custom: [],
     sections: [{ key: 'summary', label: 'Summary', visible: true, order: 0 }],
+    // No pages: a flowing document, which is what these op tests are about.
+    blocks: [],
+    pages: [],
+    reading_order: null,
   };
 }
 
@@ -168,5 +172,167 @@ describe('client op mirror', () => {
     expect(next.experience[0].bullets[0].text).toBe('First.');
     expect(next.experience[0].bullets[1].text).toBe('Second.');
     expect(next.skills[0].items.map((i) => i.text)).toEqual(['Python']);
+  });
+});
+
+/** The same document, with a page and one frame on it. */
+function pagedDoc(): StudioDoc {
+  const base = doc();
+  base.schema_version = 2;
+  base.blocks = [];
+  base.pages = [
+    {
+      nid: 'pag_aaaaa',
+      size: 'A4',
+      orientation: 'portrait',
+      background: null,
+      elements: [
+        {
+          nid: 'frm_aaaaa',
+          ref: 'experience',
+          rect: { x: 28, y: 28, w: 538, h: 200 },
+          rotation: 0,
+          autogrow: 'height',
+          visible: true,
+          locked: false,
+          style: {
+            align: 'left',
+            font_scale: 1,
+            color: null,
+            background: null,
+            padding: 0,
+            radius: 0,
+            opacity: 1,
+          },
+        },
+      ],
+    },
+  ] as StudioDoc['pages'];
+  return base;
+}
+
+describe('setting a field', () => {
+  it('writes an attribute of an entry', () => {
+    const doc = pagedDoc();
+    const next = applyOps(doc, [
+      { op: 'set_field', target: `${doc.experience[0].nid}.company`, value: 'Contoso' },
+    ] as unknown as DocOp[]);
+
+    expect(next.experience[0].company).toBe('Contoso');
+  });
+
+  it('reaches any addressable node, not only the three entry lists', () => {
+    // The server resolves this through its own index, so a mirror that knew
+    // only about experience/education/projects left a skill group's label
+    // editing on the server and not on screen.
+    const doc = pagedDoc();
+    const group = doc.skills[0];
+    const next = applyOps(doc, [
+      { op: 'set_field', target: `${group.nid}.label`, value: 'Languages' },
+    ] as unknown as DocOp[]);
+
+    expect(next.skills[0].label).toBe('Languages');
+  });
+
+  it('writes personal details', () => {
+    const doc = pagedDoc();
+    const next = applyOps(doc, [
+      { op: 'set_field', target: 'personal.email', value: 'a@new.com' },
+    ] as unknown as DocOp[]);
+
+    expect(next.personal.email).toBe('a@new.com');
+  });
+});
+
+describe('inserting a node the server would have completed', () => {
+  // This mirror exists to predict the server's answer, and the server fills
+  // container defaults during validation. Splicing a caller's object in raw
+  // let a page without `elements` reach the next op as an undefined it
+  // iterated -- a TypeError that took the whole editor down mid-reflow.
+
+  it('gives an inserted page an elements array', () => {
+    const doc = pagedDoc();
+    const next = applyOps(doc, [
+      { op: 'insert_node', parent: 'pages', index: -1, node: { nid: 'pag_new01', size: 'A4' } },
+    ] as unknown as DocOp[]);
+
+    expect(next.pages).toHaveLength(2);
+    expect(next.pages[1].elements).toEqual([]);
+  });
+
+  it('survives a second op that walks the page it just made', () => {
+    // The actual crash: the reflow inserts a page, then moves a frame onto it.
+    const doc = pagedDoc();
+    const frame = doc.pages[0].elements[0].nid;
+    const next = applyOps(doc, [
+      { op: 'insert_node', parent: 'pages', index: -1, node: { nid: 'pag_new01', size: 'A4' } },
+      { op: 'move_node', nid: frame, parent: 'pag_new01', index: -1 },
+    ] as unknown as DocOp[]);
+
+    expect(next.pages[1].elements.map((e) => e.nid)).toEqual([frame]);
+    expect(next.pages[0].elements).toHaveLength(0);
+  });
+
+  it('leaves a complete node exactly as given', () => {
+    const doc = pagedDoc();
+    const node = { nid: 'pag_new01', size: 'A4', orientation: 'portrait', background: null, elements: [] };
+    const next = applyOps(doc, [
+      { op: 'insert_node', parent: 'pages', index: -1, node },
+    ] as unknown as DocOp[]);
+
+    expect(next.pages[1]).toMatchObject(node);
+  });
+
+  it('ignores an insert whose id is already taken', () => {
+    // The server rejects this op and applies the rest of the batch, so the
+    // mirror has to agree or it renders a document the server refused. It
+    // showed up as React's duplicate-key warning: the ops that add a page are
+    // derived from a measurement, and replaying one batch put two pages
+    // sharing `pag_27enw` on screen.
+    const doc = pagedDoc();
+    const insert = {
+      op: 'insert_node',
+      parent: 'pages',
+      index: -1,
+      node: { nid: 'pag_new01', size: 'A4' },
+    };
+
+    const next = applyOps(doc, [insert, insert] as unknown as DocOp[]);
+
+    expect(next.pages.map((page) => page.nid)).toEqual([doc.pages[0].nid, 'pag_new01']);
+  });
+
+  it('ignores a re-sent insert that the server already applied', () => {
+    const doc = pagedDoc();
+    const once = applyOps(doc, [
+      { op: 'insert_node', parent: 'pages', index: -1, node: { nid: 'pag_new01', size: 'A4' } },
+    ] as unknown as DocOp[]);
+
+    const twice = applyOps(once, [
+      { op: 'insert_node', parent: 'pages', index: -1, node: { nid: 'pag_new01', size: 'A4' } },
+    ] as unknown as DocOp[]);
+
+    expect(twice.pages).toHaveLength(2);
+  });
+
+  it('still refuses a duplicate that is not a page', () => {
+    const doc = pagedDoc();
+    const existing = doc.experience[0].bullets[0].nid;
+    const next = applyOps(doc, [
+      { op: 'insert_node', parent: doc.experience[0].nid, index: -1, node: { nid: existing, text: 'again' } },
+    ] as unknown as DocOp[]);
+
+    expect(next.experience[0].bullets).toHaveLength(doc.experience[0].bullets.length);
+  });
+
+  it('reads a page that somehow has no elements without throwing', () => {
+    // Belt and braces: a crash here takes the editor down for something the
+    // next server response would have corrected on its own.
+    const doc = pagedDoc();
+    (doc.pages[0] as { elements?: unknown }).elements = undefined;
+
+    expect(() =>
+      applyOps(doc, [{ op: 'set_text', nid: 'sum_00001', value: 'hi' }] as unknown as DocOp[])
+    ).not.toThrow();
   });
 });

@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { Markdown } from '@/chat/markdown';
+import { stripNodeIds } from '@/chat/prose';
 import { useChat, type ChatMessage, type ToolActivity } from '@/store/chat';
 
 const SUGGESTIONS = [
@@ -44,6 +46,10 @@ function Message({ message, showThinking }: { message: ChatMessage; showThinking
 
   const idle = message.status === 'streaming' && !message.text && !message.activity.length;
 
+  const prose = stripNodeIds(message.text, {
+    streaming: message.status === 'streaming',
+  });
+
   return (
     <div className="msg msg--assistant">
       {showThinking && message.thinking && (
@@ -52,7 +58,15 @@ function Message({ message, showThinking }: { message: ChatMessage; showThinking
           <pre>{message.thinking}</pre>
         </details>
       )}
-      {message.text && <div className="msg__body">{message.text}</div>}
+      {/* Node ids are for the model, never for the reader. Stripped here
+          rather than only asked for in the prompt, because a prompt is
+          advisory and this one is routinely ignored after the model has
+          just read forty lines of id-annotated outline. */}
+      {prose && (
+        <div className="msg__body msg__body--rich">
+          <Markdown text={prose} />
+        </div>
+      )}
       {idle && <div className="msg__body msg__body--muted">Thinking…</div>}
       {message.activity.length > 0 && (
         <div className="activities">

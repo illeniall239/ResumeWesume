@@ -164,3 +164,62 @@ export async function resumeTurn(
 export function cancelTurn(turnId: string): Promise<Response> {
   return fetch(`/api/v1/turns/${turnId}`, { method: 'DELETE' });
 }
+
+/**
+ * Upload a resume and stream its parse back.
+ *
+ * Lives here beside `startTurn` because it needs the same thing that function
+ * does: a POST whose response is a stream, which the JSON client in `lib/api`
+ * cannot express.
+ *
+ * The `Content-Type` header is deliberately absent. With a `FormData` body the
+ * browser has to set it itself, because only the browser knows the multipart
+ * boundary it generated; setting it by hand produces a boundary-less header
+ * and a 400 from the server that reads exactly like a server bug.
+ */
+export function startImport(file: File, handlers: StreamHandlers): StreamHandle {
+  const controller = new AbortController();
+  let resolveImportId: (id: string) => void = () => {};
+  const turnId = new Promise<string>((resolve) => {
+    resolveImportId = resolve;
+  });
+
+  const form = new FormData();
+  form.append('file', file);
+
+  const done = (async () => {
+    try {
+      const response = await fetch('/api/v1/imports', {
+        method: 'POST',
+        body: form,
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        // The upload was refused outright (too large, not a PDF). That detail
+        // is the whole error, so surface it rather than a status code.
+        let detail = response.statusText;
+        try {
+          detail = (await response.json()).detail ?? detail;
+        } catch {
+          /* keep the status text */
+        }
+        throw new Error(detail);
+      }
+
+      resolveImportId(response.headers.get('X-Import-Id') ?? '');
+      await readNdjsonStream(response, handlers);
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') {
+        handlers.onError?.(error as Error);
+      }
+      handlers.onClose?.();
+    }
+  })();
+
+  return { abort: () => controller.abort(), turnId, done };
+}
+
+export function cancelImport(importId: string): Promise<Response> {
+  return fetch(`/api/v1/imports/${importId}`, { method: 'DELETE' });
+}
