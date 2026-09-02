@@ -44,6 +44,11 @@ ENUMS = {
         "invariant_violation",
         "budget_exceeded",
     ],
+    # Mirrors ``NodeKind`` in studio/doc/nodes.py, layout kinds included. The
+    # layout half is not decoration: the browser mints element ids itself
+    # (canvas/ids.ts) because a newly placed box must be addressable before any
+    # round trip, so these prefixes are a thing the client writes, not only one
+    # it reads.
     "NodeKind": [
         "exp",
         "edu",
@@ -54,6 +59,11 @@ ENUMS = {
         "cst",
         "cit",
         "sum",
+        "pag",
+        "frm",
+        "img",
+        "shp",
+        "txb",
     ],
 }
 

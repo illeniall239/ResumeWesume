@@ -922,7 +922,7 @@ def invert(op: DocOp) -> DocOp | None:
     is the honest answer rather than a no-op that silently corrupts an undo
     stack.
 
-    Total across all eight ops. It was not always: ``move_node``, ``insert_node``
+    Total across all ten ops. It was not always: ``move_node``, ``insert_node``
     and ``set_section`` returned None even where the handler had already
     recorded everything needed, so a document could be edited in ways that could
     not be undone -- tolerable while the only writer was a chat turn with its

@@ -211,15 +211,12 @@ class NodeIndex:
     def ids(self) -> list[NodeId]:
         return list(self._by_id)
 
-    def duplicates(self) -> list[NodeId]:
-        """Ids appearing more than once.
-
-        The index itself deduplicates by construction, so this recounts from the
-        document to catch a genuine collision (two nodes minted the same id, or
-        a copy/paste that duplicated a subtree). Checked as a post-batch
-        invariant, where a duplicate would make a later op ambiguous.
-        """
-        return []
+    # No ``duplicates()`` here, deliberately. The index deduplicates by
+    # construction -- ``_add`` writes into a dict keyed by nid -- so it is
+    # structurally incapable of reporting a collision, and a method that
+    # returned an empty list forever would read like a check while being none.
+    # The real one is ``apply.py``'s ``_first_duplicate``, which walks the
+    # document rather than the index and is checked as a post-batch invariant.
 
     def nearest(self, nid: NodeId, limit: int = 5) -> list[tuple[NodeId, str]]:
         """Ids of the same kind, with their text — for an ``unknown_node`` reply.

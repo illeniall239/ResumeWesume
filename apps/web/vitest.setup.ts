@@ -18,6 +18,25 @@ if (typeof Element !== 'undefined' && !Element.prototype.setPointerCapture) {
 }
 
 /**
+ * jsdom implements neither hit-testing call.
+ *
+ * `caretAt` (canvas/page-canvas.tsx) runs both a frame after a double-click, to
+ * put the caret where the user actually clicked rather than at the start of the
+ * paragraph. Being deferred is what makes their absence awkward: the throw
+ * lands in a `requestAnimationFrame` callback long after the assertions have
+ * passed, so vitest reports a run-level unhandled error on a suite that is
+ * green, and the error names a file the failing test never mentions.
+ *
+ * Returning null is the honest stub, not a shortcut. It is exactly what a real
+ * browser returns for a point over nothing, and `caretAt` already has to handle
+ * that -- `caretRangeFromPoint` is absent in Firefox, so focusing the line is
+ * the documented second best.
+ */
+if (typeof document !== 'undefined' && !document.elementFromPoint) {
+  document.elementFromPoint = () => null;
+}
+
+/**
  * jsdom has no PointerEvent at all.
  *
  * Testing Library resolves an event class as `window[EventType] || window.Event`,

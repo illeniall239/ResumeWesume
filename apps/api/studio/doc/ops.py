@@ -1,8 +1,15 @@
-"""The eight primitive mutations.
+"""The ten primitive mutations.
 
 Every tool the agent can call, and every direct edit the user makes, compiles
 down to this closed set. One vocabulary means one place that mutates a document
 (``apply.py``), one place that gates it, and one place to test.
+
+Eight of them describe content and were the whole set until the canvas arrived;
+``set_geometry`` and ``set_element_style`` describe where something sits and how
+it looks. They are primitives rather than a widened ``set_field`` because a tier
+is derived from what an op touches, and a layout attribute reached through
+``set_field`` would fall through that derivation to Tier C -- making every drag
+ask for consent.
 
 Each op records ``before`` when applied, which makes ``invert`` total. That
 single property buys undo, the ops log, and 409 rebase without any of them

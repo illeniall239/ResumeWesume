@@ -10,7 +10,7 @@ export type Tier = 'A' | 'B' | 'C';
 
 export type RejectCode = 'unknown_node' | 'kind_mismatch' | 'stale_expect' | 'not_grounded' | 'tier_denied' | 'invalid_args' | 'duplicate' | 'node_busy' | 'invariant_violation' | 'budget_exceeded';
 
-export type NodeKind = 'exp' | 'edu' | 'prj' | 'blt' | 'skl' | 'sgp' | 'cst' | 'cit' | 'sum';
+export type NodeKind = 'exp' | 'edu' | 'prj' | 'blt' | 'skl' | 'sgp' | 'cst' | 'cit' | 'sum' | 'pag' | 'frm' | 'img' | 'shp' | 'txb';
 
 export type NodeId = string;
 

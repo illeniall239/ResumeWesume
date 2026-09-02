@@ -18,7 +18,7 @@ patches, with nothing else in the document drifting.
 | Piece | State |
 |---|---|
 | Node identity, document schema | done |
-| The 8 primitive ops + `apply_ops` gates | done |
+| The 10 primitive ops + `apply_ops` gates | done |
 | Legacy import/export | done |
 | Persistence with version/ETag concurrency | done |
 | API, PDF export, live document, inline editing | done |
@@ -30,15 +30,40 @@ patches, with nothing else in the document drifting.
 
 ## Running it
 
+The API and the web app are two processes and both must be up, so this takes
+two terminals.
+
 ```bash
 make install
 make api     # :8000
 make web     # :3000  (separate terminal)
 ```
 
+`make` is not present on Windows unless you install it, so the targets are a
+convenience for other platforms. What they wrap, which is all you actually need:
+
+```bash
+cd apps/api && uv sync --extra dev && uv run playwright install chromium
+cd apps/web && npm install
+
+cd apps/api && uv run uvicorn studio.main:app --reload --port 8000   # terminal 1
+cd apps/web && npm run dev                                           # terminal 2
+```
+
+**If a `uv run` command dies with "uv trampoline failed to canonicalize script
+path", the virtualenv is stale** — its console-script `.exe`s embed an absolute
+path to the interpreter, so moving or renaming the checkout invalidates every
+one of them. `uv sync --extra dev --reinstall` rewrites them.
+
 Open <http://localhost:3000>. Either **Upload a resume** (PDF) and check the
 parse before importing it, or click **New from sample**. Then edit a bullet and
 hit **Export PDF**.
+
+Two things that surprise people. PDF export runs *backwards* through the stack
+-- the API drives headless Chromium to the web app's `/print/<id>` route -- so
+it needs both processes alive and `WEB_BASE_URL` pointing at the web app. And
+the first turn on a local 14B model can sit silent for the better part of a
+minute before its first token; that is the model thinking, not a hang.
 
 ## Why the engine came first
 
@@ -50,7 +75,7 @@ prompt, and it was built and adversarially tested before anything could call it.
 Three properties carry that weight:
 
 **One mutation path.** Every tool call and every direct user edit compiles to
-the same eight primitives, so there is exactly one function that changes a
+the same ten primitives, so there is exactly one function that changes a
 document, one place that gates it, and one place to test.
 
 **Authorization is derived, not declared.** An op's risk tier comes from what it
