@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { Markdown } from '@/chat/markdown';
+import { ModelPicker } from '@/chat/model-picker';
 import { stripNodeIds } from '@/chat/prose';
 import { useChat, type ChatMessage, type ToolActivity } from '@/store/chat';
 
@@ -112,6 +113,7 @@ export function ChatPanel({ documentId }: { documentId: string }) {
     <div className="chat">
       <div className="toolbar">
         <strong>Assistant</strong>
+        <ModelPicker />
         <span className="toolbar__spacer" />
         <button className="link" onClick={toggleThinking} type="button">
           {showThinking ? 'Hide reasoning' : 'Show reasoning'}

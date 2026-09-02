@@ -15,6 +15,7 @@ from httpx import ASGITransport, AsyncClient
 from studio.llm.backend import ModelSpec
 from studio.llm.scripted import ScriptedBackend, call_tool, done, say, turn
 from studio.main import app
+from studio.persistence.providers import ProviderStore
 from studio.persistence.repo import DocumentRepo
 from studio.streaming.channel import TurnRegistry
 
@@ -35,12 +36,20 @@ SEED = {
 
 
 class StubFactory:
-    """Stands in for the backend factory so no network is reachable."""
+    """Stands in for the backend factory so no network is reachable.
+
+    Implements ``resolve`` as well as ``from_settings`` because the routers ask
+    for the *selected* model now, and a stub that only answers the older call
+    would let a real provider lookup run in a test.
+    """
 
     def __init__(self, backend: ScriptedBackend) -> None:
         self._backend = backend
 
     def from_settings(self) -> ScriptedBackend:
+        return self._backend
+
+    async def resolve(self, store: object = None) -> ScriptedBackend:
         return self._backend
 
 
@@ -49,6 +58,7 @@ async def harness():
     repo = DocumentRepo("sqlite+aiosqlite:///:memory:")
     await repo.create_schema()
     app.state.repo = repo
+    app.state.providers = ProviderStore(repo.session_factory)
     app.state.turns = TurnRegistry()
 
     transport = ASGITransport(app=app)

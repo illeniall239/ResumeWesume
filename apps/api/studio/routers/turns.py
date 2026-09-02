@@ -50,7 +50,9 @@ async def start_turn(request: Request, body: StartTurnRequest) -> StreamingRespo
     turn_id = uuid.uuid4().hex
     channel = app.state.turns.create(turn_id, body.document_id)
 
-    runner = TurnRunner(repo=repo, backend=app.state.backends.from_settings())
+    # The model the user picked in the sidebar, falling back to .env.
+    backend = await app.state.backends.resolve(app.state.providers)
+    runner = TurnRunner(repo=repo, backend=backend)
     turn_request = TurnRequest(
         document_id=body.document_id,
         message=body.message,

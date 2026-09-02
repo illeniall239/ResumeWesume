@@ -14,6 +14,10 @@ dependencies = [
     "litellm==1.86.2",
     "markitdown[docx]==0.1.4",
     "pdfminer.six==20260107",
+    # Direct, not inherited from litellm. The model catalogue asks providers
+    # what they offer over plain HTTP, so an httpx that arrives only as a
+    # transitive dependency would vanish on a litellm bump.
+    "httpx==0.28.1",
     "pillow==12.3.0",
     "playwright==1.58.0",
     "python-dotenv==1.2.2",

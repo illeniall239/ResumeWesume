@@ -20,8 +20,9 @@ from fastapi.responses import JSONResponse
 
 from studio.config import settings
 from studio.llm.factory import BackendFactory, health
+from studio.persistence.providers import ProviderStore
 from studio.persistence.repo import DocumentRepo
-from studio.routers import assets, documents, export, ingest, turns
+from studio.routers import assets, documents, export, ingest, providers, turns
 from studio.streaming.channel import TurnRegistry
 
 logging.basicConfig(
@@ -55,6 +56,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await repo.create_schema()
 
     app.state.repo = repo
+    # Shares the repository's engine: same file, one connection pool.
+    app.state.providers = ProviderStore(repo.session_factory)
     app.state.turns = TurnRegistry()
     # A registry of its own, so an import and a turn cannot collide on an id
     # and so shutting one down never touches the other.
@@ -139,6 +142,7 @@ app.include_router(export.router, prefix="/api/v1")
 app.include_router(turns.router, prefix="/api/v1")
 app.include_router(ingest.router, prefix="/api/v1")
 app.include_router(assets.router, prefix="/api/v1")
+app.include_router(providers.router, prefix="/api/v1")
 
 
 @app.get("/api/v1/health")
@@ -154,7 +158,9 @@ async def liveness() -> dict[str, str]:
 @app.get("/api/v1/health/model")
 async def model_health(request: Request) -> dict[str, object]:
     """Readiness for the model path. Makes a real call, so it is slow."""
-    backend = request.app.state.backends.from_settings()
+    # The selected backend, not the configured one: a readiness probe that
+    # tests a model the app is not using answers the wrong question.
+    backend = await request.app.state.backends.resolve(request.app.state.providers)
     return await health(backend)
 
 

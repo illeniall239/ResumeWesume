@@ -76,7 +76,9 @@ async def start_import(
     app = request.app
     import_id = _read_id(request)
     channel = app.state.imports.create(import_id)
-    runner = ImportRunner(backend=app.state.backends.from_settings())
+    # Same selection the assistant uses: an import parsed by one model
+    # while the chat edits with another is a difference nobody asked for.
+    runner = ImportRunner(backend=await app.state.backends.resolve(app.state.providers))
     filename = file.filename or "resume.pdf"
 
     async def drive() -> None:

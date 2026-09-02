@@ -182,3 +182,105 @@ export async function uploadAsset(
   }
   return (await response.json()) as UploadedAsset;
 }
+
+// --- model providers -------------------------------------------------------
+//
+// No function here returns an API key, because no endpoint does. A key is
+// written with `saveCredentials` and thereafter exists to this client only as
+// `configured` plus a four-character hint -- which is enough to recognise which
+// key is installed and useless to anything that intercepts it.
+
+export interface ProviderInfo {
+  id: string;
+  label: string;
+  needs_key: boolean;
+  base_editable: boolean;
+  note: string;
+  default_api_base: string | null;
+  configured: boolean;
+  /** Last four characters of the stored key, masked. Never the key. */
+  hint: string;
+  api_base: string | null;
+}
+
+export interface ProviderCatalog {
+  providers: ProviderInfo[];
+  /** "provider/model", or null when .env's default is in force. */
+  selection: string | null;
+  /** What runs when nothing is selected. */
+  fallback: string;
+  /**
+   * What the next turn will actually use.
+   *
+   * Not the same as `selection` when the selection cannot run — a provider
+   * whose key was removed, say. The picker labels itself from this, so the
+   * screen cannot claim a model the server has already decided against.
+   */
+  effective: string;
+  /** Why the selection was not honoured. Empty when it was. */
+  fallback_reason: string;
+}
+
+export interface ModelsResponse {
+  provider: string;
+  models: string[];
+  /** "live" = the provider answered; "fallback" = litellm's registry. */
+  source: 'live' | 'fallback';
+  detail: string;
+}
+
+export function fetchProviders(): Promise<ProviderCatalog> {
+  return request<ProviderCatalog>('/providers');
+}
+
+export function fetchModels(provider: string): Promise<ModelsResponse> {
+  return request<ModelsResponse>(`/providers/${provider}/models`);
+}
+
+/**
+ * Write a key and/or a base URL.
+ *
+ * `apiKey: undefined` leaves the stored key untouched, which is what lets the
+ * base URL be edited without asking for a key the UI is not allowed to show.
+ * An empty string clears it.
+ */
+export function saveCredentials(
+  provider: string,
+  body: { api_key?: string; api_base?: string }
+): Promise<ProviderInfo> {
+  return request<ProviderInfo>(`/providers/${provider}/credentials`, {
+    method: 'PUT',
+    body: JSON.stringify(body),
+  });
+}
+
+export function forgetCredentials(provider: string): Promise<void> {
+  return request<void>(`/providers/${provider}/credentials`, { method: 'DELETE' });
+}
+
+export function selectModel(provider: string, model: string): Promise<void> {
+  return request<void>('/providers/selection', {
+    method: 'PUT',
+    body: JSON.stringify({ provider, model }),
+  });
+}
+
+export interface ProviderTest {
+  healthy: boolean;
+  degraded?: boolean;
+  model?: string;
+  output?: string;
+  error?: string;
+  note?: string;
+}
+
+/** One real completion, so a bad key fails here rather than mid-turn. */
+export function testProvider(
+  provider: string,
+  body: { api_key?: string; api_base?: string; model?: string } = {}
+): Promise<ProviderTest> {
+  return request<ProviderTest>(`/providers/${provider}/test`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}

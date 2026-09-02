@@ -111,6 +111,61 @@ class Checkpoint(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class ProviderCredential(Base):
+    """An API key for one provider, plus where to reach it.
+
+    **Write-only from the outside.** ``api_key`` is never returned by any
+    endpoint, never logged, and never sent to the browser; the API answers with
+    a boolean and the last four characters, which is enough for a person to
+    recognise which key is installed and useless to anyone who intercepts it.
+    That asymmetry is the whole design, and it is why the column lives here
+    rather than in the client's local storage.
+
+    Stored as written, in the application's own SQLite file. That file is
+    gitignored and sits on the user's machine beside the resume itself, so
+    encrypting it here would protect against nothing an attacker holding the
+    file could not already read -- the key would have to live next to the
+    ciphertext. Real protection is the OS keychain, which is a deliberate
+    non-goal for a single-user local app; see docs. What this *does* guarantee
+    is that a key never leaves the machine except to the provider it belongs to.
+
+    One row per provider, keyed by the provider id, because a second key for
+    the same provider is a replacement rather than an addition.
+    """
+
+    __tablename__ = "provider_credentials"
+
+    provider: Mapped[str] = mapped_column(String(40), primary_key=True)
+
+    api_key: Mapped[str] = mapped_column(Text, default="")
+    #: Overrides the catalogue's default. Set for a local runtime on a
+    #: non-standard port, or for an OpenAI-compatible server.
+    api_base: Mapped[str | None] = mapped_column(String(300), default=None)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+
+class AppSetting(Base):
+    """A single application-wide value, as a string.
+
+    Currently one row: which provider and model the assistant uses. A table
+    rather than a column on ``documents`` because the selection governs the
+    importer too, and an import has no document to hang a setting on until the
+    user accepts what it produced.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(60), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+
 class Asset(Base):
     """A stored image, addressed by content hash.
 

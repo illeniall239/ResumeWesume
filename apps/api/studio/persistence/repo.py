@@ -50,6 +50,17 @@ class DocumentRepo:
         self._engine = create_async_engine(url, future=True)
         self._session = async_sessionmaker(self._engine, expire_on_commit=False)
 
+    @property
+    def session_factory(self) -> async_sessionmaker:
+        """Shared with ``ProviderStore``, so both live on one engine.
+
+        Exposed rather than duplicated: a second ``create_async_engine`` against
+        the same SQLite file is a second connection pool competing for the same
+        write lock, which is how a settings write starts intermittently timing
+        out behind a document write.
+        """
+        return self._session
+
     async def create_schema(self) -> None:
         async with self._engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
