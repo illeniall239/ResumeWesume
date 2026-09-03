@@ -50,14 +50,32 @@ cd apps/api && uv run uvicorn studio.main:app --reload --port 8000   # terminal 
 cd apps/web && npm run dev                                           # terminal 2
 ```
 
+**The assistant needs a model.** If you are signed in to Claude Code on this
+machine, it uses that — no key, no configuration, drawing on your Claude plan
+rather than billing an API key. Nothing to do; the settings dialog will say
+"Claude subscription — ready".
+
+Otherwise it runs locally, and the model needs tool calling and a context large
+enough to hold a turn. `models/` carries the recipes and explains why a bare
+Ollama tag is not enough: at its default 4096-token context, Ollama truncates
+this app's prompt from the front, which is where the instructions are.
+
+```bash
+ollama create mistral-nemo:12b-16k -f models/mistral-nemo-12b-16k.Modelfile
+```
+
+An API key for any of eight providers works too — **Settings**, on the home
+page. A local model will do the job; expect it to write fewer skills and lean
+harder on the same verbs than Claude does.
+
 **If a `uv run` command dies with "uv trampoline failed to canonicalize script
 path", the virtualenv is stale** — its console-script `.exe`s embed an absolute
 path to the interpreter, so moving or renaming the checkout invalidates every
 one of them. `uv sync --extra dev --reinstall` rewrites them.
 
-Open <http://localhost:3000>. Either **Upload a resume** (PDF) and check the
-parse before importing it, or click **New from sample**. Then edit a bullet and
-hit **Export PDF**.
+Open <http://localhost:3000>. Either **Import a PDF** and check the parse before
+it lands, or pick a template — the card shows the résumé you get. Then edit a
+bullet, ask the assistant for a change, and hit **Export PDF**.
 
 Two things that surprise people. PDF export runs *backwards* through the stack
 -- the API drives headless Chromium to the web app's `/print/<id>` route -- so
