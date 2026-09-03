@@ -16,6 +16,7 @@ from studio.ingest.segment import (
     matches_style,
     normalise_heading,
     segment,
+    unspace,
 )
 
 BODY = 10.0
@@ -486,3 +487,43 @@ class TestContact:
 
     def test_an_empty_block_yields_empty_fields_rather_than_raising(self) -> None:
         assert parse_contact([]) == Contact()
+
+
+class TestLetterSpacedHeadings:
+    """`letter-spacing` on a heading is real spaces in the PDF.
+
+    It is ordinary résumé typography -- every template site uses it -- and no
+    renderer preserves it as tracking. The text layer genuinely contains
+    "E X P E R I E N C E", which matches no alias.
+
+    Measured on `resume_wonky.pdf` before this: **zero sections**. Twenty-seven
+    lines swept into the contact block, and a whole work history reported as
+    unreadable.
+    """
+
+    def test_a_tracked_heading_is_recognised(self) -> None:
+        assert classify_heading("E X P E R I E N C E") == "experience"
+        assert classify_heading("S K I L L S") == "skills"
+        assert classify_heading("E D U C A T I O N") == "education"
+
+    def test_a_heading_that_swallowed_its_first_line(self) -> None:
+        """The word break where the run of single letters ends is kept.
+
+        "L A N G U A G E S English" must come back as two words, not one.
+        """
+        assert unspace("L A N G U A G E S English") == "LANGUAGES English"
+
+    def test_ordinary_prose_is_untouched(self) -> None:
+        line = "Rebuilt the payments ledger on an append-only model"
+        assert unspace(line) == line
+
+    def test_loose_initials_are_left_alone(self) -> None:
+        """Below the four-token floor, so a degree keeps its shape."""
+        assert unspace("B S Informatics") == "B S Informatics"
+        assert unspace("R & D") == "R & D"
+
+    def test_a_mixed_line_is_not_collapsed(self) -> None:
+        """Under the threshold: this is content that happens to have initials."""
+        assert unspace("A B testing and R analysis for the team") == (
+            "A B testing and R analysis for the team"
+        )

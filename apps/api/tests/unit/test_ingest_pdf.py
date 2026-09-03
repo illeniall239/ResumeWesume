@@ -168,3 +168,50 @@ class TestLimits:
         # Truncation never leaves a partial line behind.
         full = extract(data)
         assert all(line.text in {item.text for item in full.lines} for line in result.lines)
+
+
+class TestTheWonkyResume:
+    """A résumé built the way a template site builds one.
+
+    Photo, coloured sidebar, skill meters, icon glyphs, tabular dates, and every
+    heading set with `letter-spacing`. It is the shape of résumé this pipeline
+    is least prepared for, and it is a common one.
+
+    Before `unspace` this document produced **zero sections** -- twenty-seven
+    lines swept into the contact block.
+    """
+
+    def _segments(self):
+        from studio.ingest.pdf import extract
+        from studio.ingest.segment import segment
+
+        data = (FIXTURES / "resume_wonky.pdf").read_bytes()
+        return segment(extract(data).lines)
+
+    def test_its_sections_are_found(self) -> None:
+        found = {segment.key for segment in self._segments()}
+
+        assert {"contact", "skills", "experience", "education"} <= found
+
+    def test_the_work_history_survives(self) -> None:
+        """The thing that was being lost entirely."""
+        experience = next(s for s in self._segments() if s.key == "experience")
+        text = experience.text
+
+        assert "Staff Frontend Engineer" in text
+        assert "Fabrikam" in text
+        assert "Frontend Engineer" in text
+        assert "Tailspin Toys" in text
+        # Every bullet, including the one glued to its employer line by the
+        # table markup.
+        assert "design system used by nine product teams" in text
+        assert "first-contentful-paint" in text
+        assert "visual regression testing" in text
+        assert "checkout flow" in text
+        assert "WCAG 2.1 AA" in text
+
+    def test_the_sidebar_is_not_lost_to_the_main_column(self) -> None:
+        skills = next(s for s in self._segments() if s.key == "skills")
+
+        assert "TypeScript" in skills.text
+        assert "Terraform" in skills.text

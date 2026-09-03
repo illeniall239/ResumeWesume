@@ -143,9 +143,90 @@ TWO_COLUMN = f"""<!doctype html><meta charset="utf-8">
 </div>
 """
 
+# A resume built the way a template site builds one: a photo, a coloured
+# sidebar, skill meters, icon glyphs, and every section heading set with
+# `letter-spacing`. That last one is the reason this fixture exists.
+#
+# Tracking is not a rendering flourish that survives into the text layer as
+# tracking -- it survives as *real spaces*. The heading reads "E X P E R I E N
+# C E" in the PDF, which matches no alias, so before `unspace` this document
+# found no sections at all: 27 lines swept into the contact block and a whole
+# work history reported as unreadable.
+#
+# Everything else here is deliberate too, and is why the extracted text is
+# messy even now: CSS list markers are graphics rather than glyphs so the
+# bullets carry no marker, the table puts each date in a cell of its own, and
+# the icons arrive as mojibake in front of the contact lines.
+WONKY = """
+<!doctype html><meta charset="utf-8">
+<style>
+  @page { size: A4; margin: 0; }
+  body { margin:0; font-family: Georgia, serif; display:flex; }
+  .side { width: 34%; background:#1f3a5f; color:#fff; padding:24px 18px; }
+  .main { width: 66%; padding:24px 22px; }
+  .photo { width:96px; height:96px; border-radius:50%; background:
+           radial-gradient(circle at 30% 30%, #c9d6e8, #4a6b96); margin:0 auto 14px; }
+  h1 { font-size:19px; margin:0 0 2px; letter-spacing:.5px; }
+  .role { font-size:11px; opacity:.85; margin-bottom:16px; }
+  .side h2, .main h2 { font-size:11px; letter-spacing:2px; text-transform:uppercase;
+                       border-bottom:1px solid currentColor; padding-bottom:3px; }
+  .bar { height:6px; background:#ffffff33; margin:3px 0 9px; border-radius:3px; }
+  .bar > i { display:block; height:6px; background:#7fb3ff; border-radius:3px; }
+  .skill { font-size:10px; }
+  table { width:100%; border-collapse:collapse; font-size:10.5px; }
+  td { padding:2px 0; vertical-align:top; }
+  td.when { text-align:right; white-space:nowrap; color:#555; width:29%; }
+  .job { font-weight:bold; font-size:11.5px; }
+  .org { font-style:italic; color:#444; font-size:10.5px; }
+  ul { margin:4px 0 10px 14px; padding:0; font-size:10.5px; }
+  .ico::before { content:"\2709  "; }
+  .pill { display:inline-block; border:1px solid #ffffff55; border-radius:9px;
+          padding:1px 7px; margin:2px 3px 2px 0; font-size:9.5px; }
+</style>
+<body>
+<div class="side">
+  <div class="photo"></div>
+  <h1>PRIYA RAMAN</h1>
+  <div class="role">Staff Frontend Engineer</div>
+  <h2>Contact</h2>
+  <div class="skill ico">priya.raman&#64;example.com</div>
+  <div class="skill ico">(206) 555-0173</div>
+  <div class="skill ico">Seattle, WA</div>
+  <h2>Skills</h2>
+  <div class="skill">TypeScript</div><div class="bar"><i style="width:92%"></i></div>
+  <div class="skill">React</div><div class="bar"><i style="width:88%"></i></div>
+  <div class="skill">GraphQL</div><div class="bar"><i style="width:74%"></i></div>
+  <div class="skill">Terraform</div><div class="bar"><i style="width:61%"></i></div>
+  <h2>Languages</h2>
+  <span class="pill">English</span><span class="pill">Tamil</span><span class="pill">German</span>
+</div>
+<div class="main">
+  <h2>Experience</h2>
+  <table>
+    <tr><td><span class="job">Staff Frontend Engineer</span></td>
+        <td class="when">2022 &ndash; Present</td></tr>
+    <tr><td colspan="2"><span class="org">Fabrikam, Seattle WA</span>
+      <ul><li>Owned the design system used by nine product teams, taking adoption from 30% to 88%.</li>
+          <li>Cut dashboard first-contentful-paint from 4.1s to 1.2s.</li>
+          <li>Set up visual regression testing blocking six layout regressions a month.</li></ul></td></tr>
+    <tr><td><span class="job">Frontend Engineer</span></td>
+        <td class="when">2019 &ndash; 2022</td></tr>
+    <tr><td colspan="2"><span class="org">Tailspin Toys, Portland OR</span>
+      <ul><li>Rebuilt the checkout flow, lifting completion rate by 11 points.</li>
+          <li>Brought the catalogue to WCAG 2.1 AA.</li></ul></td></tr>
+  </table>
+  <h2>Education</h2>
+  <table><tr><td><span class="job">B.S. Informatics</span><br>
+    <span class="org">University of Washington</span></td>
+    <td class="when">2015 &ndash; 2019</td></tr></table>
+</div>
+</body>
+"""
+
 PAGES = {
     "resume_single_column.pdf": SINGLE_COLUMN,
     "resume_two_column.pdf": TWO_COLUMN,
+    "resume_wonky.pdf": WONKY,
 }
 
 

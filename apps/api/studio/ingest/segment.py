@@ -205,6 +205,45 @@ class Segment:
         return self.key in IMPORTABLE
 
 
+def unspace(text: str) -> str:
+    """Undo letter-spacing, which a PDF records as real spaces.
+
+    ``letter-spacing: 2px`` on a heading is ordinary résumé typography, and
+    every renderer writes the result as separate glyphs -- so the text layer
+    genuinely contains ``E X P E R I E N C E``. No alias matches that, so a
+    résumé styled this way found *no* sections at all: 27 lines, all of them
+    swept into the contact block, and a work history reported as unreadable.
+
+    Only collapsed when nearly every token is a single character, which is what
+    tracking looks like and what ordinary prose never does. Two loose initials
+    in "B.S. Informatics" or "R & D" are left alone by the four-token floor.
+    """
+    tokens = text.split()
+    if len(tokens) < 4:
+        return text
+
+    singles = sum(1 for token in tokens if len(token) == 1)
+    if singles / len(tokens) < 0.8:
+        return text
+
+    # Rejoin, keeping a genuine word break where a run of single letters ends:
+    # "L A N G U A G E S English" is a heading that swallowed its first line,
+    # and must come back as "LANGUAGES English" rather than one long word.
+    out: list[str] = []
+    run: list[str] = []
+    for token in tokens:
+        if len(token) == 1:
+            run.append(token)
+            continue
+        if run:
+            out.append("".join(run))
+            run = []
+        out.append(token)
+    if run:
+        out.append("".join(run))
+    return " ".join(out)
+
+
 def normalise_heading(text: str) -> str:
     """Fold a heading to its comparable form: lowercase, letters and digits.
 
@@ -212,7 +251,7 @@ def normalise_heading(text: str) -> str:
     two words; the runs that leaves behind are then collapsed, or every alias
     lookup for a heading with punctuation in it would miss by a space.
     """
-    return " ".join(_PUNCT.sub(" ", text.lower()).split())
+    return " ".join(_PUNCT.sub(" ", unspace(text).lower()).split())
 
 
 def classify_heading(text: str) -> SectionKey | None:
