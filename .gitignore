@@ -44,6 +44,16 @@ Thumbs.db
 .impeccable/questions/
 .impeccable/review/
 
-# Session state for an in-progress design run, not an artifact of one. The
-# critique and surface notes beside it are durable and are tracked.
-.impeccable/build/
+# Notes, not the product.
+#
+# The design tool's own output, the architecture map, the product context and
+# the decision records are all working material for whoever is building this.
+# They stay on disk and out of the published repository. README.md is the
+# exception: it is the repository's front page and belongs there.
+.impeccable/
+.claude/
+CLAUDE.md
+*.md
+# Anchored to the root: a bare `!README.md` un-ignores one at any depth, which
+# let `models/README.md` back in.
+!/README.md
