@@ -34,6 +34,7 @@ const OLLAMA = {
   id: 'ollama',
   label: 'Ollama (local)',
   needs_key: false,
+    ready: true,
   base_editable: true,
   note: 'Runs on this machine.',
   default_api_base: 'http://localhost:11434',
@@ -47,6 +48,7 @@ const OPENAI = {
   id: 'openai',
   label: 'OpenAI',
   needs_key: true,
+    ready: true,
   base_editable: false,
   note: 'Key from platform.openai.com.',
 };

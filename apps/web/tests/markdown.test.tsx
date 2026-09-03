@@ -32,7 +32,7 @@ describe('Markdown', () => {
 
   it('renders a heading without its hashes', () => {
     const container = draw('### Why?\nBecause it lacks a metric.');
-    const heading = container.querySelector('.msg__heading');
+    const heading = container.querySelector('.revision__heading');
     expect(heading?.textContent).toBe('Why?');
     expect(container.textContent).not.toContain('#');
   });
@@ -41,14 +41,14 @@ describe('Markdown', () => {
     const container = draw(
       '1. **Vagueness**: too generic.\n2. **No metric**: nothing measured.'
     );
-    const items = container.querySelectorAll('ol.msg__list li');
+    const items = container.querySelectorAll('ol.revision__list li');
     expect(items).toHaveLength(2);
     expect(items[0].querySelector('strong')?.textContent).toBe('Vagueness');
     expect(container.textContent).not.toContain('1.');
   });
 
   it('renders a bulleted list', () => {
-    const items = draw('- first\n- second\n- third').querySelectorAll('ul.msg__list li');
+    const items = draw('- first\n- second\n- third').querySelectorAll('ul.revision__list li');
     expect(items).toHaveLength(3);
     expect(items[2].textContent).toBe('third');
   });

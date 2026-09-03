@@ -17,16 +17,16 @@ import { create } from 'zustand';
 
 import type { ApplyResponse, DocOp, RejectedOp, StudioDoc } from '@/contracts/doc';
 import { applyOps } from '@/doc/apply';
+import { textOf } from '@/doc/read';
 import {
   applyOps as pushOps,
+  confirmInvented,
   fetchDocument,
+  fetchRevisions,
   isVersionConflict,
   reverseHistory,
 } from '@/lib/api';
 import { coalesce, rebase } from '@/store/pending';
-
-/** How long a changed node stays highlighted. */
-const CHANGE_FLASH_MS = 1400;
 
 interface StudioState {
   documentId: string | null;
@@ -52,8 +52,64 @@ interface StudioState {
   /** Made locally, not yet sent. */
   local: DocOp[];
 
-  /** Recently changed nodes, for the highlight sweep. */
+  /**
+   * Nodes the last accepted batch changed. Each one is drawn with a revision
+   * cloud around it.
+   *
+   * These used to clear themselves after 1.4 seconds, which is right for a
+   * flash and wrong for a mark you are meant to be able to inspect -- and
+   * inspecting it is now the point, since clicking a cloud reveals the reading
+   * it replaced. A drawing office leaves a cloud on the sheet until the next
+   * issue; so does this. `clearRevisions` is that next issue.
+   */
   changed: Set<string>;
+  /**
+   * What each clouded node said before the batch landed.
+   *
+   * Captured on the client, from the document it already holds, because the
+   * op contract sent to the browser carries no `before` -- the server records
+   * one for its own inverse, and does not ship it. Reading the outgoing value
+   * a moment before it is overwritten costs nothing and needs no round trip.
+   */
+  superseded: Map<string, string>;
+  /**
+   * Text a tool call is still writing, keyed by the node or field it targets.
+   *
+   * A picture of work in flight, never a change: nothing here is in `doc`, no
+   * op has been compiled, and a call that never balances leaves the document
+   * exactly as it was. The renderer prefers a draft over the stored text so
+   * the words appear as they are written; the patch that follows a moment
+   * later is what actually edits anything, and clears the draft as it lands.
+   */
+  drafts: Map<string, string>;
+  /** Accepted batches this session. The revision number in the schedule. */
+  revisions: number;
+  /**
+   * Nodes the assistant invented while the document was still a template.
+   *
+   * Read from the document rather than tracked here: it survives a reload,
+   * because an unchecked claim is not something that should quietly expire
+   * when the tab closes.
+   */
+  unverified: Set<string>;
+  /**
+   * The mark number carried by each changed node.
+   *
+   * A drawing cross-references a revision by putting the same numbered delta
+   * on the sheet and in the schedule; you find the change by matching the
+   * number, not by tracing a line. That is what this is for -- one counter,
+   * read by both the tag on the document and the row in the schedule, so the
+   * connection is legible at rest instead of only under the pointer.
+   */
+  marks: Map<string, number>;
+  /**
+   * The node a schedule row is pointing at, while the pointer is on that row.
+   *
+   * Confirmation, not the connection itself. `marks` is what makes a row and
+   * its region findable at rest; this is the pointer landing on one and the
+   * other lighting up, which is cheap and answers "that one?" instantly.
+   */
+  spotlight: string | null;
   /** Nodes the agent is writing to; direct editing is blocked on these. */
   locked: Set<string>;
   /** Node the user has focus in. The agent is refused here. */
@@ -78,9 +134,16 @@ interface StudioState {
   /** Reverse the last committed batch, or put it back. */
   history: (direction: 'undo' | 'redo') => Promise<void>;
   clearError: () => void;
+  /** Light the region a schedule row names, or nothing. */
+  setSpotlight: (nid: string | null) => void;
+  /** Wipe the clouds. Called when a new instruction is given. */
+  loadRevisions: (documentId: string) => Promise<void>;
+  draft: (target: string, text: string) => void;
+  clearDrafts: () => void;
+  clearRevisions: () => void;
+  /** Accept the assistant's invented lines. Empty means all of them. */
+  confirmInvented: (nids?: string[]) => Promise<void>;
 }
-
-let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
 type Setter = (partial: Partial<StudioState>) => void;
 type Getter = () => StudioState;
@@ -107,6 +170,9 @@ async function send(set: Setter, get: Getter, batch: DocOp[]): Promise<void> {
       rejected: response.rejected,
       pending: [],
       saving: false,
+      // Typing into the document ends its scaffolding server-side and clears
+      // the marks it covered, so this follows the server rather than guessing.
+      unverified: new Set(response.doc.unverified ?? []),
     });
     // Anything staged while this was in flight is replayed on the new base.
     const { local, serverDoc } = get();
@@ -156,6 +222,12 @@ export const useStudio = create<StudioState>((set, get) => ({
   pending: [],
   local: [],
   changed: new Set(),
+  superseded: new Map(),
+  drafts: new Map(),
+  revisions: 0,
+  unverified: new Set(),
+  marks: new Map(),
+  spotlight: null,
   locked: new Set(),
   focused: null,
   rejected: [],
@@ -174,7 +246,18 @@ export const useStudio = create<StudioState>((set, get) => ({
         hash: response.hash,
         title: response.title,
         loading: false,
+        unverified: new Set(response.doc.unverified ?? []),
+        // A fresh sheet: marks from a document you were looking at a moment
+        // ago must not appear on this one. The ones belonging to *this*
+        // document are restored just below, from the server.
+        changed: new Set(),
+        superseded: new Map(),
+        revisions: 0,
+        marks: new Map(),
+        spotlight: null,
       });
+
+      await get().loadRevisions(documentId);
     } catch (error) {
       set({ loading: false, error: (error as Error).message });
     }
@@ -248,8 +331,30 @@ export const useStudio = create<StudioState>((set, get) => ({
     // one on top of it means an in-progress drag is replayed over the patch
     // rather than being wiped by it -- the failure where a bullet the assistant
     // rewrote mid-gesture would snap the box back under the pointer.
+    // Read the outgoing text *before* the ops are applied. A moment later the
+    // only copy of it is in the server's inverse, which the browser never sees.
+    const outgoing = get().doc;
+    const superseded = new Map(get().superseded);
+    const marks = new Map(get().marks);
+    for (const nid of touched) {
+      // One number per node, minted the first time it changes and kept if a
+      // later batch touches it again -- a region carries one mark, however
+      // many times it was worked on.
+      if (!marks.has(nid)) marks.set(nid, marks.size + 1);
+      const was = textOf(outgoing, nid);
+      // Only a genuine replacement is worth keeping. An inserted node had no
+      // previous reading, and offering an empty one invites the user to open a
+      // cloud that has nothing under it.
+      if (was) superseded.set(nid, was);
+    }
+
     const base = serverDoc && ops?.length ? applyOps(serverDoc, ops) : serverDoc;
     const changed = new Set(touched);
+
+    // The real text is in now, so the draft of it must go -- left behind it
+    // would sit on top of the very edit it was previewing.
+    const drafts = new Map(get().drafts);
+    for (const nid of touched) drafts.delete(nid);
 
     set({
       serverDoc: base,
@@ -257,11 +362,91 @@ export const useStudio = create<StudioState>((set, get) => ({
       version,
       hash,
       changed,
+      superseded,
+      marks,
+      drafts,
+      // The assistant may have invented these; the server decides, because it
+      // is the only side that knows whether the document is still scaffolding.
+      unverified: new Set(base?.unverified ?? get().doc?.unverified ?? []),
+      revisions: get().revisions + 1,
       locked: new Set([...get().locked].filter((nid) => !changed.has(nid))),
     });
+  },
 
-    if (flashTimer) clearTimeout(flashTimer);
-    flashTimer = setTimeout(() => set({ changed: new Set() }), CHANGE_FLASH_MS);
+  setSpotlight(nid) {
+    set({ spotlight: nid });
+  },
+
+  async confirmInvented(nids = []) {
+    const { documentId } = get();
+    if (!documentId) return;
+    try {
+      const state = await confirmInvented(documentId, nids);
+      // The server owns both facts, so they are read back rather than assumed:
+      // confirming ends the scaffolding, which changes what the assistant is
+      // allowed to do next.
+      set({
+        doc: state.doc,
+        serverDoc: state.doc,
+        unverified: new Set(state.doc.unverified ?? []),
+      });
+    } catch (cause) {
+      set({ error: (cause as Error).message });
+    }
+  },
+
+  /**
+   * Put back the marks this document was left with.
+   *
+   * The clouds and their readings used to live only in the browser, so a
+   * reload cleared them while the conversation came back -- the record of what
+   * changed on weaker footing than the dialogue about it. The op log has kept
+   * both all along; this is the read.
+   */
+  async loadRevisions(documentId) {
+    try {
+      const stored = await fetchRevisions(documentId);
+      // Nothing to redraw is a normal answer, and it must not undo the reset
+      // above by leaving a previous document's marks in place.
+      if (get().documentId !== documentId) return;
+
+      const marks = new Map<string, number>();
+      const superseded = new Map<string, string>();
+      for (const entry of stored.marks) {
+        marks.set(entry.nid, entry.mark);
+        if (entry.before) superseded.set(entry.nid, entry.before);
+      }
+
+      set({
+        revisions: stored.revision,
+        marks,
+        superseded,
+        changed: new Set(marks.keys()),
+      });
+    } catch {
+      // A document that will not report its history is still editable. The
+      // marks are an annotation, not the artifact.
+    }
+  },
+
+  draft(target, text) {
+    const drafts = new Map(get().drafts);
+    drafts.set(target, text);
+    set({ drafts });
+  },
+
+  clearDrafts() {
+    if (!get().drafts.size) return;
+    set({ drafts: new Map() });
+  },
+
+  clearRevisions() {
+    set({
+      changed: new Set(),
+      superseded: new Map(),
+      marks: new Map(),
+      spotlight: null,
+    });
   },
 
   setLocked(nids, locked) {
@@ -308,9 +493,14 @@ export const useStudio = create<StudioState>((set, get) => ({
         version: result.version,
         hash: result.hash,
         saving: false,
-        // Sweep the highlight across everything, since a reversal can touch
-        // any part of the document and the server does not say which.
+        // Every cloud goes. A reversal can touch any part of the document and
+        // the server does not say which, so the marks left on screen would be
+        // describing a state that no longer exists -- and the readings under
+        // them would be offering to restore text that is already back.
         changed: new Set(),
+        superseded: new Map(),
+        marks: new Map(),
+        spotlight: null,
       });
     } catch (cause) {
       set({ error: (cause as Error).message, saving: false });

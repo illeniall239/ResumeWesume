@@ -8,6 +8,8 @@ export type SkillSource = 'original' | 'jd' | 'resume' | 'user';
 
 export type Tier = 'A' | 'B' | 'C';
 
+export type Template = 'plain' | 'ruled' | 'compact' | 'book' | 'centered' | 'banner' | 'bold' | 'quiet';
+
 export type RejectCode = 'unknown_node' | 'kind_mismatch' | 'stale_expect' | 'not_grounded' | 'tier_denied' | 'invalid_args' | 'duplicate' | 'node_busy' | 'invariant_violation' | 'budget_exceeded';
 
 export type NodeKind = 'exp' | 'edu' | 'prj' | 'blt' | 'skl' | 'sgp' | 'cst' | 'cit' | 'sum' | 'pag' | 'frm' | 'img' | 'shp' | 'txb';
@@ -177,6 +179,12 @@ export interface TextBlockNode {
 
 export interface StudioDoc {
   schema_version: 1 | 2;
+  /** Presentation only, and never touched by an op. */
+  template: Template;
+  /** True while nothing in the document is yet the user's own. */
+  scaffold: boolean;
+  /** Nodes the assistant invented while scaffolding, pending confirmation. */
+  unverified: NodeId[];
   personal: PersonalInfo;
   summary: TextNode | null;
   experience: ExperienceNode[];
@@ -306,6 +314,8 @@ export interface DocumentResponse {
   version: number;
   hash: string;
   doc: StudioDoc;
+  /** When it last changed, ISO-8601 and UTC. Null on older servers. */
+  updated_at?: string | null;
 }
 
 export interface ApplyResponse extends DocumentResponse {

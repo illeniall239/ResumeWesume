@@ -1,10 +1,21 @@
 /**
  * Measuring a freshly laid-out document and committing the correction.
  *
- * Runs once per document, and only when the stored geometry disagrees with
- * what the browser rendered. On a migrated document it always does — the
- * server placed the frames without being able to measure them — and until it
- * runs the sections are drawn on top of one another.
+ * Runs once per document *version*, and only when the stored geometry
+ * disagrees with what the browser rendered. On a migrated document it always
+ * does — the server placed the frames without being able to measure them — and
+ * until it runs the sections are drawn on top of one another.
+ *
+ * Version, not page ids. Keyed on the page ids alone this ran exactly once and
+ * then never again, because editing text does not change what the pages are
+ * called. That is fine for a document nobody edits and wrong for this one: an
+ * agent turn rewrites a two-line bullet into four lines, the frame keeps the
+ * height measured for the old text, and the section below is drawn over the
+ * top of it. Dividers through the middle of a sentence is what that looks like
+ * on screen.
+ *
+ * Re-running is cheap and it terminates: the pass commits ops, the version
+ * changes, the pass measures once more, finds nothing to correct, and stops.
  *
  * The correction is committed as ordinary ops, so it takes one version, is
  * undoable, and is visible in the op log like any other edit. It is not a
@@ -72,7 +83,8 @@ export function measure(root: HTMLElement, doc: StudioDoc, zoom = 1): MeasuredFr
 export function useReflow(
   ref: React.RefObject<HTMLElement | null>,
   doc: StudioDoc | null,
-  commit: (ops: DocOp[]) => Promise<void> | void
+  commit: (ops: DocOp[]) => Promise<void> | void,
+  version = 0
 ): void {
   const zoom = useView((state) => state.zoom);
   const done = useRef<string | null>(null);
@@ -81,7 +93,7 @@ export function useReflow(
     const root = ref.current;
     if (!root || !doc?.pages.length) return;
 
-    const signature = reflowSignature(doc);
+    const signature = reflowSignature(doc, version);
     if (done.current === signature) return;
 
     // One frame after paint, so fonts and layout have settled. Measuring in
@@ -170,11 +182,11 @@ export function useReflow(
  * Sorted, so adding or deleting a page still re-arms it -- content genuinely
  * has to be restacked then -- while reordering the same set does not.
  */
-export function reflowSignature(doc: StudioDoc): string {
-  return doc.pages
-    .map((page) => page.nid)
-    .sort()
-    .join(',');
+export function reflowSignature(doc: StudioDoc, version = 0): string {
+  return [
+    version,
+    ...doc.pages.map((page) => page.nid).sort(),
+  ].join(',');
 }
 
 /**

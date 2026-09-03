@@ -34,6 +34,16 @@ export interface DocumentFlowProps {
   changed?: ReadonlySet<string>;
   /** Node the agent is currently writing to. */
   locked?: ReadonlySet<string>;
+  /** Nodes the assistant invented while the document was scaffolding. */
+  unverified?: ReadonlySet<string>;
+  /**
+   * Text a tool call is still writing, keyed by node id or `nid.field`.
+   *
+   * Threaded as a prop rather than read from the store, because this renderer
+   * also draws the PDF: a half-written sentence must never reach a printed
+   * page, and a component that reached for live state could not promise that.
+   */
+  drafts?: ReadonlyMap<string, string>;
   onEditText?: (nid: string, value: string) => void;
   /**
    * Commit an attribute of a node, addressed as ``nid.field`` (or
@@ -48,6 +58,23 @@ export interface DocumentFlowProps {
   onEditField?: (target: string, value: string) => void;
   /** Focus tells the server the user holds this node, so the agent is refused there. */
   onFocusNode?: (nid: string | null) => void;
+  /**
+   * Draw empty fields as their hint, even where they are not editable yet.
+   *
+   * The canvas makes a frame's text live only while that frame is the one
+   * being edited, so that a frame still has a surface to grab. That is right,
+   * and it collided with a résumé that has no words in it yet: an empty field
+   * rendered nothing, so a new document showed section headings floating over
+   * blank paper with nothing to aim at -- and no way to start typing, because
+   * there was nothing to double-click.
+   *
+   * With this set, an empty field still occupies its space and shows what
+   * belongs there. It stays a hint drawn by CSS from `data-placeholder`, never
+   * text in the document, so a blur cannot commit it. Off by default, which is
+   * what keeps it out of the print route and the import preview -- an exported
+   * PDF must never say "Your name".
+   */
+  placeholders?: boolean;
   editable?: boolean;
   /**
    * Render only this subtree: a section key, or a content nid.
@@ -65,11 +92,17 @@ export interface DocumentFlowProps {
 function classesFor(
   nid: string,
   changed?: ReadonlySet<string>,
-  locked?: ReadonlySet<string>
+  locked?: ReadonlySet<string>,
+  unverified?: ReadonlySet<string>
 ): string {
   const parts = ['node'];
   if (changed?.has(nid)) parts.push('node--changed');
   if (locked?.has(nid)) parts.push('node--locked');
+  // Written by the assistant while the document was still a template, so the
+  // words are invented rather than reported. Marked until the person says
+  // otherwise -- the failure this exists to prevent is someone carrying a line
+  // into an interview that nobody ever checked.
+  if (unverified?.has(nid)) parts.push('node--unverified');
   return parts.join(' ');
 }
 
@@ -90,7 +123,9 @@ function fieldsOf(
   placeholder: string;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
+  placeholders?: boolean;
   onEditField?: (target: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
 } {
@@ -101,7 +136,10 @@ function fieldsOf(
     placeholder,
     changed: rest.changed,
     locked: rest.locked,
+    unverified: rest.unverified,
+    drafts: rest.drafts,
     editable: rest.editable,
+    placeholders: rest.placeholders,
     onEditField: rest.onEditField,
     onFocusNode: rest.onFocusNode,
   });
@@ -129,7 +167,10 @@ function Editable({
   placeholder,
   changed,
   locked,
+  unverified,
+  drafts,
   editable,
+  placeholders,
   onEditText,
   onEditField,
   onFocusNode,
@@ -151,7 +192,10 @@ function Editable({
   placeholder?: string;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  drafts?: ReadonlyMap<string, string>;
+  unverified?: ReadonlySet<string>;
   editable?: boolean;
+  placeholders?: boolean;
   onEditText?: (nid: string, value: string) => void;
   onEditField?: (target: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
@@ -159,16 +203,33 @@ function Editable({
   const isLocked = locked?.has(nid) ?? false;
   const live = editable && !isLocked;
 
+  // A tool call is writing here right now. Its text is shown in place of the
+  // stored value so the words appear as they are typed -- and it is *only*
+  // shown: `value` below is still what the document says, so a blur commits
+  // the real text and a draft that never lands leaves nothing behind.
+  const target = field ? `${nid}.${field}` : nid;
+  const drafted = drafts?.get(target);
+  const shown = drafted ?? value;
+  // An empty field shows what belongs in it whenever the document is being
+  // worked on, not only while this particular run happens to be live. The hint
+  // is drawn by CSS from the attribute and is never text in the document.
+  const hinted = live || placeholders;
+
   return (
     <Tag
       // Only a text node carries `data-nid`: a field is part of its entry, and
       // minting a second element with the same id would break every lookup
       // that assumes one node, one element.
       {...(field ? { 'data-field': `${nid}.${field}` } : { 'data-nid': nid })}
-      className={[classesFor(nid, changed, locked), className, live ? 'editable' : null]
+      className={[
+        classesFor(nid, changed, locked, unverified),
+        className,
+        hinted ? 'editable' : null,
+        drafted !== undefined ? 'node--drafting' : null,
+      ]
         .filter(Boolean)
         .join(' ')}
-      data-placeholder={live ? placeholder : undefined}
+      data-placeholder={hinted ? placeholder : undefined}
       contentEditable={live ? 'plaintext-only' : undefined}
       suppressContentEditableWarning
       onFocus={() => onFocusNode?.(nid)}
@@ -180,7 +241,7 @@ function Editable({
         else onEditText?.(nid, next);
       }}
     >
-      {value}
+      {shown}
     </Tag>
   );
 }
@@ -192,6 +253,7 @@ function Bullet({
   node: TextNode;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
@@ -211,6 +273,7 @@ function Bullets(props: {
   bullets: TextNode[];
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
@@ -254,17 +317,22 @@ function ExperienceBlock({ entry, ...rest }: { entry: ExperienceNode } & Documen
         {/* Title leads, employer follows: applicant tracking systems key on the
             job title before the company. */}
         <Editable className="entry__title" {...field('title', entry.title, 'Job title')} />
-        {(rest.editable || entry.years) && (
+        {(rest.editable || rest.placeholders || entry.years) && (
           <Editable className="entry__meta" {...field('years', entry.years, 'Dates')} />
         )}
       </header>
       {/* Kept while editing even when both are blank, so there is somewhere to
           click to fill them in -- but omitted otherwise, or the export carries
           an empty line where an employer would have been. */}
-      {(rest.editable || entry.company || entry.location) && (
+      {(rest.editable || rest.placeholders || entry.company || entry.location) && (
         <div className="entry__org">
           <Editable {...field('company', entry.company, 'Company')} />
-          {entry.company && entry.location ? ', ' : ''}
+          {/* The separator is drawn whenever both sides are showing something,
+              which includes two hints on a résumé that has not been filled in
+              yet -- otherwise a new document reads "CompanyLocation". */}
+          {(entry.company || rest.placeholders) && (entry.location || rest.placeholders)
+            ? ', '
+            : ''}
           <Editable {...field('location', entry.location, 'Location')} />
         </div>
       )}
@@ -289,11 +357,11 @@ function EducationBlock({
     >
       <header className="entry__head">
         <Editable className="entry__title" {...field('degree', entry.degree, 'Degree')} />
-        {(rest.editable || entry.years) && (
+        {(rest.editable || rest.placeholders || entry.years) && (
           <Editable className="entry__meta" {...field('years', entry.years, 'Dates')} />
         )}
       </header>
-      {(rest.editable || entry.institution) && (
+      {(rest.editable || rest.placeholders || entry.institution) && (
         <div className="entry__org">
           <Editable {...field('institution', entry.institution, 'Institution')} />
         </div>
@@ -306,6 +374,7 @@ function EducationBlock({
           value={entry.detail.text}
           changed={rest.changed}
           locked={rest.locked}
+          drafts={rest.drafts}
           editable={rest.editable}
           onEditText={rest.onEditText}
           onFocusNode={rest.onFocusNode}
@@ -328,11 +397,11 @@ function ProjectBlock({ entry, ...rest }: { entry: ProjectNode } & DocumentFlowP
     >
       <header className="entry__head">
         <Editable className="entry__title" {...field('name', entry.name, 'Project')} />
-        {(rest.editable || entry.years) && (
+        {(rest.editable || rest.placeholders || entry.years) && (
           <Editable className="entry__meta" {...field('years', entry.years, 'Dates')} />
         )}
       </header>
-      {(rest.editable || entry.role) && (
+      {(rest.editable || rest.placeholders || entry.role) && (
         <div className="entry__org">
           <Editable {...field('role', entry.role, 'Role')} />
         </div>
@@ -367,6 +436,7 @@ function SkillsBlock({
       value={skill.text}
       changed={rest.changed}
       locked={rest.locked}
+      drafts={rest.drafts}
       editable={rest.editable}
       onEditText={rest.onEditText}
       onFocusNode={rest.onFocusNode}
@@ -427,6 +497,7 @@ function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & Docu
           value={section.text.text}
           changed={rest.changed}
           locked={rest.locked}
+          drafts={rest.drafts}
           editable={rest.editable}
           onEditText={rest.onEditText}
           onFocusNode={rest.onFocusNode}
@@ -444,7 +515,7 @@ function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & Docu
           >
             <header className="entry__head">
               <Editable className="entry__title" {...field('title', item.title, 'Title')} />
-              {(rest.editable || item.years) && (
+              {(rest.editable || rest.placeholders || item.years) && (
                 <Editable className="entry__meta" {...field('years', item.years, 'Dates')} />
               )}
             </header>
@@ -463,6 +534,7 @@ function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & Docu
                 value={entry.text}
                 changed={rest.changed}
                 locked={rest.locked}
+                drafts={rest.drafts}
                 editable={rest.editable}
                 onEditText={rest.onEditText}
                 onFocusNode={rest.onFocusNode}
@@ -507,7 +579,10 @@ export function DocumentFlow(props: DocumentFlowProps) {
               placeholder="A sentence or two about you"
               changed={props.changed}
               locked={props.locked}
+              drafts={props.drafts}
+              unverified={props.unverified}
               editable={props.editable}
+              placeholders={props.placeholders}
               onEditText={props.onEditText}
               onFocusNode={props.onFocusNode}
             />
@@ -558,10 +633,10 @@ export function DocumentFlow(props: DocumentFlowProps) {
   const personal = fieldsOf('personal', props);
   const header = (
     <header className="flow__header" data-page-block="header">
-      {(props.editable || doc.personal.name) && (
+      {(props.editable || props.placeholders || doc.personal.name) && (
         <Editable as="h1" className="flow__name" {...personal('name', doc.personal.name, 'Your name')} />
       )}
-      {(props.editable || doc.personal.title) && (
+      {(props.editable || props.placeholders || doc.personal.title) && (
         <Editable
           as="div"
           className="flow__tagline"
@@ -584,16 +659,21 @@ export function DocumentFlow(props: DocumentFlowProps) {
   // A frame renders one subtree. `data-print-root` stays on the outermost
   // element either way, because headless Chromium waits for that selector and
   // a canvas page has to satisfy it too.
+  // The template rides on the root element rather than on `body`, so a frame
+  // on a canvas page resolves the same one the print route does and neither
+  // has to be told about it.
+  const flow = `flow flow--${doc.template ?? 'plain'}`;
+
   if (root) {
     return (
-      <div className="flow" data-print-root>
+      <div className={flow} data-print-root>
         {renderRoot(root, { doc, props, body, header, mine })}
       </div>
     );
   }
 
   return (
-    <div className="flow" data-print-root>
+    <div className={flow} data-print-root>
       {header}
       {orderedSections(doc).map(body)}
       {doc.custom.map((section) => (
@@ -644,6 +724,7 @@ function Line({
   node,
   changed,
   locked,
+  drafts,
   editable,
   onEditText,
   onFocusNode,
@@ -651,6 +732,7 @@ function Line({
   node: TextNode;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
@@ -664,6 +746,7 @@ function Line({
       placeholder="Text"
       changed={changed}
       locked={locked}
+      drafts={drafts}
       editable={editable}
       onEditText={onEditText}
       onFocusNode={onFocusNode}
@@ -738,7 +821,14 @@ function renderRoot(
     if (entry.nid === root) return <ExperienceBlock entry={entry} {...props} />;
   }
   for (const entry of doc.education) {
-    if (entry.nid === root) return <EducationBlock entry={entry} />;
+    // `{...props}` is not optional here, and its absence was a real defect:
+    // every sibling below spreads it and this one did not, so an education
+    // entry pulled out onto the canvas got no `editable`, no `changed`, no
+    // `locked` and none of the edit callbacks. It could not be typed into, it
+    // did not light up when the assistant rewrote it, and it never reported
+    // focus -- which is what tells the server to refuse the agent on a node
+    // the user is holding.
+    if (entry.nid === root) return <EducationBlock entry={entry} {...props} />;
   }
   for (const entry of doc.projects) {
     if (entry.nid === root) return <ProjectBlock entry={entry} {...props} />;

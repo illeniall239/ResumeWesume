@@ -31,6 +31,7 @@ const OLLAMA = {
   id: 'ollama',
   label: 'Ollama (local)',
   needs_key: false,
+    ready: true,
   base_editable: true,
   note: '',
   default_api_base: 'http://localhost:11434',
@@ -39,7 +40,8 @@ const OLLAMA = {
   api_base: null,
 };
 
-const OPENAI = { ...OLLAMA, id: 'openai', label: 'OpenAI', needs_key: true, base_editable: false };
+const OPENAI = { ...OLLAMA, id: 'openai', label: 'OpenAI', needs_key: true,
+    ready: true, base_editable: false };
 
 function reset() {
   useModels.setState({

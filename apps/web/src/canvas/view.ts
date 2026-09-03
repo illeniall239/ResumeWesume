@@ -23,7 +23,7 @@ import { create } from 'zustand';
  * A ladder lands on round numbers people recognise and makes the buttons
  * predictable; free-running percentages give you 93% and no way back to 100.
  */
-export const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
+export const ZOOM_STEPS = [0.4, 0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
 export const DEFAULT_ZOOM = 1;
 
@@ -75,6 +75,23 @@ export const useView = create<ViewState>((set, get) => ({
     set({ zoom: DEFAULT_ZOOM });
   },
 }));
+
+/**
+ * The largest step at which a sheet of `sheetPx` fits inside `panePx`.
+ *
+ * Used once, when the studio opens on a pane narrower than a sheet. An A4 page
+ * is about 794px and a phone is 390, so opening at 1.0 there shows less than
+ * half the résumé -- and the first thing the document is supposed to say is
+ * what it is. Returns the smallest step rather than a free ratio when even that
+ * overflows: the ladder exists so the zoom control stays predictable, and a
+ * fitted 0.43 would strand the buttons off it.
+ */
+export function fitZoom(panePx: number, sheetPx: number): number {
+  if (panePx <= 0 || sheetPx <= 0) return DEFAULT_ZOOM;
+  const ratio = panePx / sheetPx;
+  const fitting = ZOOM_STEPS.filter((step) => step <= ratio);
+  return fitting.length ? fitting[fitting.length - 1] : ZOOM_STEPS[0];
+}
 
 /** Whether another press in this direction would do anything. */
 export function canZoom(zoom: number, direction: -1 | 1): boolean {

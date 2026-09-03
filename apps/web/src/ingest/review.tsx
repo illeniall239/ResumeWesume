@@ -24,6 +24,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { labelFor } from '@/ingest/events';
+import { Check, Cross, NotApplicable, Pending, Running } from '@/ui/marks';
 import DocumentFlow from '@/render/document-flow';
 import { useImport, type ImportSection } from '@/store/import';
 
@@ -51,14 +52,32 @@ function countOf(section: ImportSection): string {
   return '';
 }
 
+/**
+ * The mark a checker puts against a line.
+ *
+ * State is carried by which mark it is, not only by what colour it is: a
+ * checked item and a queried one differ in shape, so the column can be scanned
+ * without relying on hue.
+ */
+const MARKS: Record<string, typeof Check> = {
+  parsed: Check,
+  failed: Cross,
+  running: Running,
+  skipped: NotApplicable,
+  pending: Pending,
+};
+
 function SectionRow({ section }: { section: ImportSection }) {
   const [open, setOpen] = useState(false);
   const showable = Boolean(section.sourceText);
+  const Mark = MARKS[section.status] ?? Pending;
 
   return (
     <li className={`check check--${section.status}`}>
       <div className="check__head">
-        <span className="check__dot" aria-hidden />
+        <span className="check__mark">
+          <Mark size={14} />
+        </span>
         <span className="check__label">
           {labelFor(section.key, section.heading)}
         </span>
@@ -70,11 +89,11 @@ function SectionRow({ section }: { section: ImportSection }) {
         </span>
         {showable && (
           <button
-            className="check__toggle"
+            className="link"
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
           >
-            {open ? 'hide source' : 'source'}
+            {open ? 'Hide source' : 'Source'}
           </button>
         )}
       </div>
@@ -129,12 +148,12 @@ export default function ImportReview() {
 
   if (state.status === 'idle') {
     return (
-      <main className="import import--empty">
-        <h1>Nothing to review</h1>
-        <p className="import__muted">
+      <main className="checker checker--empty">
+        <h1 className="checker__title">Nothing to check</h1>
+        <p className="checker__muted">
           Upload a resume from the home page to see it here.
         </p>
-        <button className="button" onClick={() => router.push('/')}>
+        <button className="ctl" onClick={() => router.push('/')}>
           Back
         </button>
       </main>
@@ -142,13 +161,13 @@ export default function ImportReview() {
   }
 
   return (
-    <main className="import">
-      <header className="import__head">
+    <main className="checker">
+      <header className="checker__head">
         <div>
-          <h1 className="import__title">
+          <h1 className="checker__title">
             {busy ? 'Reading your resume' : 'Check what we read'}
           </h1>
-          <p className="import__muted">
+          <p className="checker__muted">
             {busy ? (
               <>
                 {state.filename} · this runs on your machine, so it takes a
@@ -162,12 +181,12 @@ export default function ImportReview() {
             )}
           </p>
         </div>
-        <div className="import__actions">
-          <button className="button" onClick={discard} disabled={saving}>
+        <div className="checker__actions">
+          <button className="ctl" onClick={discard} disabled={saving}>
             {busy ? 'Stop' : 'Discard'}
           </button>
           <button
-            className="button button--primary"
+            className="ctl ctl--primary"
             onClick={accept}
             disabled={busy || saving || !state.resumeData}
           >
@@ -183,9 +202,9 @@ export default function ImportReview() {
         </div>
       ))}
 
-      <div className="import__grid">
-        <section className="import__panel">
-          <h2 className="import__h2">Sections</h2>
+      <div className="checker__grid">
+        <section className="checker__panel">
+          <h2 className="checker__h2 legend">Sections</h2>
           <ul className="checks">
             {state.sections.map((section) => (
               <SectionRow
@@ -195,19 +214,19 @@ export default function ImportReview() {
             ))}
           </ul>
           {state.failed > 0 && (
-            <p className="import__muted">
+            <p className="checker__muted">
               {state.failed} section{state.failed === 1 ? '' : 's'} could not be
               read. You can still import everything else.
             </p>
           )}
         </section>
 
-        <section className="import__panel import__panel--preview">
-          <h2 className="import__h2">
-            Preview
+        <section className="checker__panel">
+          <h2 className="checker__h2 legend">
+            The print
             {!busy && (
               <input
-                className="import__name"
+                className="checker__name"
                 value={state.title}
                 onChange={(event) => state.setTitle(event.target.value)}
                 aria-label="Document name"
@@ -215,12 +234,14 @@ export default function ImportReview() {
             )}
           </h2>
           {state.doc ? (
-            <div className="page">
-              <DocumentFlow doc={state.doc} editable={false} />
+            <div className="checker__sheet">
+              <div className="page">
+                <DocumentFlow doc={state.doc} editable={false} />
+              </div>
             </div>
           ) : (
-            <p className="import__muted">
-              The preview appears once every section has been read.
+            <p className="checker__muted">
+              The print appears once every section has been read.
             </p>
           )}
         </section>

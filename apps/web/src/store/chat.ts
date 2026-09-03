@@ -14,6 +14,7 @@
 import { create } from 'zustand';
 
 import type { StreamEvent } from '@/stream/ndjson';
+import { clearMessages, fetchMessages } from '@/lib/api';
 import { cancelTurn, startTurn } from '@/stream/ndjson';
 import { useStudio } from '@/store/studio';
 
@@ -21,7 +22,7 @@ export interface ToolActivity {
   callId: string;
   name: string;
   tier: string;
-  status: 'running' | 'applied' | 'rejected' | 'confirm';
+  status: 'running' | 'applied' | 'rejected' | 'confirm' | 'done' | 'note';
   label?: string;
   detail?: string;
   code?: string;
@@ -32,6 +33,8 @@ export interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
   text: string;
+  /** Which model actually answered. Only set where the server reports one. */
+  model?: string;
   thinking?: string;
   activity: ToolActivity[];
   status?: 'streaming' | 'ok' | 'partial' | 'failed' | 'cancelled';
@@ -50,14 +53,14 @@ interface ChatState {
   turnId: string | null;
   error: string | null;
   confirm: PendingConfirm | null;
-  showThinking: boolean;
 
   send: (documentId: string, text: string, jobDescription?: string) => void;
   cancel: () => void;
   dismissConfirm: () => void;
   approveConfirm: (documentId: string) => void;
-  toggleThinking: () => void;
   reset: () => void;
+  load: (documentId: string) => Promise<void>;
+  forget: (documentId: string) => Promise<void>;
 }
 
 let abortCurrent: (() => void) | null = null;
@@ -72,7 +75,6 @@ export const useChat = create<ChatState>((set, get) => ({
   turnId: null,
   error: null,
   confirm: null,
-  showThinking: false,
 
   send(documentId, text, jobDescription) {
     if (get().streaming || !text.trim()) return;
@@ -97,6 +99,10 @@ export const useChat = create<ChatState>((set, get) => ({
       }));
 
     const studio = useStudio.getState();
+    // A new instruction is a new issue of the drawing. The clouds from the
+    // last one come off the sheet here rather than on a timer, so a mark stays
+    // readable for exactly as long as it still describes the current state.
+    studio.clearRevisions();
 
     const handle = startTurn(
       {
@@ -122,9 +128,20 @@ export const useChat = create<ChatState>((set, get) => ({
         onClose: () => {
           set({ streaming: false, turnId: null });
           abortCurrent = null;
-          patch((message) =>
-            message.status === 'streaming' ? { ...message, status: 'ok' } : message
-          );
+          patch((message) => ({
+            ...message,
+            status: message.status === 'streaming' ? 'ok' : message.status,
+            // Close anything still showing the running mark. A read-only tool
+            // emits `tool_start` and never a `patch_applied` -- the protocol
+            // has no `tool_end` -- so without this the step that finished
+            // first kept the open ring while the edit below it was already
+            // ticked, and a completed step read as unfinished. `done` rather
+            // than `applied`: it completed, but it changed nothing, and the
+            // check colour means a change was accepted.
+            activity: message.activity.map((item) =>
+              item.status === 'running' ? { ...item, status: 'done' as const } : item
+            ),
+          }));
           // The document store is the source of truth for content; refetch once
           // at the end rather than trusting the incremental replay.
           void useStudio.getState().refresh();
@@ -166,13 +183,43 @@ export const useChat = create<ChatState>((set, get) => ({
     startTurnWithConsent(documentId, pending, token, set, get);
   },
 
-  toggleThinking() {
-    set((state) => ({ showThinking: !state.showThinking }));
-  },
-
   reset() {
     abortCurrent?.();
     set({ messages: [], streaming: false, turnId: null, error: null, confirm: null });
+  },
+
+  async load(documentId) {
+    // Never over a live turn: opening a second tab on a document that is
+    // mid-stream would otherwise replace the streaming bubble with the stored
+    // transcript, which does not contain it yet.
+    if (get().streaming) return;
+
+    try {
+      const { messages } = await fetchMessages(documentId);
+      set({
+        messages: messages.map((message) => ({
+          id: message.id,
+          role: message.role,
+          text: message.text,
+          activity: [],
+          status: message.status ?? undefined,
+        })),
+      });
+    } catch {
+      // A conversation that will not load is not worth blocking the document
+      // for. The résumé is the thing the person came for.
+    }
+  },
+
+  async forget(documentId) {
+    abortCurrent?.();
+    set({ messages: [], streaming: false, turnId: null, error: null, confirm: null });
+    try {
+      await clearMessages(documentId);
+    } catch {
+      // Cleared on screen either way; a failed delete resurfaces on reload
+      // rather than leaving the user staring at a chat they asked to remove.
+    }
   },
 }));
 
@@ -218,7 +265,14 @@ function startTurnWithConsent(
 }
 
 /** The single place the wire protocol is interpreted. */
-function applyEvent(
+/**
+ * The single place the wire protocol is interpreted.
+ *
+ * Exported for tests: this is the reducer that decides whether a line is drawn
+ * as a failure, and that judgement was wrong for every advisory notice until it
+ * was pinned.
+ */
+export function applyEvent(
   event: StreamEvent,
   patch: (change: (message: ChatMessage) => ChatMessage) => void,
   set: (partial: Partial<ChatState>) => void,
@@ -253,6 +307,12 @@ function applyEvent(
       }));
       // Dim the node the agent is about to write to, and block editing there.
       break;
+
+    case 'drafting':
+      // Shown, not applied. The patch that follows is what edits the document;
+      // this is only so the words appear as they are written.
+      useStudio.getState().draft(String(event.target), String(event.text));
+      return;
 
     case 'patch_applied': {
       const touched = (event.touched as string[]) ?? [];
@@ -315,6 +375,17 @@ function applyEvent(
 
     case 'drift_suppressed':
     case 'warning':
+      // Which model ran is not a warning about the resume, so it does not go in
+      // the activity list at all -- rendered there it wore the same cross as a
+      // rejected edit and read as a failure.
+      if (event.source === 'model') {
+        patch((message) => ({
+          ...message,
+          model: String(event.message ?? ''),
+        }));
+        return;
+      }
+
       patch((message) => ({
         ...message,
         activity: [
@@ -323,7 +394,12 @@ function applyEvent(
             callId: `note_${event.seq}`,
             name: String(event.guard ?? event.source ?? 'note'),
             tier: 'A',
-            status: 'rejected',
+            // A note, not a rejection. These are the advisory lines -- "this
+            // turn rewrote most of the resume", "added without support" -- that
+            // exist precisely because the engine chose to report rather than
+            // refuse. Marking them rejected undid that: the work had landed,
+            // and the sidebar said it had failed.
+            status: 'note',
             detail: String(event.detail ?? event.message ?? ''),
           },
         ],
@@ -336,6 +412,10 @@ function applyEvent(
       break;
 
     case 'done':
+      // A draft outlives its call only when the call never landed -- truncated
+      // mid-write, or rejected. Left on screen it would be text the document
+      // does not contain and undo cannot remove.
+      useStudio.getState().clearDrafts();
       patch((message) => ({
         ...message,
         status: (event.status as ChatMessage['status']) ?? 'ok',

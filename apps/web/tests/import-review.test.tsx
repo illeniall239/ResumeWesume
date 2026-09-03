@@ -74,7 +74,7 @@ beforeEach(() => {
 describe('ImportReview', () => {
   it('says there is nothing to review before an upload', () => {
     render(<ImportReview />);
-    expect(screen.getByText('Nothing to review')).toBeInTheDocument();
+    expect(screen.getByText('Nothing to check')).toBeInTheDocument();
   });
 
   it('will not let a parse be imported while it is still running', () => {
@@ -133,7 +133,7 @@ describe('ImportReview', () => {
     });
     render(<ImportReview />);
     expect(screen.queryByText(/Northwind Systems/)).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'source' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Source' }));
     expect(screen.getByText(/Northwind Systems/)).toBeInTheDocument();
   });
 

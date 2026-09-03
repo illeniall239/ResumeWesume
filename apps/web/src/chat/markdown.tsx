@@ -121,7 +121,7 @@ export function renderMarkdown(text: string): ReactNode[] {
       // Rendered as one weight regardless of depth: this is a chat message,
       // not a document, and a model's "###" carries no reliable hierarchy.
       blocks.push(
-        <p className="msg__heading" key={`h${index++}`}>
+        <p className="revision__heading" key={`h${index++}`}>
           {inline(heading[2], `h${index}`)}
         </p>
       );
@@ -166,11 +166,11 @@ export function renderMarkdown(text: string): ReactNode[] {
         ordered ? (
           // `start` honours the number the model wrote, so a list that resumes
           // after other prose does not silently restart at one.
-          <ol className="msg__list" key={key} start={start}>
+          <ol className="revision__list" key={key} start={start}>
             {children}
           </ol>
         ) : (
-          <ul className="msg__list" key={key}>
+          <ul className="revision__list" key={key}>
             {children}
           </ul>
         )

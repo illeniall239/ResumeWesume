@@ -6,6 +6,9 @@ import type { StudioDoc } from '@/contracts/doc';
 
 const doc: StudioDoc = {
   schema_version: 1,
+  template: 'plain',
+  scaffold: false,
+  unverified: [],
   personal: {
     name: 'Alex Morgan',
     title: 'Senior Backend Engineer',

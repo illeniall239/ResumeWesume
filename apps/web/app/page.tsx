@@ -5,56 +5,25 @@ import { useRouter } from 'next/navigation';
 
 import type { DocumentResponse } from '@/contracts/doc';
 import { createDocument, listDocuments } from '@/lib/api';
+import DocumentFlow from '@/render/document-flow';
+import { BLANK_DOC, PREVIEW_DOC } from '@/render/preview-doc';
+import { timeAgo } from '@/lib/when';
+import ProviderSettings from '@/settings/provider-settings';
+import { useModels } from '@/store/models';
+import { Sliders } from '@/ui/marks';
+import { TEMPLATES, type TemplateInfo } from '@/render/templates';
 import { useImport } from '@/store/import';
 
-const SAMPLE = {
-  personalInfo: {
-    name: 'Alex Morgan',
-    title: 'Senior Backend Engineer',
-    email: 'alex.morgan@example.com',
-    phone: '+1-555-0142',
-    location: 'Austin, TX',
-    linkedin: 'linkedin.com/in/alexmorgan',
-  },
-  summary:
-    'Backend engineer with eight years building payment and data platforms at scale.',
-  workExperience: [
-    {
-      title: 'Senior Backend Engineer',
-      company: 'Northwind Systems',
-      location: 'Austin, TX',
-      years: 'Mar 2021 - Present',
-      description: [
-        'Rebuilt the payments ledger, cutting settlement latency from 4h to 9 minutes.',
-        'Led the migration of 40 services to async Python, reducing p99 latency 38%.',
-      ],
-      descriptionStyles: ['bullet', 'bullet'],
-    },
-    {
-      title: 'Backend Engineer',
-      company: 'Cobalt Analytics',
-      location: 'Remote',
-      years: 'Jun 2017 - Feb 2021',
-      description: ['Designed an ingest tier sustaining 1.2M events/sec.'],
-      descriptionStyles: ['bullet'],
-    },
-  ],
-  education: [
-    {
-      institution: 'University of Texas at Austin',
-      degree: 'B.S. Computer Science',
-      years: '2013 - 2017',
-      description: '',
-    },
-  ],
-  additional: {
-    technicalSkills: ['Python', 'Go', 'PostgreSQL', 'Kafka', 'Kubernetes', 'AWS'],
-    certificationsTraining: [],
-    languages: [],
-    awards: [],
-  },
-};
-
+/**
+ * Picking a template gives you the résumé on the card.
+ *
+ * Literally that document -- `PREVIEW_DOC` is what the card renders and what
+ * gets created, with only the template swapped -- because "exactly as is" is
+ * the whole promise a gallery makes, and two separate fixtures would have
+ * drifted the first time either was edited. There used to be a second sample
+ * in a legacy shape here that differed from the card in its jobs, its projects
+ * and its skills; it is gone.
+ */
 export default function Home() {
   const router = useRouter();
   const startImport = useImport((state) => state.start);
@@ -62,6 +31,12 @@ export default function Home() {
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState(false);
+  const loadProviders = useModels((state) => state.load);
+
+  useEffect(() => {
+    if (settings) void loadProviders();
+  }, [settings, loadProviders]);
 
   useEffect(() => {
     listDocuments()
@@ -69,14 +44,22 @@ export default function Home() {
       .catch((cause: Error) => setError(cause.message));
   }, []);
 
-  async function create(seeded: boolean) {
+  async function create(template: TemplateInfo, blank = false) {
     setBusy(true);
     setError(null);
+    const title = blank ? 'Untitled' : `Untitled — ${template.name}`;
     try {
       const created = await createDocument(
-        seeded
-          ? { title: 'Alex Morgan (sample)', resume_data: SAMPLE }
-          : { title: 'Untitled resume' }
+        blank
+          // A skeleton, not an empty document. Creating one with no content at
+          // all produced a page carrying nothing but the header -- every
+          // section renders only when it has something in it -- so it landed
+          // on a blank sheet with nothing to type into.
+          ? { title, template: template.id, starter: true }
+          // `scaffold` says the words in it are the card's, not yours. It is
+          // what lets the assistant replace them wholesale, and it ends the
+          // moment you type into the document yourself.
+          : { title, doc: { ...PREVIEW_DOC, template: template.id, scaffold: true } }
       );
       // Client navigation, not a document load. Assigning to
       // window.location.href tears down the module-scoped zustand stores,
@@ -89,28 +72,29 @@ export default function Home() {
   }
 
   return (
-    <main style={{ maxWidth: 720, margin: '0 auto', padding: '48px 24px' }}>
-      <h1 style={{ marginBottom: 4 }}>ResumeWesume</h1>
-      <p style={{ color: '#374151', marginTop: 0 }}>
-        A chat sidebar beside a live document. The assistant lands in P1; the
-        document engine underneath it is already working.
-      </p>
-
-      {error && <div className="notice">{error}</div>}
-
-      <div style={{ display: 'flex', gap: 12, margin: '24px 0' }}>
+    <main className="register">
+      <header className="register__head">
+        <h1 className="register__title">ResumeWesume</h1>
+        <div className="rail__spacer" />
         <button
-          className="button button--primary"
+          className="ctl"
           onClick={() => fileInput.current?.click()}
           disabled={busy}
         >
-          Upload a resume
+          Import a PDF instead
         </button>
-        <button className="button" onClick={() => create(true)} disabled={busy}>
-          New from sample
-        </button>
-        <button className="button" onClick={() => create(false)} disabled={busy}>
-          New blank
+        {/* The same dialog the studio's model picker opens. Here too, because
+            a key belongs to the machine rather than to a document -- somebody
+            arriving to start their first résumé should be able to set one
+            without opening a résumé first. */}
+        <button
+          className="ctl"
+          type="button"
+          onClick={() => setSettings(true)}
+          title="Model and API key settings"
+        >
+          <Sliders size={13} />
+          Settings
         </button>
         <input
           ref={fileInput}
@@ -126,22 +110,96 @@ export default function Home() {
             router.push('/import');
           }}
         />
-      </div>
-      <p style={{ color: '#6b7280', marginTop: -12, fontSize: 13 }}>
-        PDF only for now. Your resume is read on this machine and nothing is
-        saved until you have checked it.
-      </p>
+      </header>
 
-      <h2 style={{ fontSize: 16 }}>Documents</h2>
-      {documents.length === 0 && <p style={{ color: '#6b7280' }}>Nothing yet.</p>}
-      <ul style={{ paddingLeft: 18 }}>
-        {documents.map((document) => (
-          <li key={document.id} style={{ marginBottom: 6 }}>
-            <a href={`/studio/${document.id}`}>{document.title}</a>{' '}
-            <span className="badge">v{document.version}</span>
+      {/* Loaded when it opens rather than on every visit: the catalogue is a
+          handful of requests, and a page whose purpose is picking a template
+          should not spend them until somebody asks for settings. */}
+      {settings && <ProviderSettings onClose={() => setSettings(false)} />}
+
+      {error && <div className="notice notice--error">{error}</div>}
+
+      {/* Recent work first, and along one line. Someone arriving usually wants
+          the résumé they were already writing; the gallery is for the rarer
+          visit where they are starting another. */}
+      <section className="register__section">
+        <span className="legend section-legend">Recent</span>
+        {documents.length === 0 ? (
+          <p className="register__note">No sheets yet.</p>
+        ) : (
+          <ul className="recents">
+            {documents.map((document) => (
+              <li key={document.id}>
+                <a className="recent" href={`/studio/${document.id}`}>
+                  <span className="recent__title">{document.title}</span>
+                  {/* When it last changed, not how many writes it has taken.
+                      A write count is a fact about the engine; what tells you
+                      which résumé this is, is when you last had it open. */}
+                  <span className="recent__rev">
+                    {timeAgo(document.updated_at)}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="register__section">
+        <span className="legend section-legend">Templates</span>
+
+        {/* Real renders, not pictures of renders. Each card runs the same
+            `DocumentFlow` the studio and the PDF do, on the same fixture, with
+            only the template changed -- so a card cannot go stale against the
+            thing it is advertising, and there is no image to ship. */}
+        <ul className="gallery">
+          {/* Blank sits among the templates rather than as a checkbox above
+              them. It is the same kind of choice -- what the sheet starts as --
+              and as a card it can show what you get, which a checkbox could
+              only describe. */}
+          <li>
+            <button
+              type="button"
+              className="card"
+              onClick={() => create(TEMPLATES[0], true)}
+              disabled={busy}
+            >
+              <span className="card__paper" aria-hidden="true">
+                <span className="card__sheet">
+                  <DocumentFlow doc={BLANK_DOC} editable={false} placeholders />
+                </span>
+              </span>
+              <span className="card__name">Blank</span>
+              <span className="card__note">
+                The headings and nothing else. Start from your own words.
+              </span>
+            </button>
           </li>
-        ))}
-      </ul>
+
+          {TEMPLATES.map((template) => (
+            <li key={template.id}>
+              <button
+                type="button"
+                className="card"
+                onClick={() => create(template)}
+                disabled={busy}
+              >
+                <span className="card__paper" aria-hidden="true">
+                  <span className="card__sheet">
+                    <DocumentFlow
+                      doc={{ ...PREVIEW_DOC, template: template.id }}
+                      editable={false}
+                    />
+                  </span>
+                </span>
+                <span className="card__name">{template.name}</span>
+                <span className="card__note">{template.note}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
     </main>
   );
 }

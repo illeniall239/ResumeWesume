@@ -36,6 +36,7 @@ import { useDrag } from './use-drag';
 import { useMeasuredRects } from './use-measured-rects';
 import { useMarquee } from './use-marquee';
 import { pageSpec, ptToPx } from './units';
+import { ArrowDown, ArrowUp, Cross } from '@/ui/marks';
 
 type ElementProps = Omit<DocumentFlowProps, 'doc' | 'root' | 'exclude'> & {
   doc: StudioDoc;
@@ -78,6 +79,12 @@ function ElementView({
         : ptToPx(rect.h),
     transform: element.rotation ? `rotate(${element.rotation}deg)` : undefined,
     opacity: 'style' in element ? element.style.opacity : 1,
+    // The element's own alignment. Stored since the schema was written and
+    // never read here, so a footer placed against the right edge of the page
+    // still had its words starting at the left of its box -- which is what
+    // "it was not all the way to the right" meant, and no amount of moving the
+    // box could fix.
+    textAlign: 'style' in element ? element.style.align : undefined,
   };
 
   if (!element.visible) return null;
@@ -103,6 +110,10 @@ function ElementView({
           exclude={claimed}
           {...flow}
           editable={flow.editable && editing}
+          // Hints stay on whether or not this frame is the one being edited:
+          // an empty field that renders nothing leaves nothing to double-click,
+          // which is how a brand-new résumé arrived as a blank sheet.
+          placeholders={flow.editable}
         />
       </div>
     );
@@ -369,7 +380,7 @@ function PageControls({
         disabled={!canMovePage(doc, page.nid, -1)}
         onClick={() => commit(movePage(doc, page.nid, -1))}
       >
-        ↑
+        <ArrowUp size={13} />
       </button>
       <button
         type="button"
@@ -377,7 +388,7 @@ function PageControls({
         disabled={!canMovePage(doc, page.nid, 1)}
         onClick={() => commit(movePage(doc, page.nid, 1))}
       >
-        ↓
+        <ArrowDown size={13} />
       </button>
       {/* Shown only when it can actually do something. On a resume that flows
           top-to-bottom every page holds content, so this was a ✕ on every page
@@ -395,7 +406,7 @@ function PageControls({
           title="Delete this page"
           onClick={() => commit(deletePage(doc, page.nid))}
         >
-          ✕
+          <Cross size={13} />
         </button>
       )}
     </div>

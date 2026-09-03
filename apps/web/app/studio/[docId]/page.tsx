@@ -1,27 +1,34 @@
 'use client';
 
-import { use, useEffect, useRef } from 'react';
+import { use, useEffect, useRef, useState } from 'react';
 
 import type { DocOp } from '@/contracts/doc';
 import ChatPanel from '@/chat/chat-panel';
-import DocumentFlow from '@/render/document-flow';
+import IssueStation from '@/export/issue-station';
 import { InsertToolbar } from '@/canvas/insert-toolbar';
 import { PageCanvas } from '@/canvas/page-canvas';
+import { RevisionLayer } from '@/canvas/revision-layer';
+import { RevisionBlock } from '@/canvas/revision-block';
 import { mintLike } from '@/canvas/ids';
 import { removeElements } from '@/canvas/pages';
 import { useSelection } from '@/canvas/selection';
-import { canZoom, useView } from '@/canvas/view';
+import { canZoom, fitZoom, useView } from '@/canvas/view';
 import { useReflow } from '@/canvas/use-reflow';
-import { pdfUrl } from '@/lib/api';
+import { Minus, Plus, Redo, Sheet, Undo } from '@/ui/marks';
 import { useChat } from '@/store/chat';
 import { useStudio } from '@/store/studio';
 
 /**
- * The studio: assistant on the left, live document on the right.
+ * The board: the revision schedule at the left, the print at the right.
  *
  * Both panes read from stores rather than from each other. A token of assistant
  * text must not re-render the resume, and a patch landing must not re-render the
  * transcript, so the two are kept in separate stores with per-field selectors.
+ *
+ * The rails are fixed and only the sheet scrolls. That is what keeps the title
+ * block on screen: it is where the document says what it is and what state it
+ * is in, and a person scrolling to the foot of page three should not have to
+ * scroll back to find out whether their work is saved.
  */
 export default function StudioPage({ params }: { params: Promise<{ docId: string }> }) {
   const { docId } = use(params);
@@ -32,6 +39,10 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
   const saving = useStudio((state) => state.saving);
   const error = useStudio((state) => state.error);
   const changed = useStudio((state) => state.changed);
+  const version = useStudio((state) => state.version);
+  const unverified = useStudio((state) => state.unverified);
+  // Text a tool call is writing right now, shown in place while it arrives.
+  const drafts = useStudio((state) => state.drafts);
   const locked = useStudio((state) => state.locked);
   const load = useStudio((state) => state.load);
   const edit = useStudio((state) => state.edit);
@@ -39,20 +50,29 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
   const history = useStudio((state) => state.history);
   const stage = useStudio((state) => state.stage);
   const flush = useStudio((state) => state.flush);
+  const revisions = useStudio((state) => state.revisions);
+  const confirmInvented = useStudio((state) => state.confirmInvented);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [issuing, setIssuing] = useState(false);
 
   const zoom = useView((state) => state.zoom);
+  const setZoom = useView((state) => state.setZoom);
   const zoomIn = useView((state) => state.zoomIn);
   const zoomOut = useView((state) => state.zoomOut);
   const resetZoom = useView((state) => state.reset);
 
   const streaming = useChat((state) => state.streaming);
   const resetChat = useChat((state) => state.reset);
+  const loadChat = useChat((state) => state.load);
 
   useEffect(() => {
     void load(docId);
+    // The conversation comes back with the document. Without this a reload
+    // emptied the sidebar *and* the history handed to the model, so the
+    // assistant would ask again for facts it had already been given.
+    void loadChat(docId);
     return () => resetChat();
-  }, [docId, load, resetChat]);
+  }, [docId, load, loadChat, resetChat]);
 
   // Keyboard, on the window rather than a focused node: a selected box is not
   // a focusable element, so there is nothing else to hang these on. Every
@@ -211,92 +231,167 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
   // migrated document opens with its sections overlapping until this corrects
   // them from what the browser actually rendered.
   const canvasRef = useRef<HTMLDivElement>(null);
-  useReflow(canvasRef, doc, edit);
+  // Version is part of the key: without it the pass runs once and never
+  // again, so text an agent turn made longer overflows its frame and is
+  // drawn over whatever sits below.
+  useReflow(canvasRef, doc, edit, version);
+
+  /**
+   * Open at a magnification the sheet actually fits.
+   *
+   * On a phone an A4 page is roughly twice the pane, so opening at 100% showed
+   * less than half the résumé -- and the first thing a document has to say is
+   * what it is. Runs once per document, and only when the sheet does not fit:
+   * a desktop pane is wider than a page, so this never touches it, and it must
+   * never override a magnification the person chose themselves.
+   */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const fitted = useRef<string | null>(null);
+  useEffect(() => {
+    const pane = scrollRef.current;
+    if (!doc || !pane || fitted.current === docId) return;
+    const sheet = pane.querySelector('.canvas-page');
+    if (!sheet) return;
+
+    fitted.current = docId;
+    // The rendered width already carries the current zoom, so it is divided
+    // back out to get the sheet's own width before choosing a step.
+    const sheetWidth = sheet.getBoundingClientRect().width / zoom;
+    const room = pane.clientWidth - 32;
+    if (sheetWidth > room) setZoom(fitZoom(room, sheetWidth));
+    // `zoom` is read, not depended on: reacting to it would refit the moment
+    // the user zoomed in, which is the opposite of what they asked for.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, docId, setZoom]);
 
   return (
-    <main className="studio">
-      <aside className="pane">
+    <main className="deck">
+      <aside>
         <ChatPanel documentId={docId} />
       </aside>
 
-      <section className="pane pane--doc">
-        <div className="toolbar toolbar--doc">
-          {/* No version number here on purpose. The document's `version` is an
-              ETag half and the key an undo reverses -- it counts accepted
-              writes, so a drag, the reflow pass on open and an undo each add
-              one, and an undo counts *up* while taking you back. Shown raw it
-              reads as a revision number and is not one. It is still sent on
-              every write; it is just not something to show a person. */}
-          <strong>{title || 'Resume'}</strong>
-          {saving && <span className="badge">saving…</span>}
+      <section className="deck__board">
+        <div className="rail rail--top">
+          {doc && (
+            <InsertToolbar doc={doc} documentId={docId} commit={(ops) => void edit(ops)} />
+          )}
+          <span className="rail__spacer" />
           <button
-            className="button button--quiet"
+            type="button"
+            className="ctl ctl--small"
             onClick={() => void history('undo')}
             disabled={saving}
             title="Undo (Ctrl+Z)"
           >
+            <Undo size={13} />
             Undo
           </button>
           <button
-            className="button button--quiet"
+            type="button"
+            className="ctl ctl--small"
             onClick={() => void history('redo')}
             disabled={saving}
             title="Redo (Ctrl+Shift+Z)"
           >
+            <Redo size={13} />
             Redo
           </button>
-          {streaming && <span className="badge badge--live">assistant editing</span>}
-          <span className="toolbar__spacer" />
-          <a className="button" href={pdfUrl(docId)} target="_blank" rel="noreferrer">
+          {/* With the other actions, not stranded in the title block at the
+              foot of the page. Everything you *do* to the document lives on
+              this rail; the block below states what the document is. */}
+          <button
+            type="button"
+            className="ctl ctl--small"
+            onClick={() => setIssuing(true)}
+            disabled={!doc}
+            title="Export a PDF"
+          >
+            <Sheet size={13} />
             Export PDF
-          </a>
+          </button>
         </div>
 
-        {doc && <InsertToolbar doc={doc} documentId={docId} commit={(ops) => void edit(ops)} />}
-
         {error && <div className="notice notice--error">{error}</div>}
-        {loading && <div className="notice">Loading…</div>}
+        {loading && <div className="notice">Reading the sheet…</div>}
 
-        {/* `zoom` rather than a transform: it scales the layout, so the pane
-            still scrolls to the bottom of a magnified document, and a measured
-            rect comes back in the same space the pointer reports. A transform
-            would leave the scroll height at 100%. */}
-        {doc && (
-          <div ref={canvasRef} style={{ zoom }}>
-          <PageCanvas
-            doc={doc}
-            changed={changed}
-            locked={locked}
-            editable
-            onFocusNode={setFocus}
-            onEditText={(nid, value) => {
-              void edit([{ op: 'set_text', nid, value }]);
-            }}
-            onEditField={(target, value) => {
-              void edit([{ op: 'set_field', target, value }]);
-            }}
-            interactive
-            commit={(ops) => void edit(ops)}
-          />
+        {/* Said once, above the document, rather than beside each line: a
+            résumé tailored from a template can have a dozen invented lines, and
+            twelve buttons is not a review. The underlines say which; this says
+            how many and offers the one action worth having. */}
+        {unverified.size > 0 && (
+          <div className="unchecked">
+            <span className="unchecked__count">{unverified.size}</span>
+            <p className="unchecked__text">
+              {unverified.size === 1 ? 'One line was' : 'These lines were'} written
+              by the assistant from a template, so {unverified.size === 1 ? 'it is' : 'they are'}{' '}
+              plausible rather than true. Underlined below — replace anything you
+              would not want to be asked about.
+            </p>
+            <button
+              type="button"
+              className="ctl ctl--small"
+              onClick={() => void confirmInvented()}
+            >
+              These are accurate
+            </button>
           </div>
         )}
 
-        {/* On the canvas rather than in the toolbar, and deliberately outside
-            the scaled wrapper: inside it the buttons would zoom along with the
-            document and read 200% while being twice their own size. Sticky, so
-            they stay to hand at the bottom-right of a document taller than the
-            pane. Zoom is a property of this viewer, never of the resume -- it
-            reaches no op, so it cannot be undone and cannot bump a version. */}
-        {doc && (
-          <div className="zoom">
+        <div className="sheet-scroll" ref={scrollRef}>
+          {/* `zoom` rather than a transform: it scales the layout, so the pane
+              still scrolls to the bottom of a magnified document, and a measured
+              rect comes back in the same space the pointer reports. A transform
+              would leave the scroll height at 100%.
+
+              `position: relative` because the revision layer paints inside this
+              wrapper, so its coordinates and the document's are the same space
+              at any zoom. */}
+          {doc && (
+            <div ref={canvasRef} className="sheet" style={{ zoom }}>
+              <PageCanvas
+                doc={doc}
+                changed={changed}
+                locked={locked}
+                unverified={unverified}
+                drafts={drafts}
+                editable
+                onFocusNode={setFocus}
+                onEditText={(nid, value) => {
+                  void edit([{ op: 'set_text', nid, value }]);
+                }}
+                onEditField={(target, value) => {
+                  void edit([{ op: 'set_field', target, value }]);
+                }}
+                interactive
+                commit={(ops) => void edit(ops)}
+              />
+              <RevisionLayer host={canvasRef} zoom={zoom} />
+            </div>
+          )}
+        </div>
+
+        {/* Above the title block, in the lower right of the sheet -- which is
+            exactly where a drawing keeps its revision block. It records what
+            the document has had done to it; the conversation about it lives in
+            the sidebar. */}
+        <RevisionBlock />
+
+        <div className="rail rail--bottom">
+          {/* Deliberately outside the scaled wrapper: inside it these would zoom
+              along with the document and read 200% while being twice their own
+              size. Zoom is a property of this viewer, never of the resume -- it
+              reaches no op, so it cannot be undone and cannot bump a version,
+              which is also why it sits apart from the title block's fields. */}
+          <div className="zoom" aria-label="Magnification">
             <button
               type="button"
               className="zoom__step"
               title="Zoom out"
-              disabled={!canZoom(zoom, -1)}
+              aria-label="Zoom out"
+              disabled={!doc || !canZoom(zoom, -1)}
               onClick={zoomOut}
             >
-              −
+              <Minus size={13} />
             </button>
             <button
               type="button"
@@ -310,14 +405,58 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
               type="button"
               className="zoom__step"
               title="Zoom in"
-              disabled={!canZoom(zoom, 1)}
+              aria-label="Zoom in"
+              disabled={!doc || !canZoom(zoom, 1)}
               onClick={zoomIn}
             >
-              +
+              <Plus size={13} />
             </button>
           </div>
-        )}
+
+          <span className="rail__spacer" />
+
+          <div className="title-block">
+            <div className="title-block__field">
+              <span className="legend">Document</span>
+              <span className="title-block__value title-block__value--name">
+                {title || 'Untitled'}
+              </span>
+            </div>
+
+            {/* Revisions accepted in this session, which is what the revision
+                block above lists. Deliberately *not* the document's `version`:
+                that is an ETag half counting every accepted write, so the
+                reflow pass on open bumps it and an undo bumps it too --
+                counting up while taking you back. Shown raw it reads as a
+                revision number and is not one. It is still sent on every write;
+                it is just not something to put in front of a person. */}
+            <div className="title-block__field">
+              <span className="legend">Rev</span>
+              <span className="title-block__value title-block__value--rev">{revisions}</span>
+            </div>
+
+            <div className="title-block__field">
+              <span className="legend">State</span>
+              <span
+                className={`title-block__value${
+                  saving || streaming ? ' title-block__value--work' : ' title-block__value--live'
+                }`}
+              >
+                {saving ? 'Saving' : streaming ? 'Assistant editing' : 'Saved'}
+              </span>
+            </div>
+          </div>
+        </div>
       </section>
+
+      {issuing && (
+        <IssueStation
+          documentId={docId}
+          title={title || 'resume'}
+          doc={doc}
+          onClose={() => setIssuing(false)}
+        />
+      )}
     </main>
   );
 }

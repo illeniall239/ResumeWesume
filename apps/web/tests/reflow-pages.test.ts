@@ -8,7 +8,8 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { mintPages } from '@/canvas/use-reflow';
+import { mintPages, reflowSignature } from '@/canvas/use-reflow';
+import type { StudioDoc } from '@/contracts/doc';
 
 describe('minting page ids', () => {
   it('mints nothing when the pages already exist', () => {
@@ -39,5 +40,40 @@ describe('minting page ids', () => {
   it('never returns an id twice', () => {
     const minted = mintPages(['pag_aaaaa'], 12);
     expect(new Set(minted).size).toBe(minted.length);
+  });
+});
+
+describe('the signature that decides whether to measure again', () => {
+  const doc = (pages: string[]): StudioDoc =>
+    ({
+      pages: pages.map((nid) => ({
+        nid,
+        size: 'a4',
+        orientation: 'portrait',
+        background: null,
+        elements: [],
+      })),
+    }) as unknown as StudioDoc;
+
+  it('changes when the document changes, not only when pages do', () => {
+    // Keyed on page ids alone this ran once and never again: editing text does
+    // not rename a page. An agent turn would rewrite a two-line bullet into
+    // four, the frame kept the height measured for the old text, and the next
+    // section was drawn over the top of it.
+    expect(reflowSignature(doc(['pag_a']), 4)).not.toBe(
+      reflowSignature(doc(['pag_a']), 5)
+    );
+  });
+
+  it('still changes when a page is added', () => {
+    expect(reflowSignature(doc(['pag_a']), 7)).not.toBe(
+      reflowSignature(doc(['pag_a', 'pag_b']), 7)
+    );
+  });
+
+  it('is stable for the same document at the same version', () => {
+    expect(reflowSignature(doc(['pag_b', 'pag_a']), 3)).toBe(
+      reflowSignature(doc(['pag_a', 'pag_b']), 3)
+    );
   });
 });

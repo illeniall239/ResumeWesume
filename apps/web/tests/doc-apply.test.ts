@@ -11,6 +11,9 @@ const GROUP = 'sgp_ggggg';
 function doc(): StudioDoc {
   return {
     schema_version: 1,
+  template: 'plain',
+  scaffold: false,
+  unverified: [],
     personal: {
       name: 'Alex Morgan',
       title: 'Engineer',

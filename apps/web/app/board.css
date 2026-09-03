@@ -1,0 +1,2624 @@
+/*
+ * The board.
+ *
+ * Everything that is not the document. Loaded after `globals.css` and never
+ * reaching a PDF -- the print block at the foot of this file removes it all.
+ *
+ * The world is drawing-office revision practice. A resume is a controlled
+ * document: alterations are numbered, ringed by a revision cloud, and the
+ * superseded issue is never destroyed. That is not decoration, it is the
+ * product's actual guarantee -- every AI edit compiles to validated primitives
+ * with a total inverse -- rendered in the notation of a trade that solved the
+ * same problem on paper a century ago.
+ *
+ * Three rules hold the whole sheet together:
+ *
+ * 1. The resume is the only paper-white surface. Nothing else may be white.
+ *    The board is deep Prussian so that the print is the brightest thing on
+ *    screen and stays that way at any zoom.
+ * 2. Colour means state and nothing else. Revision red is a proposal awaiting
+ *    a decision; check green is accepted and grounded. Neither is ever brand,
+ *    accent, or emphasis. If a colour appears where no state exists, it is a bug.
+ * 3. Rank comes from lettering size and line weight. No box, bezel, card or
+ *    container manufactures hierarchy -- a drawing does not have cards.
+ */
+
+:root {
+  /* --- the board --------------------------------------------------------
+     A black drafting board. Neutral rather than pure #000: a true black under
+     a paper-white sheet makes the sheet glare, and every rule drawn on it has
+     to be lifted to something that is no longer black anyway. These are grey
+     at very low value, so they read as black and still hold a hairline.
+
+     The near-black-plus-one-neon-accent look is a real trap here, and the
+     guards against it are structural: colour appears only where a state
+     exists, no glow or bloom is used anywhere, and nothing is saturated except
+     the two state hues. */
+  --board: #0f0f10;
+  --board-deep: #08080a;
+  --board-raised: #1a1a1c;
+  --board-lift: #232326;
+  --hair: #2e2e33;
+  --hair-soft: #1e1e21;
+
+  /* Legend inks, silkscreened onto the board. The ratios against --board are
+     computed, not guessed: 16.1:1, 8.0:1 and 4.6:1. --legend-faint sits
+     deliberately just above the 4.5:1 body-text floor and is the dimmest ink
+     permitted to carry words; anything quieter is a rule, not text. */
+  --legend: #ededed;
+  --legend-dim: #a8a8ad;
+  --legend-faint: #7e7e85;
+
+  /* Revision red. Three values because one hue cannot clear 4.5:1 on both a
+     black board and white paper: --rev is the mark (strokes, clouds, rules,
+     which need only 3:1 and clear 4.2:1), --rev-text is red words on the board
+     at 6.5:1, and --rev-ink is red words on paper at 6.1:1. */
+  --rev: #d8402f;
+  --rev-text: #f2705c;
+  --rev-ink: #b8301f;
+  --rev-wash: rgba(216, 64, 47, 0.15);
+
+  /* Check green, same reasoning: 7.5:1 on the board, 5.2:1 on paper. */
+  --check: #43b878;
+  --check-ink: #1e7a45;
+  --check-wash: rgba(67, 184, 120, 0.14);
+
+  /* Overrides the document-affordance accent from globals.css. Every place it
+     is used is drawn on the résumé rather than on the board -- a focus ring, a
+     marquee, a caret hover -- so it is chosen against white paper, where it
+     clears 8.4:1, and it is the one colour here the board does not own. */
+  --accent: #1b4f86;
+  /* One ink for every control that cannot be pressed. Disabled components are
+     exempt from WCAG 1.4.3, but 2.5:1 reads as a rendering fault rather than
+     as unavailable -- and the state is already carried by the fill coming off
+     the control, so the label does not have to go faint as well to say it. */
+  --legend-off: #8a8a92;
+  /* Focus, on the board. Deliberately a third hue: red means a proposal and
+     green means accepted, so a focus ring in either would claim a state the
+     element is not in. */
+  --focus: #7cb8f0;
+
+  --font-legend: var(--font-narrow), 'Archivo Narrow', ui-sans-serif, system-ui,
+    sans-serif;
+  --font-ui: var(--font-ui-stack), Archivo, ui-sans-serif, system-ui, sans-serif;
+}
+
+body {
+  background: var(--board);
+  color: var(--legend);
+  font-family: var(--font-ui);
+  /* Numerals line up in the schedule, the title block and the zoom stepper.
+     Set once here rather than sprinkled: every number on the board is data. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- browser surfaces -----------------------------------------------------
+   The parts nobody draws. A default selection highlight and a default
+   scrollbar are the two loudest tells that a page was assembled rather than
+   built, and both are cheap to own. */
+
+::selection {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--legend);
+}
+
+/* On the print, where the ground is white, the same selection has to invert. */
+.canvas-page ::selection,
+.page ::selection {
+  background: rgba(27, 79, 134, 0.18);
+  color: var(--ink);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hair) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--hair);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--board-lift);
+  background-clip: content-box;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+input,
+textarea {
+  caret-color: var(--legend);
+}
+
+.canvas-page [contenteditable],
+.page [contenteditable] {
+  caret-color: var(--accent);
+}
+
+/* --- lettering ------------------------------------------------------------
+   Drawing-office lettering: condensed, upright, caps, tracked. It labels
+   things. It never sets prose, and it is never used to make something look
+   technical -- everything wearing it is genuinely a legend on a drawing. */
+
+.legend {
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+.legend--lit {
+  color: var(--legend-dim);
+}
+
+/* The product name, where a legend used to say "Assistant".
+   Not `.legend`: that uppercases, and RESUMEWESUME is one long word with the
+   join lost -- the name only reads if the second capital survives. Wide
+   tracking goes with it, since letter-spacing is what makes small caps
+   legible and mixed case does not need the help. */
+.wordmark {
+  font-family: var(--font-legend);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--legend);
+}
+
+/* --- controls -------------------------------------------------------------
+   One control family. Rank between them is weight and lettering, never a
+   container: the primary action is filled because it is the only filled thing
+   on the sheet, and the secondary is the same shape with the fill removed. */
+
+.ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend-dim);
+  font-family: var(--font-legend);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: border-color 120ms ease-out, color 120ms ease-out,
+    background-color 120ms ease-out;
+}
+
+.ctl:hover:not(:disabled) {
+  border-color: var(--legend-faint);
+  color: var(--legend);
+}
+
+.ctl:disabled {
+  /* Not opacity. A translucent control on a patterned ground reads as a render
+     bug; a control that has visibly lost its ink reads as unavailable. */
+  border-color: var(--hair-soft);
+  color: var(--legend-off);
+  cursor: default;
+}
+
+.ctl--primary {
+  border-color: var(--legend-dim);
+  background: var(--legend);
+  color: var(--board-deep);
+}
+
+.ctl--primary:hover:not(:disabled) {
+  background: #ffffff;
+  border-color: #ffffff;
+  color: var(--board-deep);
+}
+
+.ctl--primary:disabled {
+  background: var(--board-raised);
+  border-color: var(--hair);
+  color: var(--legend-off);
+}
+
+.ctl--danger:hover:not(:disabled) {
+  border-color: var(--rev-text);
+  color: var(--rev-text);
+}
+
+.ctl--small {
+  padding: 3px 8px;
+  font-size: 10.5px;
+}
+
+/* A text control. Underlined on hover rather than always, so a row of them
+   does not read as a paragraph of links. */
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--legend-dim);
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.link:hover {
+  color: var(--legend);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.mark {
+  flex: none;
+  display: block;
+}
+
+/* --- fields ---------------------------------------------------------------
+   A field is a ruled line on a form, not a box. The underline is the whole
+   affordance; a border on four sides would be the container this world does
+   not use. */
+
+.field {
+  display: block;
+}
+
+.field__legend {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.field input,
+.field textarea {
+  width: 100%;
+  padding: 6px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  border-radius: 0;
+}
+
+.field input::placeholder {
+  color: #70707a;
+}
+
+.field input:focus,
+.field textarea:focus {
+  outline: 0;
+  border-bottom-color: var(--focus);
+}
+
+/* --- the deck -------------------------------------------------------------
+   Schedule at the left, board at the right. Both columns own their own
+   scrolling, so reading the schedule never moves the print. */
+
+/* `min-height: 0` on both columns, and it is load-bearing rather than
+   defensive. A grid item's implicit `min-height: auto` is its content's
+   min-content height, and the content here is a stack of A4 sheets -- so the
+   row grew past 100vh, the whole page scrolled, and the bottom rail went below
+   the fold, taking the title block with it. */
+/* Two full-height columns: the assistant at the left, the drawing at the
+   right. `min-height: 0` on both is load-bearing -- a grid item's implicit
+   `min-height: auto` is its content's min-content height, and the content here
+   is a stack of A4 sheets, so without it the row grew past 100vh and the
+   bottom rail went below the fold with the title block on it. */
+.deck {
+  display: grid;
+  grid-template-columns: minmax(320px, 400px) 1fr;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--hair-soft);
+  gap: 1px;
+}
+
+.deck > aside {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.deck__board {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--board);
+}
+
+/* The stack of sheets, and the layer that marks them. Positioned so the
+   revision layer's coordinates and the document's are one space at any zoom. */
+.sheet {
+  position: relative;
+}
+
+/* Rails carry the furniture. Fixed at top and bottom so only the print
+   scrolls -- the title block is the one thing that must never leave the
+   screen, because it is where the document says what it is. */
+.rail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 8px 16px;
+  background: var(--board-deep);
+}
+
+.rail--top {
+  border-bottom: 1px solid var(--hair-soft);
+  flex-wrap: wrap;
+}
+
+.rail--bottom {
+  border-top: 1px solid var(--hair-soft);
+  padding: 0 16px;
+  min-height: 54px;
+}
+
+.rail__spacer {
+  flex: 1;
+}
+
+.sheet-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+  padding: 28px 16px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* An A4 sheet is ~794px, so on a phone it is wider than its container -- and
+     a centred flex item wider than its line gets a *negative* start offset that
+     scrolling cannot reach, which clipped the left edge of the résumé
+     permanently. `safe` drops to start alignment exactly when centring would
+     overflow. Declared second so a browser that does not know the keyword
+     keeps the plain `center` above it. */
+  align-items: safe center;
+}
+
+/* --- the title block ------------------------------------------------------
+   Lower right of the sheet, as it is on every drawing ever issued. It carries
+   what the document is, which issue you are looking at, and the one action
+   that turns it into a file. */
+
+.title-block {
+  display: flex;
+  align-items: stretch;
+  margin-left: auto;
+}
+
+.title-block__field {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 14px;
+  border-left: 1px solid var(--hair-soft);
+  min-width: 0;
+}
+
+.title-block__field:first-child {
+  border-left: 0;
+  padding-left: 0;
+}
+
+.title-block__value {
+  font-size: 13px;
+  color: var(--legend);
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.title-block__value--name {
+  max-width: 30ch;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.title-block__value--rev {
+  font-family: var(--font-legend);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.title-block__value--live {
+  color: var(--check);
+}
+
+.title-block__value--work {
+  color: var(--rev-text);
+}
+
+/* No renaming control here. The API has no rename endpoint -- a title is set
+   when the document is created and on the import screen -- and a field that
+   looked editable but could not save would be worse than plain text. */
+
+/* --- zoom -----------------------------------------------------------------
+   A stepper on the bottom rail, left of the title block. Deliberately not
+   inside it: zoom is a property of this viewer and never of the document, so
+   it must not sit among the fields that describe the document. */
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.zoom__step {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend-dim);
+  cursor: pointer;
+}
+
+.zoom__step:hover:not(:disabled) {
+  border-color: var(--legend-faint);
+  color: var(--legend);
+}
+
+.zoom__step:disabled {
+  border-color: var(--hair-soft);
+  color: var(--legend-off);
+  cursor: default;
+}
+
+.zoom__level {
+  min-width: 6ch;
+  padding: 4px 6px;
+  border: 0;
+  background: none;
+  color: var(--legend-faint);
+  font-family: var(--font-legend);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-align: center;
+  cursor: pointer;
+}
+
+.zoom__level:hover {
+  color: var(--legend);
+}
+
+/* --- the revision schedule ------------------------------------------------
+   What was a chat transcript. A drawing's revision schedule is a table of what
+   changed, when, and on whose authority; that is exactly what a turn produces,
+   so the assistant writes rows here rather than paragraphs. */
+
+.schedule {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-width: 0;
+  background: var(--board);
+}
+
+.schedule__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hair-soft);
+  background: var(--board-deep);
+}
+
+.schedule__rows {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.schedule__empty p {
+  margin: 0 0 14px;
+  max-width: 40ch;
+  color: var(--legend-dim);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.schedule__suggestions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--hair-soft);
+  border-top: 1px solid var(--hair-soft);
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.schedule__suggestion {
+  display: block;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  background: var(--board);
+  color: var(--legend-dim);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.schedule__suggestion:hover {
+  background: var(--board-raised);
+  color: var(--legend);
+}
+
+/* An instruction from the person holding the caret.
+   Right-aligned in a bubble, the way every chat reads: which side a message
+   sits on is what tells you who wrote it, and it does that faster than a label
+   above it could. The assistant stays left and unbubbled -- its replies run
+   long and carry lists, and a bubble around a page of prose is a box, not a
+   message. */
+.instruction {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.instruction__text {
+  max-width: 85%;
+  margin: 0;
+  padding: 7px 11px;
+  border-radius: 12px 12px 3px 12px;
+  background: var(--board-raised);
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--legend);
+  /* Their own line breaks are meaningful -- a pasted job title, a list of
+     dates -- and collapsing them would rewrite what they typed. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.revision {
+  display: flex;
+}
+
+.revision__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.revision__prose {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--legend-dim);
+}
+
+.revision__prose p {
+  margin: 0 0 8px;
+}
+
+.revision__prose p:last-child {
+  margin-bottom: 0;
+}
+
+.revision__prose strong {
+  color: var(--legend);
+  font-weight: 600;
+}
+
+/* The model's headings, rendered at one weight regardless of depth. Its "###"
+   carries no reliable hierarchy, and a schedule entry is not a document. */
+.revision__heading {
+  margin: 10px 0 4px;
+  color: var(--legend);
+  font-weight: 600;
+}
+
+.revision__heading:first-child {
+  margin-top: 0;
+}
+
+.revision__prose ul,
+.revision__prose ol {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.revision__prose li {
+  margin-bottom: 3px;
+}
+
+.revision__prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--legend);
+}
+
+.revision__prose pre {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: var(--board-deep);
+  border-left: 1px solid var(--hair);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: var(--legend-dim);
+}
+
+.revision__status {
+  margin-top: 6px;
+  color: var(--legend-faint);
+  font-size: 12.5px;
+}
+
+/* A turn that came back empty. Marked, because the alternative is a numbered
+   entry with nothing under it, which reads as the app being broken rather than
+   as the model having failed to answer. */
+.revision__status--silent {
+  padding-left: 9px;
+  border-left: 1px solid var(--rev);
+  color: var(--rev-text);
+  line-height: 1.5;
+  max-width: 44ch;
+}
+
+/* --- schedule items -------------------------------------------------------
+   One row per tool call. The mark carries the state; the row is otherwise
+   uncoloured, so a burst of edits reads as a column of marks you can scan
+   without reading a word. */
+
+.items {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px 5px 0;
+  border: 0;
+  border-top: 1px solid var(--hair-soft);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.item:first-child {
+  border-top: 0;
+}
+
+/* Only a row that names nodes can point at anything, so only that row is a
+   button. The rest are plain rows and must not offer a hover they cannot
+   honour. */
+.item--leadered {
+  cursor: pointer;
+}
+
+.item--leadered:hover {
+  background: var(--board-raised);
+}
+
+.item__mark {
+  flex: none;
+  margin-top: 1px;
+  color: var(--legend-faint);
+}
+
+.item--applied .item__mark {
+  color: var(--check);
+}
+
+/* Finished, but it changed nothing -- a read, say. Closed like the others so a
+   completed step never reads as still running, and neutral because the check
+   colour means a change was accepted. */
+.item--done .item__mark {
+  color: var(--legend-faint);
+}
+
+.item--rejected .item__mark {
+  color: var(--rev-text);
+}
+
+/* A line the assistant is writing at this moment. A caret after the last
+   character, and nothing else: the words are the thing to watch, and a
+   coloured background under text that changes every frame is a flicker. The
+   node keeps its ordinary type, weight and spacing so the sentence lands
+   exactly where the finished one will. */
+.node--drafting::after {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--rev);
+  animation: caret 1s step-end infinite;
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* An advisory note, not a failure. These lines exist because the engine now
+   reports rather than refuses -- "this turn rewrote most of the resume",
+   "added without support in your resume" -- so the work landed and the mark
+   must not say otherwise. Amber, and dimmer than a rejection. */
+.item--note .item__mark {
+  color: #d0a215;
+}
+
+.item--confirm .item__mark {
+  color: var(--rev-text);
+}
+
+.item__body {
+  min-width: 0;
+  flex: 1;
+}
+
+/* Which model answered, under the reply. Quiet: it is provenance, not part of
+   the conversation. */
+.revision__model {
+  margin: 6px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.01em;
+  color: var(--legend-faint);
+}
+
+.item__label {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--legend-dim);
+}
+
+.item__detail {
+  display: block;
+  margin-top: 1px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--legend-faint);
+}
+
+/* The cross-reference. A drawing does not trace a line from its revision block
+   to the sheet -- it puts the same number in both places, and you find the
+   change by matching it. The first version drew a stub of a leader that, at
+   rest, pointed into empty rail; this is readable without hovering anything. */
+.item__delta {
+  flex: none;
+  align-self: center;
+  min-width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 1px solid var(--hair);
+  color: var(--legend-faint);
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.item--leadered:hover .item__delta,
+.item--leadered:focus-visible .item__delta {
+  border-color: var(--rev);
+  color: var(--rev-text);
+}
+
+/* --- the two readings -----------------------------------------------------
+   What a row changed, opened in the row. Both readings in full, in the column
+   that has the space for them, so nothing on the document is covered to
+   explain it. The one authored moment on the board. */
+
+.compare {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 16px 9px 42px;
+  background: var(--hair-soft);
+  animation: rise 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.compare__line {
+  display: flex;
+  gap: 9px;
+  padding: 7px 9px;
+  background: var(--board);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.compare__side {
+  flex: none;
+  width: 3.5ch;
+  padding-top: 1px;
+  font-family: var(--font-legend);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+/* Struck through and kept: a drawing office marks a revision, it does not
+   erase the thing it replaced. */
+.compare__was {
+  color: var(--legend-faint);
+  text-decoration: line-through;
+  text-decoration-color: var(--rev);
+  text-decoration-thickness: 1px;
+}
+
+.compare__now {
+  color: var(--legend);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .compare {
+    animation: none;
+  }
+}
+
+.thinking {
+  margin-bottom: 6px;
+  color: var(--legend-faint);
+  font-size: 11.5px;
+}
+
+.thinking summary {
+  cursor: pointer;
+  font-family: var(--font-legend);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.thinking pre {
+  margin: 6px 0 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--hair-soft);
+  white-space: pre-wrap;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* --- the composer -------------------------------------------------------- */
+
+.composer {
+  flex: none;
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  padding: 12px 14px;
+  border-top: 1px solid var(--hair-soft);
+  background: var(--board-deep);
+}
+
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  padding: 7px 2px;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend);
+  font-family: var(--font-ui);
+  font-size: 13.5px;
+  line-height: 1.5;
+  border-radius: 0;
+  resize: vertical;
+}
+
+.composer textarea::placeholder {
+  color: #70707a;
+}
+
+.composer textarea:focus {
+  outline: 0;
+  border-bottom-color: var(--focus);
+}
+
+/* --- unchecked claims -----------------------------------------------------
+   Stated once, above the sheet. Revision red because it is the same thing that
+   colour always means here: something is waiting on a decision from you. */
+
+.unchecked {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--hair-soft);
+  background: var(--rev-wash);
+}
+
+.unchecked__count {
+  flex: none;
+  min-width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid var(--rev);
+  color: var(--rev-text);
+  font-family: var(--font-legend);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.unchecked__text {
+  flex: 1;
+  margin: 0;
+  max-width: 78ch;
+  color: var(--legend-dim);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+@media print {
+  .unchecked {
+    display: none;
+  }
+}
+
+/* --- the revision block ---------------------------------------------------
+   Above the title block, lower right of the sheet, which is where a drawing
+   has always kept it. It is the document's record of what changed; the
+   conversation about it is in the sidebar. */
+
+.revblock {
+  flex: none;
+  max-height: 34vh;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--hair-soft);
+  background: var(--board-deep);
+}
+
+.revblock__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 16px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.revblock__head:hover .legend {
+  color: var(--legend);
+}
+
+.revblock__count {
+  min-width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  border: 1px solid var(--hair);
+  color: var(--legend-faint);
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.revblock__caret {
+  color: var(--legend-faint);
+  transition: transform 140ms ease-out;
+}
+
+.revblock__caret--open {
+  transform: rotate(180deg);
+}
+
+.revblock__rows {
+  overflow-y: auto;
+  min-height: 0;
+  padding-bottom: 4px;
+}
+
+.revrow {
+  border-top: 1px solid var(--hair-soft);
+}
+
+.revrow__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.revrow__head:hover {
+  background: var(--board-raised);
+}
+
+/* The delta. The same number is drawn on the sheet beside the region this row
+   changed, which is how a drawing cross-references -- by matching numbers, not
+   by tracing a line. */
+.revrow__delta {
+  flex: none;
+  min-width: 19px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 1px solid var(--rev);
+  color: var(--rev-text);
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.revrow__what {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--legend-dim);
+  font-size: 13px;
+}
+
+.revrow__head:hover .revrow__what {
+  color: var(--legend);
+}
+
+.revrow__caret {
+  flex: none;
+  color: var(--legend-faint);
+  transition: transform 140ms ease-out;
+}
+
+.revrow__caret--open {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .revblock__caret,
+  .revrow__caret {
+    transition: none;
+  }
+}
+
+/* --- the stamp block ------------------------------------------------------
+   A change the engine will not apply without authority. It used to print the
+   raw tool arguments as JSON, which asked a job seeker to audit a data
+   structure; a drawing office solved this with a stamp block that states the
+   change in words and does not take effect until it is signed.
+
+   Revision red owns this block completely, because the whole block is one
+   state: a proposal awaiting a decision. */
+
+/* A uniform 1px edge, not a thick left one. The block is already a red border
+   round a red wash under a red header -- a heavier left edge added nothing
+   except the side-tab accent that is the most recognisable tell of a generated
+   interface. The change bar below is where a left rule genuinely means
+   something, and keeping it to that one place is what lets it mean it. */
+.stamp {
+  border: 1px solid var(--rev);
+  background: var(--rev-wash);
+}
+
+.stamp__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(216, 64, 47, 0.35);
+  color: var(--rev-text);
+}
+
+.stamp__title {
+  font-family: var(--font-legend);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.stamp__body {
+  padding: 11px 12px;
+}
+
+.stamp__risk {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--legend);
+}
+
+/* Before and after, as the words themselves. The superseded reading is struck
+   through and left in place rather than removed -- a drawing office marks a
+   revision, it does not erase the thing it replaced. */
+.stamp__diff {
+  margin: 11px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: rgba(216, 64, 47, 0.28);
+  border-top: 1px solid rgba(216, 64, 47, 0.28);
+  border-bottom: 1px solid rgba(216, 64, 47, 0.28);
+}
+
+.stamp__line {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--board);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.stamp__side {
+  flex: none;
+  width: 5.5ch;
+  padding-top: 1px;
+  font-family: var(--font-legend);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+.stamp__was {
+  color: var(--legend-faint);
+  text-decoration: line-through;
+  text-decoration-color: var(--rev);
+  text-decoration-thickness: 1px;
+}
+
+.stamp__now {
+  color: var(--legend);
+}
+
+.stamp__where {
+  margin: 9px 0 0;
+  font-size: 11.5px;
+  color: var(--legend-faint);
+}
+
+.stamp__actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 12px 12px;
+}
+
+/* The signature. Filled, because signing is the only affirmative act on this
+   block, and red because it is still the state this block is in -- accepting
+   does not make the change routine, it makes it authorised. */
+.ctl--sign {
+  border-color: var(--rev);
+  background: var(--rev);
+  color: #ffffff;
+}
+
+.ctl--sign:hover:not(:disabled) {
+  border-color: #e8543f;
+  background: #e8543f;
+  color: #ffffff;
+}
+
+/* --- notices -------------------------------------------------------------- */
+
+.notice {
+  padding: 9px 12px;
+  border-left: 1px solid var(--hair);
+  background: var(--board-raised);
+  color: var(--legend-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.notice--error {
+  border-left-color: var(--rev);
+  color: var(--rev-text);
+}
+
+.notice--soft {
+  border-left-color: var(--legend-faint);
+}
+
+/* --- the print, and what is marked on it ----------------------------------
+   These rules draw on the document itself, so they are the only place on the
+   board permitted to touch white paper. All of them are screen-only and are
+   removed at the foot of this file. */
+
+.node {
+  transition: background-color 200ms ease-out;
+}
+
+.node[contenteditable]:hover {
+  background: rgba(27, 79, 134, 0.06);
+}
+
+.node[contenteditable]:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  background: var(--paper);
+}
+
+/* --- invented, not reported ----------------------------------------------
+   Written by the assistant while the document was still a template, so the
+   words are plausible rather than true. Marked until the person confirms them.
+
+   A dotted underline rather than a highlight: this is a résumé, and the whole
+   page has to stay readable as one while a dozen lines carry the mark. It is
+   also the notation a proofreader already uses for "check this", which is
+   exactly the instruction.
+
+   Deliberately visible in the *editor only* -- the print block at the foot of
+   this file drops it. A PDF is what gets sent to an employer, and it must show
+   the résumé rather than our annotations on it. */
+.node--unverified {
+  text-decoration: underline dotted var(--rev);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+
+/* A node the assistant is writing to. Dimmed rather than hidden, and the
+   cursor says why. */
+.node--locked {
+  opacity: 0.5;
+  cursor: progress;
+}
+
+/* --- the revision cloud ---------------------------------------------------
+   A changed region, ringed the way a drawing office rings one. The scallop is
+   drawn rather than approximated: each 9px tile paints the top half of a ring
+   whose centre sits on the tile's edge, and repeating it along x produces the
+   bumped line. Two strips, one above and one below, which is what a cloud
+   around a run of text actually looks like on a marked-up print.
+
+   It persists. The previous highlight cleared itself after 1.4 seconds, which
+   is fine for a flash and useless for something you are meant to be able to
+   inspect -- and inspecting it is the point, since clicking a cloud is how you
+   see what it replaced. It clears when the next instruction is given. */
+
+.node--changed {
+  position: relative;
+  background: var(--rev-wash);
+  cursor: pointer;
+}
+
+.node--changed::before,
+.node--changed::after {
+  content: '';
+  position: absolute;
+  /* Tight to the run. At a 5px inset the lower scallop landed on the heading
+     of the section below, so a mark meant to ring one region drew through
+     another. */
+  left: -3px;
+  right: -3px;
+  height: 3px;
+  pointer-events: none;
+  background-size: 8px 3px;
+  background-repeat: repeat-x;
+}
+
+.node--changed::before {
+  top: -3px;
+  background-image: radial-gradient(
+    circle at 50% 100%,
+    transparent 0 2.3px,
+    var(--rev) 2.3px 3px,
+    transparent 3px
+  );
+}
+
+.node--changed::after {
+  bottom: -3px;
+  background-image: radial-gradient(
+    circle at 50% 0,
+    transparent 0 2.3px,
+    var(--rev) 2.3px 3px,
+    transparent 3px
+  );
+}
+
+/* Lit from the schedule. The other half of the leader: hovering a row that
+   names this node rings it in the same red the row's stub turns. */
+.node--spotlit {
+  background: var(--rev-wash);
+  box-shadow: 0 0 0 1px var(--rev);
+}
+
+/* --- the revision tag and the superseded reading ---------------------------
+   The signature interaction. Every clouded region that replaced something
+   carries a tag in the margin; opening it raises the previous reading directly
+   underneath -- before and after in place, on the document.
+
+   Painted by `canvas/revision-layer`, which measures the node rather than
+   rendering inside it: every changed node is contentEditable and would commit
+   anything placed within it as the user's own words, and the same component is
+   what Chromium prints. */
+
+.revision-layer {
+  position: absolute;
+  inset: 0;
+  /* Inert except for its tags, exactly like `.overlay`. A layer that took
+     pointer events would cover the text it is annotating. */
+  pointer-events: none;
+  z-index: 900;
+}
+
+/* The revision delta, carrying the number its schedule row also carries. */
+.revision-tag {
+  position: absolute;
+  min-width: 19px;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  border: 1px solid var(--rev);
+  background: #ffffff;
+  color: var(--rev-ink);
+  font-family: var(--font-legend);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.revision-tag:hover,
+.revision-tag--open {
+  background: var(--rev);
+  color: #ffffff;
+}
+
+/* Where a schedule row is pointing. The other end of the leader. */
+.revision-layer__lit {
+  position: absolute;
+  box-shadow: 0 0 0 1px var(--rev);
+  background: var(--rev-wash);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+    filter: blur(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+}
+
+/* --- canvas chrome --------------------------------------------------------
+   The overlay is inert except for its handles, so a click passes through to
+   the contentEditable text beneath. An overlay that swallowed clicks would
+   make every bullet uneditable, which is most of what the app is for. */
+
+/* A hairline, not a drop shadow. The brief's anti-goals name "no shadow
+   imitating a sheet lifting" and a 14px blur under the page was exactly that.
+   White paper on a Prussian board needs no help separating; the rule is there
+   to give the sheet an edge rather than a lift. */
+.canvas-page {
+  box-shadow: 0 0 0 1px #3a3a40;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.marker {
+  position: absolute;
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Inert, like the layer it sits in. Only the handles take pointer events: a
+   selection rectangle that took them covered its own element's text, so the
+   click landed on the box instead of the words. */
+.selection {
+  position: absolute;
+  outline: 1px solid var(--accent);
+  pointer-events: none;
+}
+
+.handle {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin: -5px 0 0 -5px;
+  background: var(--paper);
+  border: 1px solid var(--accent);
+  pointer-events: auto;
+}
+
+/* The rotation handle sits above the box, where its resting position is the
+   zero angle the maths measures from. */
+.handle--rotate {
+  left: 50%;
+  top: -18px;
+  border-radius: 50%;
+  cursor: grab;
+}
+
+.handle--rotate:active {
+  cursor: grabbing;
+}
+
+/* Created imperatively during the gesture, so it is styled here rather than
+   rendered by React -- the page must not re-render while it is being pulled. */
+.marquee {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: rgba(27, 79, 134, 0.08);
+  pointer-events: none;
+  z-index: 999;
+}
+
+/* Alignment guides. Revision red, because a guide is a transient mark on the
+   drawing and red is what marks are made in here. */
+.guide {
+  position: absolute;
+  background: var(--rev);
+}
+
+.guide--x {
+  width: 1px;
+}
+
+.guide--y {
+  height: 1px;
+}
+
+.element--frame:hover,
+.element--image:hover,
+.element--shape:hover {
+  outline: 1px dashed rgba(27, 79, 134, 0.4);
+}
+
+.element--selected {
+  outline: none;
+}
+
+/* --- insert bar and page controls ----------------------------------------- */
+
+.insert-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.insert-bar__divider {
+  width: 1px;
+  height: 16px;
+  background: var(--hair);
+  margin: 0 4px;
+}
+
+.insert-bar__error {
+  font-size: 12px;
+  color: var(--rev-text);
+}
+
+/* Beside the sheet, never on it: anything inside .canvas-page competes with
+   the resume for space and would land in the exported PDF. */
+.page-shell {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.page-controls {
+  position: sticky;
+  top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding-top: 4px;
+  flex: 0 0 auto;
+}
+
+.page-controls__number {
+  font-family: var(--font-legend);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--legend-faint);
+  margin-bottom: 2px;
+}
+
+.page-controls button {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend-faint);
+  cursor: pointer;
+}
+
+.page-controls button:hover:not(:disabled) {
+  border-color: var(--legend-faint);
+  color: var(--legend);
+}
+
+.page-controls button:disabled {
+  border-color: var(--hair-soft);
+  color: var(--legend-off);
+  cursor: default;
+}
+
+.page-controls__delete:hover:not(:disabled) {
+  border-color: var(--rev);
+  color: var(--rev-text);
+}
+
+/* --- the register ---------------------------------------------------------
+   The home screen. A drawing register lists the sheets a project holds, by
+   number and title and revision. That is what a list of resumes is. */
+
+/* Full width, not a column down the middle. The gallery is the page's
+   content and it is a grid of sheets -- boxed at 780px it showed three cards
+   with the rest of a wide screen left dark, which reads as a page that failed
+   to load rather than one that chose to be narrow. */
+.register {
+  padding: 26px 26px 72px;
+}
+
+/* The wordmark and the one action beside it. Left, on its own line, with the
+   rule under it doing the separating -- the lede that used to sit here said
+   what the product is to someone already inside it. */
+.register__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.register__title {
+  margin: 0;
+  font-family: var(--font-legend);
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: var(--legend);
+}
+
+.register__note {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--legend-faint);
+}
+
+.register__section {
+  margin-top: 26px;
+  padding-top: 0;
+}
+
+/* The rule belongs *under* a section's content, between it and the next --
+   above, the first one doubled the header's own border. */
+.register__section + .register__section {
+  margin-top: 30px;
+  padding-top: 26px;
+  border-top: 1px solid var(--hair-soft);
+}
+
+/* Recent sheets along one line, scrolling sideways when there are more than
+   fit. A vertical list of every document pushed the gallery off the fold, and
+   the gallery is what a first visit is for. */
+.recents {
+  list-style: none;
+  display: flex;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0 0 4px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.recents > li {
+  flex: none;
+}
+
+.recent {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 190px;
+  padding: 10px 12px;
+  border: 1px solid var(--hair-soft);
+  text-decoration: none;
+  transition: border-color 120ms ease-out;
+}
+
+.recent:hover {
+  border-color: var(--legend-faint);
+}
+
+.recent__title {
+  color: var(--legend-dim);
+  font-size: 13px;
+  /* One line: a title is a label here, and a wrapped one would make the strip
+     ragged for no gain. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recent:hover .recent__title {
+  color: var(--legend);
+}
+
+.recent__rev {
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+/* --- the template gallery -------------------------------------------------
+   Eight real résumés, each rendered by the same `DocumentFlow` the studio and
+   the PDF use, differing only in template. Nothing here is a picture: a
+   screenshot of a template would start lying the first time the template
+   changed, and would need an asset pipeline to ship.
+
+   The sheet is drawn at its true A4 width and scaled down, rather than being
+   re-laid-out small. Scaling is what makes the card honest -- line breaks,
+   leading and the size of a heading relative to body text are all exactly what
+   the person will get, which is the entire question a template card answers. */
+
+/* A section's label sits on its own line above the section. `.legend` is
+   inline -- it is used mid-rail elsewhere -- so it needs saying here rather
+   than changing it for every caller. */
+.section-legend {
+  display: block;
+}
+
+.gallery {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 18px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  /* Fill the row. Grid stretches the `li`; without this the button inside
+     sits at its own content height, so a card whose note wrapped to two lines
+     stood taller than its neighbours and the row read as ragged. */
+  height: 100%;
+  padding: 0;
+  border: 1px solid var(--hair-soft);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 120ms ease-out;
+}
+
+.card:hover:not(:disabled),
+.card:focus-visible {
+  border-color: var(--legend-faint);
+}
+
+.card:disabled {
+  cursor: default;
+}
+
+.card__paper {
+  display: block;
+  /* A4's ratio, so the card shows a page rather than a crop of one. */
+  aspect-ratio: 210 / 297;
+  overflow: hidden;
+  background: var(--paper);
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+/* The sheet is laid out at full width and then scaled, so what is measured is
+   a real page. `transform` rather than `zoom`: nothing here is interactive and
+   nothing is measured from it, so the cheaper of the two is right, and it
+   leaves the parent's box alone. */
+.card__sheet {
+  display: block;
+  width: 210mm;
+  padding: var(--page-margin);
+  transform: scale(0.235);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.card__name {
+  display: block;
+  padding: 9px 11px 0;
+  color: var(--legend);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.card:hover:not(:disabled) .card__name {
+  color: #ffffff;
+}
+
+/* Two lines of room whether the note needs them or not. The notes run from
+   three words to eight, so reserving the taller case is what keeps every card
+   the same height -- rather than letting whichever note happens to wrap decide
+   for its row, which changes as the grid reflows.
+
+   Spaced with margin rather than padding so that reservation is legible:
+   `box-sizing` is `border-box` here, and under it a min-height is spent on the
+   element's own padding before it reserves a single line of text. */
+.card__note {
+  display: block;
+  margin: 3px 11px 11px;
+  min-height: calc(2 * 1.45em);
+  color: var(--legend-faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .gallery {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 12px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+}
+
+/* --- the checker's print --------------------------------------------------
+   Import review. A checker reads a print against the source it was drawn from
+   and marks each item read, queried, or not applicable. That is exactly what
+   this screen does, section by section. */
+
+.checker {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 24px 72px;
+}
+
+.checker--empty {
+  max-width: 560px;
+  padding-top: 110px;
+}
+
+.checker__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin-bottom: 24px;
+}
+
+.checker__title {
+  margin: 0;
+  font-family: var(--font-legend);
+  font-size: 27px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--legend);
+}
+
+.checker__muted {
+  margin: 8px 0 0;
+  max-width: 62ch;
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--legend-dim);
+}
+
+.checker__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.checker__grid {
+  display: grid;
+  grid-template-columns: minmax(300px, 400px) 1fr;
+  gap: 28px;
+  align-items: start;
+  margin-top: 22px;
+}
+
+@media (max-width: 900px) {
+  .checker__grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.checker__panel {
+  min-width: 0;
+}
+
+.checker__h2 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hair-soft);
+  font-size: 10.5px;
+}
+
+/* The name the document will be filed under. Editable here because this is the
+   only screen where it can be: the API takes a title at creation and has no
+   rename endpoint. */
+.checker__name {
+  padding: 3px 6px;
+  min-width: 180px;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.checker__name:focus {
+  outline: 0;
+  border-bottom-color: var(--focus);
+}
+
+.checker__sheet {
+  padding: 20px;
+  background: var(--board-deep);
+  display: flex;
+  justify-content: center;
+}
+
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.check {
+  padding: 9px 0;
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.check__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.check__mark {
+  flex: none;
+  color: var(--legend-faint);
+}
+
+.check--parsed .check__mark {
+  color: var(--check);
+}
+
+.check--failed .check__mark {
+  color: var(--rev-text);
+}
+
+.check--running .check__mark {
+  color: var(--legend-dim);
+  animation: pulse 1.1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.check__label {
+  font-size: 13.5px;
+  color: var(--legend);
+}
+
+.check__status {
+  margin-left: auto;
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+.check__reason {
+  margin: 6px 0 0 23px;
+  max-width: 52ch;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--legend-dim);
+}
+
+.check__source {
+  margin: 8px 0 0 23px;
+  padding: 9px 11px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: var(--board-deep);
+  border-left: 1px solid var(--hair);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--legend-dim);
+  white-space: pre-wrap;
+}
+
+/* --- the issue station ----------------------------------------------------
+   Export. It used to be a link that opened a blank tab and left the person
+   guessing whether a file had been produced. Issuing a drawing is a step with
+   a beginning and an end: it states what it will produce, it runs, and it
+   reports back that the sheet exists. */
+
+.issue {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  background: var(--board);
+  border: 1px solid var(--hair);
+}
+
+.issue__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.issue__title {
+  margin: 0;
+  font-family: var(--font-legend);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--legend);
+}
+
+.issue__body {
+  padding: 14px 16px;
+}
+
+.issue__intro {
+  margin: 0 0 14px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--legend-dim);
+}
+
+.issue__templates {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--hair-soft);
+  border-top: 1px solid var(--hair-soft);
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.issue__template {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 11px 12px;
+  border: 0;
+  background: var(--board);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.issue__template:hover {
+  background: var(--board-raised);
+}
+
+.issue__template--on {
+  background: var(--board-raised);
+}
+
+.issue__template--on .issue__radio {
+  border-color: var(--check);
+  color: var(--check);
+}
+
+.issue__radio {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
+  border: 1px solid var(--hair);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: transparent;
+}
+
+.issue__name {
+  display: block;
+  font-size: 13.5px;
+  color: var(--legend);
+}
+
+.issue__what {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--legend-faint);
+}
+
+.issue__warn {
+  margin: 12px 0 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--rev);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--rev-text);
+}
+
+.issue__result {
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border-left: 1px solid var(--check);
+  background: var(--check-wash);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--legend);
+}
+
+.issue__result--bad {
+  border-left-color: var(--rev);
+  background: var(--rev-wash);
+  color: var(--rev-text);
+}
+
+.issue__foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 0 16px 16px;
+}
+
+/* --- overlays -------------------------------------------------------------
+   A dialog is used for exactly two things: installing a key, and issuing the
+   sheet. Both are deliberate one-off acts that want protected focus. Nothing
+   else on the board opens one. */
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.78);
+}
+
+/* --- the model picker -----------------------------------------------------
+   The panel is `fixed`, not `absolute`, and positioned from the button's rect
+   in JS. The schedule is an `overflow-y: auto` pane, and an element with a
+   non-visible overflow on one axis computes the other to `auto` too -- so the
+   pane clips horizontally as well, and an absolutely positioned panel is cut
+   off at its edge. */
+
+.picker__button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 3px 8px;
+  border: 1px solid var(--hair);
+  background: transparent;
+  color: var(--legend-dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.picker__button:hover {
+  border-color: var(--legend-faint);
+  color: var(--legend);
+}
+
+.picker__current {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__panel {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  max-height: min(420px, 70vh);
+  border: 1px solid var(--hair);
+  background: var(--board-deep);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+}
+
+.picker__scroll {
+  overflow-y: auto;
+}
+
+.picker__group + .picker__group {
+  border-top: 1px solid var(--hair-soft);
+}
+
+.picker__heading {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 10px 4px;
+  font-family: var(--font-legend);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+/* Says the list is litellm's registry rather than the provider's own answer,
+   which is the difference between "models you have" and "models that exist". */
+.picker__hint {
+  font-family: var(--font-ui);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--legend-faint);
+}
+
+.picker__model {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--legend-dim);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker__model-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.picker__model:hover {
+  background: var(--board-raised);
+  color: var(--legend);
+}
+
+.picker__model--active {
+  color: var(--legend);
+}
+
+.picker__model--active .mark {
+  color: var(--check);
+}
+
+.picker__empty,
+.picker__setup {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 3px 10px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--legend-faint);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.picker__setup {
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.picker__setup:hover {
+  color: var(--legend);
+}
+
+.picker__manage {
+  padding: 9px 10px;
+  border: 0;
+  border-top: 1px solid var(--hair);
+  background: var(--board);
+  color: var(--legend-dim);
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker__manage:hover {
+  background: var(--board-raised);
+  color: var(--legend);
+}
+
+/* The selection is not what is running -- a provider whose key was removed,
+   say. Shown rather than swallowed: the server already fell back, and a picker
+   that quietly displayed the dead choice was the bug this replaces. */
+.picker__warn {
+  color: var(--rev-text);
+}
+
+.picker__notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--hair-soft);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--rev-text);
+}
+
+/* --- the approval schedule ------------------------------------------------
+   Provider settings. A drawing is approved by whoever is competent to approve
+   it; here the local runtime is the standing approver and a cloud provider is
+   an outside consultant you have to appoint by name. The ordering and the
+   lettering carry that, so "cloud is secondary" is a fact of the layout rather
+   than a sentence in a caption. */
+
+.settings {
+  display: flex;
+  flex-direction: column;
+  width: min(580px, 100%);
+  max-height: min(700px, 90vh);
+  border: 1px solid var(--hair);
+  background: var(--board);
+}
+
+.settings__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.settings__title {
+  margin: 0;
+  font-family: var(--font-legend);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--legend);
+}
+
+.settings__intro {
+  margin: 0;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--hair-soft);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--legend-dim);
+}
+
+.settings__error {
+  margin: 0;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--hair-soft);
+  font-size: 12.5px;
+  color: var(--rev-text);
+}
+
+.settings__body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.settings__foot {
+  padding: 11px 16px;
+  border-top: 1px solid var(--hair-soft);
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--legend-faint);
+}
+
+.provider-row {
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--hair-soft);
+}
+
+.provider-row__head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+
+.provider-row__name {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--legend);
+}
+
+.provider-row__state {
+  font-family: var(--font-legend);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.provider-row__state--ready {
+  color: var(--check);
+}
+
+.provider-row__state--missing {
+  color: var(--legend-faint);
+}
+
+.provider-row__note {
+  margin: 5px 0 10px;
+  max-width: 58ch;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--legend-faint);
+}
+
+.provider-row__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 11px;
+}
+
+.provider-row__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.provider-row__result {
+  margin: 9px 0 0;
+  font-size: 12px;
+}
+
+.provider-row__result--ok {
+  color: var(--check);
+}
+
+.provider-row__result--bad {
+  color: var(--rev-text);
+}
+
+/* --- narrow ---------------------------------------------------------------
+   Two 100vh columns side by side stop working somewhere around 900px: the
+   schedule holds its 320px floor and the board is pushed off the right edge,
+   taking the sheet and the title block with it.
+
+   Stacked, with the board first. This is an editor, so the document leads and
+   the schedule follows it; the alternative -- schedule first -- opens the app
+   on a list of changes to a document you cannot see. The panes give up their
+   fixed height here and the page scrolls as one, which is the behaviour a
+   narrow screen expects anyway. */
+
+@media (max-width: 900px) {
+  /* Flex, not a one-column grid. Auto-placement in a single column reordered
+     the panes unpredictably; flex ordering is explicit and cannot be
+     reinterpreted. The drawing leads -- opening on a list of changes to a
+     document you cannot see is the wrong first viewport -- and the assistant
+     follows it. */
+  .deck {
+    display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+
+  .deck__board {
+    order: 1;
+    min-height: 100vh;
+  }
+
+  .deck > aside {
+    order: 2;
+    overflow: visible;
+  }
+
+  .schedule {
+    height: auto;
+  }
+
+  /* Capped rather than free, so a long schedule does not push the rest of the
+     page into a scroll nobody asked for. */
+  .schedule__rows {
+    max-height: 60vh;
+  }
+
+  /* The foot stacks: instruction line above, title block below it. Side by
+     side they would each get about 170px, which is not a sentence. */
+  .revblock {
+    max-height: 40vh;
+  }
+
+  .rail {
+    padding: 8px 12px;
+  }
+
+  .rail--bottom {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-block: 8px;
+  }
+
+  .title-block {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  .title-block__value--name {
+    max-width: 18ch;
+  }
+
+  .sheet-scroll {
+    padding: 16px 8px 24px;
+  }
+
+  .register {
+    padding: 48px 20px 64px;
+  }
+
+  .register__title {
+    font-size: 30px;
+  }
+}
+
+/* --- print ----------------------------------------------------------------
+   The board does not exist in a PDF. This is the boundary that makes the
+   redesign safe: whatever happens above, the file the user sends an employer
+   is drawn entirely by globals.css. */
+
+@media print {
+  body {
+    background: #ffffff;
+    color: var(--ink);
+  }
+
+  .deck,
+  .rail,
+  .schedule,
+  .title-block,
+  .zoom,
+  .insert-bar,
+  .page-controls,
+  .notice,
+  .scrim,
+  .picker__panel,
+  .revision-layer {
+    display: none;
+  }
+
+  .deck__board,
+  .sheet-scroll {
+    display: block;
+    padding: 0;
+    overflow: visible;
+    height: auto;
+    background: #ffffff;
+  }
+
+  .page-shell {
+    display: block;
+  }
+
+  .canvas-page {
+    box-shadow: none;
+  }
+
+  /* The cloud is a mark made on screen for the person editing. It is not part
+     of the document and must leave no trace in the file. */
+  .node--changed::before,
+  .node--changed::after {
+    display: none;
+  }
+
+  .node--changed,
+  .node--spotlit {
+    background: transparent;
+    box-shadow: none;
+  }
+
+  /* Our annotation, not the person's résumé. */
+  .node--unverified {
+    text-decoration: none;
+  }
+}

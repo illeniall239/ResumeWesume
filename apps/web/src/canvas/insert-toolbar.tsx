@@ -90,27 +90,32 @@ export function InsertToolbar({
 
   return (
     <div className="insert-bar">
-      <span className="insert-bar__label">Add</span>
+      <span className="legend">Add</span>
 
-      <button type="button" onClick={() => place((p) => insertTextBlock(p))}>
+      <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertTextBlock(p))}>
         Text
       </button>
-      <button type="button" onClick={() => fileInput.current?.click()} disabled={busy}>
+      <button
+        type="button"
+        className="ctl ctl--small"
+        onClick={() => fileInput.current?.click()}
+        disabled={busy}
+      >
         {busy ? 'Uploading…' : 'Image'}
       </button>
-      <button type="button" onClick={() => place((p) => insertShape(p, 'rect'))}>
+      <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertShape(p, 'rect'))}>
         Box
       </button>
-      <button type="button" onClick={() => place((p) => insertShape(p, 'ellipse'))}>
+      <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertShape(p, 'ellipse'))}>
         Ellipse
       </button>
-      <button type="button" onClick={() => place((p) => insertShape(p, 'line'))}>
+      <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertShape(p, 'line'))}>
         Line
       </button>
 
       <span className="insert-bar__divider" />
 
-      <button type="button" onClick={() => commit(insertPage().ops)}>
+      <button type="button" className="ctl ctl--small" onClick={() => commit(insertPage().ops)}>
         Page
       </button>
 

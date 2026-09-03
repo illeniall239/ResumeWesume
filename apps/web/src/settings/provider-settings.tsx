@@ -73,22 +73,27 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
     }
   };
 
-  const ready = !provider.needs_key || provider.configured;
+  // Decided by the server. "No key needed" used to be the same question as
+  // "usable", and stopped being when a provider arrived that needs no key and
+  // is still unusable until you have signed in to Claude Code on this machine.
+  const ready = provider.ready;
 
   return (
     <section className="provider-row" data-provider={provider.id}>
       <header className="provider-row__head">
-        <h3>{provider.label}</h3>
+        <h3 className="provider-row__name">{provider.label}</h3>
         <span
           className={`provider-row__state provider-row__state--${
             ready ? 'ready' : 'missing'
           }`}
         >
-          {!provider.needs_key
-            ? 'no key needed'
-            : provider.configured
+          {provider.needs_key
+            ? provider.configured
               ? `key ${provider.hint}`
-              : 'no key'}
+              : 'no key'
+            : ready
+              ? 'ready'
+              : 'not signed in'}
         </span>
       </header>
 
@@ -96,8 +101,8 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 
       <div className="provider-row__fields">
         {provider.needs_key && (
-          <label className="provider-row__field">
-            <span>API key</span>
+          <label className="field">
+            <span className="legend field__legend">API key</span>
             <input
               type="password"
               autoComplete="off"
@@ -110,8 +115,8 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
         )}
 
         {provider.base_editable && (
-          <label className="provider-row__field">
-            <span>Server URL</span>
+          <label className="field">
+            <span className="legend field__legend">Server URL</span>
             <input
               type="text"
               spellCheck={false}
@@ -124,23 +129,30 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
       </div>
 
       <div className="provider-row__actions">
+        {/* Only where there is something to save. The Claude subscription has
+            no key and no address -- it uses the login already on this machine
+            -- so it offered a Save that could never enable and a Remove key
+            for a key that does not exist, which `clearKey` would have gone
+            looking for. */}
+        {(provider.needs_key || provider.base_editable) && (
+          <button
+            className="ctl ctl--small"
+            type="button"
+            onClick={save}
+            disabled={busy || !dirty}
+          >
+            {saved ? 'Saved' : 'Save'}
+          </button>
+        )}
         <button
-          className="button button--quiet"
-          type="button"
-          onClick={save}
-          disabled={busy || !dirty}
-        >
-          {saved ? 'Saved' : 'Save'}
-        </button>
-        <button
-          className="button button--quiet"
+          className="ctl ctl--small"
           type="button"
           onClick={check}
           disabled={testing || (provider.needs_key && !draftKey && !provider.configured)}
         >
           {testing ? 'Testing…' : 'Test'}
         </button>
-        {provider.configured && (
+        {provider.needs_key && provider.configured && (
           <button
             className="link"
             type="button"
@@ -186,7 +198,7 @@ export function ProviderSettings({ onClose }: { onClose: () => void }) {
 
   return (
     <div
-      className="settings-backdrop"
+      className="scrim"
       // Only a press on the backdrop itself, never one that bubbled up from the
       // dialog: without the target check, releasing a drag-select inside a text
       // field closed the dialog and lost what was typed.
@@ -201,8 +213,8 @@ export function ProviderSettings({ onClose }: { onClose: () => void }) {
         aria-label="Model providers"
       >
         <header className="settings__head">
-          <strong>Model providers</strong>
-          <span className="toolbar__spacer" />
+          <h2 className="settings__title">Model providers</h2>
+          <span className="rail__spacer" />
           <button className="link" type="button" onClick={onClose}>
             Close
           </button>

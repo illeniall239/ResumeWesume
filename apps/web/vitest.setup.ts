@@ -37,6 +37,18 @@ if (typeof document !== 'undefined' && !document.elementFromPoint) {
 }
 
 /**
+ * jsdom has no `scrollIntoView` either, and it has no layout to scroll.
+ *
+ * The schedule calls it on every message change to keep the newest entry in
+ * view. A no-op is the honest stub: there is no viewport here, so "already in
+ * view" is true by construction, and the assertions are about what rendered
+ * rather than about where it sits.
+ */
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
+/**
  * jsdom has no PointerEvent at all.
  *
  * Testing Library resolves an event class as `window[EventType] || window.Event`,

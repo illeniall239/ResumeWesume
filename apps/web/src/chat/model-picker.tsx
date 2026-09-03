@@ -23,6 +23,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import ProviderSettings from '@/settings/provider-settings';
+import { Caret, Caution, Check } from '@/ui/marks';
 import { modelOf, providerOf, shortLabel, useModels } from '@/store/models';
 import type { ProviderInfo } from '@/lib/api';
 
@@ -33,6 +34,18 @@ const GUTTER = 8;
 interface Anchor {
   top: number;
   left: number;
+}
+
+/**
+ * What to show for a model id.
+ *
+ * Only the subscription provider needs this. Its list carries a sentinel
+ * meaning "whatever your plan picks", and rendered raw it read as a model
+ * called "default" -- which told the user nothing about what would actually
+ * run. The turn stream reports the model it resolved to once the turn starts.
+ */
+function modelLabel(model: string): string {
+  return model === 'default' ? 'Plan default (Claude Code chooses)' : model;
 }
 
 function ProviderGroup({
@@ -84,8 +97,8 @@ function ProviderGroup({
           className={`picker__model${model === active ? ' picker__model--active' : ''}`}
           onClick={() => choose(provider.id, model)}
         >
-          <span className="picker__model-name">{model}</span>
-          {model === active && <span aria-hidden="true">✓</span>}
+          <span className="picker__model-name">{modelLabel(model)}</span>
+          {model === active && <Check size={13} />}
         </button>
       ))}
     </div>
@@ -236,11 +249,11 @@ export function ModelPicker() {
           {loaded ? shortLabel(effective || selection, fallback) : 'Loading…'}
         </span>
         {fallbackReason && (
-          <span className="picker__warn" aria-hidden="true" title={fallbackReason}>
-            !
+          <span className="picker__warn" title={fallbackReason}>
+            <Caution size={13} />
           </span>
         )}
-        <span aria-hidden="true">▾</span>
+        <Caret size={12} />
       </button>
 
       {open && anchor && (

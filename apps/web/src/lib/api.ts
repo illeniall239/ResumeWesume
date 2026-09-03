@@ -6,7 +6,13 @@
  * base-URL configuration to get wrong.
  */
 
-import type { ApplyResponse, DocOp, DocumentResponse, StudioDoc } from '@/contracts/doc';
+import type {
+  ApplyResponse,
+  DocOp,
+  DocumentResponse,
+  StudioDoc,
+  Template,
+} from '@/contracts/doc';
 
 const BASE = '/api/v1';
 
@@ -83,6 +89,48 @@ export function fetchDocument(id: string): Promise<DocumentResponse> {
   return request<DocumentResponse>(`/documents/${id}`);
 }
 
+export interface StoredRevisions {
+  /** How many assistant turns have changed this document, ever. */
+  revision: number;
+  turn_id: string | null;
+  marks: { nid: string; mark: number; before: string | null }[];
+}
+
+/**
+ * The revision number and the marks of the latest issue.
+ *
+ * Rebuilt server-side from the op log, because the browser's copy died with
+ * the tab: the conversation came back on reload and the record of what changed
+ * did not, which is the wrong way round -- one is a dialogue, the other
+ * describes the artifact.
+ */
+export function fetchRevisions(id: string): Promise<StoredRevisions> {
+  return request<StoredRevisions>(`/documents/${id}/revisions`);
+}
+
+export interface StoredMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  status: 'ok' | 'partial' | 'failed' | 'cancelled' | null;
+}
+
+/**
+ * The conversation for a document, oldest first.
+ *
+ * Server-side rather than in the browser because the next turn is built from
+ * it: a chat held only in memory meant a page reload silently emptied the
+ * history sent to the model, and the assistant would ask again for facts it had
+ * already been given.
+ */
+export function fetchMessages(id: string): Promise<{ messages: StoredMessage[] }> {
+  return request<{ messages: StoredMessage[] }>(`/documents/${id}/messages`);
+}
+
+export function clearMessages(id: string): Promise<void> {
+  return request<void>(`/documents/${id}/messages`, { method: 'DELETE' });
+}
+
 export function listDocuments(): Promise<DocumentResponse[]> {
   return request<DocumentResponse[]>('/documents');
 }
@@ -93,6 +141,10 @@ export function createDocument(body: {
   resume_data?: Record<string, unknown>;
   /** The text an import was parsed from, when this came from an upload. */
   source_markdown?: string;
+  /** How the résumé is set. Omitted leaves the server's default. */
+  template?: Template;
+  /** Start from a skeleton -- headings and one empty entry per section. */
+  starter?: boolean;
 }): Promise<DocumentResponse> {
   return request<DocumentResponse>('/documents', {
     method: 'POST',
@@ -135,6 +187,20 @@ export async function reverseHistory(
     if ((error as Error).message.startsWith('409')) return null;
     throw error;
   }
+}
+
+/**
+ * Accept text the assistant invented while the document was a template.
+ *
+ * An empty list means all of it. Confirming clears the marks and ends the
+ * scaffolding; it changes no words, so the document's hash is unchanged and a
+ * client holding one keeps it.
+ */
+export function confirmInvented(id: string, nids: string[] = []): Promise<DocumentResponse> {
+  return request<DocumentResponse>(`/documents/${id}/confirm`, {
+    method: 'POST',
+    body: JSON.stringify({ nids }),
+  });
 }
 
 export function pdfUrl(id: string, template = 'ats', pageSize = 'A4'): string {
@@ -194,6 +260,8 @@ export interface ProviderInfo {
   id: string;
   label: string;
   needs_key: boolean;
+  /** Whether a turn could run on this provider right now, decided server-side. */
+  ready: boolean;
   base_editable: boolean;
   note: string;
   default_api_base: string | null;
