@@ -50,7 +50,6 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
   const history = useStudio((state) => state.history);
   const stage = useStudio((state) => state.stage);
   const flush = useStudio((state) => state.flush);
-  const revisions = useStudio((state) => state.revisions);
   const confirmInvented = useStudio((state) => state.confirmInvented);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [issuing, setIssuing] = useState(false);
@@ -61,7 +60,7 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
   const zoomOut = useView((state) => state.zoomOut);
   const resetZoom = useView((state) => state.reset);
 
-  const streaming = useChat((state) => state.streaming);
+  const renameDoc = useStudio((state) => state.rename);
   const resetChat = useChat((state) => state.reset);
   const loadChat = useChat((state) => state.load);
 
@@ -272,6 +271,43 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
 
       <section className="deck__board">
         <div className="rail rail--top">
+          {/* Which document this is, where you look first, and editable in
+              place. `plaintext-only` and blur-to-commit, exactly as every line
+              of the résumé behaves -- a title that had to be renamed from
+              somewhere else would be the one piece of text on screen that did
+              not work the way the rest does.
+
+              Keyed on the title so React replaces the node when the server's
+              answer differs from what was typed. Without that the DOM keeps
+              whatever is in it, and a name the server trimmed or refused would
+              stay on screen looking saved. */}
+          <span
+            key={title}
+            className="rail__name"
+            contentEditable={Boolean(doc)}
+            suppressContentEditableWarning
+            spellCheck={false}
+            role="textbox"
+            aria-label="Document name"
+            title="Rename"
+            onBlur={(event) => {
+              void renameDoc(event.currentTarget.textContent ?? '');
+            }}
+            onKeyDown={(event) => {
+              // Enter commits rather than inserting a line: this is a name, and
+              // the field is one line high.
+              if (event.key === 'Enter') {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+              if (event.key === 'Escape') {
+                event.currentTarget.textContent = title || 'Untitled';
+                event.currentTarget.blur();
+              }
+            }}
+          >
+            {title || 'Untitled'}
+          </span>
           {doc && (
             <InsertToolbar doc={doc} documentId={docId} commit={(ops) => void edit(ops)} />
           )}
@@ -380,8 +416,8 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
           {/* Deliberately outside the scaled wrapper: inside it these would zoom
               along with the document and read 200% while being twice their own
               size. Zoom is a property of this viewer, never of the resume -- it
-              reaches no op, so it cannot be undone and cannot bump a version,
-              which is also why it sits apart from the title block's fields. */}
+              reaches no op, so it cannot be undone and cannot bump a version. */}
+          <span className="rail__spacer" />
           <div className="zoom" aria-label="Magnification">
             <button
               type="button"
@@ -411,40 +447,6 @@ export default function StudioPage({ params }: { params: Promise<{ docId: string
             >
               <Plus size={13} />
             </button>
-          </div>
-
-          <span className="rail__spacer" />
-
-          <div className="title-block">
-            <div className="title-block__field">
-              <span className="legend">Document</span>
-              <span className="title-block__value title-block__value--name">
-                {title || 'Untitled'}
-              </span>
-            </div>
-
-            {/* Revisions accepted in this session, which is what the revision
-                block above lists. Deliberately *not* the document's `version`:
-                that is an ETag half counting every accepted write, so the
-                reflow pass on open bumps it and an undo bumps it too --
-                counting up while taking you back. Shown raw it reads as a
-                revision number and is not one. It is still sent on every write;
-                it is just not something to put in front of a person. */}
-            <div className="title-block__field">
-              <span className="legend">Rev</span>
-              <span className="title-block__value title-block__value--rev">{revisions}</span>
-            </div>
-
-            <div className="title-block__field">
-              <span className="legend">State</span>
-              <span
-                className={`title-block__value${
-                  saving || streaming ? ' title-block__value--work' : ' title-block__value--live'
-                }`}
-              >
-                {saving ? 'Saving' : streaming ? 'Assistant editing' : 'Saved'}
-              </span>
-            </div>
           </div>
         </div>
       </section>

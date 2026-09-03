@@ -374,6 +374,45 @@ textarea {
   min-height: 54px;
 }
 
+/* The document's name, leading the top rail.
+   It sat in a title block at the foot of the page beside a revision count and
+   a save state -- one fact about the document under two about the engine. The
+   engine's bookkeeping was not worth the room: a save state that says "Saved"
+   almost always, and a count that is not the revision number it looked like. */
+.rail__name {
+  max-width: 28ch;
+  /* Editable, and it says so on approach rather than on click. A caret that
+     appears only once you are already typing is a control nobody finds. */
+  cursor: text;
+  border-radius: 2px;
+  outline-offset: 2px;
+  padding-right: 14px;
+  border-right: 1px solid var(--hair-soft);
+  margin-right: 4px;
+  color: var(--legend);
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail__name:hover {
+  background: var(--board-raised);
+}
+
+.rail__name:focus-visible {
+  background: var(--board-raised);
+  outline: 1px solid var(--legend-faint);
+}
+
+/* Being renamed, the name may be longer than the room for it -- clipping what
+   is being typed would hide the caret. */
+.rail__name:focus {
+  overflow: visible;
+  text-overflow: clip;
+}
+
 .rail__spacer {
   flex: 1;
 }
@@ -395,70 +434,12 @@ textarea {
   align-items: safe center;
 }
 
-/* --- the title block ------------------------------------------------------
-   Lower right of the sheet, as it is on every drawing ever issued. It carries
-   what the document is, which issue you are looking at, and the one action
-   that turns it into a file. */
-
-.title-block {
-  display: flex;
-  align-items: stretch;
-  margin-left: auto;
-}
-
-.title-block__field {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 2px;
-  padding: 8px 14px;
-  border-left: 1px solid var(--hair-soft);
-  min-width: 0;
-}
-
-.title-block__field:first-child {
-  border-left: 0;
-  padding-left: 0;
-}
-
-.title-block__value {
-  font-size: 13px;
-  color: var(--legend);
-  line-height: 1.2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.title-block__value--name {
-  max-width: 30ch;
-  font-size: 15px;
-  font-weight: 600;
-}
-
-.title-block__value--rev {
-  font-family: var(--font-legend);
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-}
-
-.title-block__value--live {
-  color: var(--check);
-}
-
-.title-block__value--work {
-  color: var(--rev-text);
-}
-
-/* No renaming control here. The API has no rename endpoint -- a title is set
-   when the document is created and on the import screen -- and a field that
-   looked editable but could not save would be worse than plain text. */
-
 /* --- zoom -----------------------------------------------------------------
-   A stepper on the bottom rail, left of the title block. Deliberately not
-   inside it: zoom is a property of this viewer and never of the document, so
-   it must not sit among the fields that describe the document. */
+   A stepper alone on the bottom rail, held to the right corner. Zoom is a
+   property of this viewer and never of the document, which is why it is down
+   here and the document's name is not -- the name leads the top rail, where
+   you look first. Right rather than left so the pointer travels the shortest
+   way between it and the scrollbar it works alongside. */
 
 .zoom {
   display: inline-flex;
@@ -1682,6 +1663,16 @@ textarea {
 }
 
 .recent {
+  /* The discard mark's footprint, named once: the title reserves room from the
+     same numbers that place it, so moving one cannot silently uncover the
+     other. `--discard-icon` is the `size` the component passes to `<Cross>`. */
+  --discard-inset: 4px;
+  --discard-pad: 4px;
+  --discard-icon: 12px;
+  /* Air between the clipped title and the mark. Without it the ellipsis stops
+     exactly at the mark's edge, which reads as a collision rather than a gap. */
+  --discard-gap: 6px;
+
   position: relative;
   display: flex;
   width: 190px;
@@ -1710,9 +1701,9 @@ textarea {
 .recent__discard {
   position: absolute;
   top: 4px;
-  right: 4px;
+  right: var(--discard-inset);
   display: flex;
-  padding: 4px;
+  padding: var(--discard-pad);
   border: 0;
   background: transparent;
   color: transparent;
@@ -1749,6 +1740,17 @@ textarea {
 .recent__title {
   color: var(--legend-dim);
   font-size: 13px;
+  /* Room for the discard mark, which is absolutely positioned and so takes no
+     space of its own -- a long title ran its ellipsis straight under it. The
+     mark's own footprint, less the padding the title already has, rather than
+     a number that happens to look right today.
+
+     Only the title: the mark sits on the first line, and the timestamp below
+     it has the full width. */
+  padding-right: calc(
+    var(--discard-inset) + var(--discard-pad) * 2 + var(--discard-icon) +
+      var(--discard-gap) - 12px
+  );
   /* One line: a title is a label here, and a wrapped one would make the strip
      ragged for no gain. */
   overflow: hidden;
@@ -2590,13 +2592,8 @@ textarea {
     padding-block: 8px;
   }
 
-  .title-block {
-    margin-left: 0;
-    flex-wrap: wrap;
-  }
-
-  .title-block__value--name {
-    max-width: 18ch;
+  .rail__name {
+    max-width: 16ch;
   }
 
   .sheet-scroll {
@@ -2626,7 +2623,6 @@ textarea {
   .deck,
   .rail,
   .schedule,
-  .title-block,
   .zoom,
   .insert-bar,
   .page-controls,

@@ -522,3 +522,74 @@ class TestTheRegisterKnowsWhenNotJustHowMuch:
         ]
 
         assert second >= first
+
+
+class TestRenaming:
+    """A title is about the document rather than in it.
+
+    Not an op: it is not in `doc`, it does not change `content_hash`, and
+    nothing renders it onto the page. Routed through `apply` it would sit in
+    the undo stack between two edits to the résumé and bump the version every
+    open client holds as its compare-and-set base — a 409 for everyone, over a
+    word nobody typed into the sheet.
+    """
+
+    async def test_a_document_can_be_renamed(self, client) -> None:
+        created = (await client.post("/api/v1/documents", json={"title": "Untitled"})).json()
+
+        renamed = await client.patch(
+            f"/api/v1/documents/{created['id']}", json={"title": "Rao — AI Engineer"}
+        )
+
+        assert renamed.status_code == 200
+        assert renamed.json()["title"] == "Rao — AI Engineer"
+
+    async def test_it_does_not_touch_the_document(self, client) -> None:
+        created = (await client.post("/api/v1/documents", json={"title": "Untitled"})).json()
+
+        await client.patch(
+            f"/api/v1/documents/{created['id']}", json={"title": "Renamed"}
+        )
+        after = (await client.get(f"/api/v1/documents/{created['id']}")).json()
+
+        # The version every open client is holding stays valid.
+        assert after["version"] == created["version"]
+        assert after["hash"] == created["hash"]
+
+    async def test_the_new_name_reaches_the_pdf(self, client) -> None:
+        """The export names the file from the server's copy of the title."""
+        from studio.routers.export import _filename
+
+        created = (await client.post("/api/v1/documents", json={"title": "Untitled"})).json()
+        await client.patch(
+            f"/api/v1/documents/{created['id']}", json={"title": "Rao Muhammad Hamza"}
+        )
+        state = (await client.get(f"/api/v1/documents/{created['id']}")).json()
+
+        assert _filename(state["title"]) == _filename("Rao Muhammad Hamza")
+
+    async def test_whitespace_is_trimmed(self, client) -> None:
+        created = (await client.post("/api/v1/documents", json={"title": "Untitled"})).json()
+
+        renamed = await client.patch(
+            f"/api/v1/documents/{created['id']}", json={"title": "  Spaced  "}
+        )
+
+        assert renamed.json()["title"] == "Spaced"
+
+    async def test_an_empty_title_is_refused(self, client) -> None:
+        """A blank name leaves the register with a row that looks unclickable."""
+        created = (await client.post("/api/v1/documents", json={"title": "Untitled"})).json()
+
+        refused = await client.patch(
+            f"/api/v1/documents/{created['id']}", json={"title": "   "}
+        )
+
+        assert refused.status_code == 422
+        after = (await client.get(f"/api/v1/documents/{created['id']}")).json()
+        assert after["title"] == "Untitled"
+
+    async def test_renaming_something_that_is_not_there(self, client) -> None:
+        missing = await client.patch("/api/v1/documents/nope", json={"title": "x"})
+
+        assert missing.status_code == 404

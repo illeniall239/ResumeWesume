@@ -133,6 +133,20 @@ export function fetchMessages(id: string): Promise<{ messages: StoredMessage[] }
  * There is no undo for this one. Undo reverses a batch *within* a document; a
  * deleted document has no op log left to reverse, so the caller asks first.
  */
+/**
+ * Give a document a different name.
+ *
+ * `PATCH`, carrying no version and taking no `If-Match`: a title is *about*
+ * the document rather than in it, so it does not move `version` and every open
+ * editor's compare-and-set base stays valid.
+ */
+export function renameDocument(id: string, title: string): Promise<DocumentResponse> {
+  return request<DocumentResponse>(`/documents/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+}
+
 export function deleteDocument(id: string): Promise<void> {
   return request<void>(`/documents/${id}`, { method: 'DELETE' });
 }

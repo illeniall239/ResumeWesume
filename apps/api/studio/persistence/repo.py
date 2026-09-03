@@ -26,6 +26,11 @@ from studio.persistence.models import (
 )
 
 
+#: Long enough for "Rao Muhammad Hamza — Senior AI Engineer, Platform", short
+#: enough that the column it is stored in cannot be filled with a paste.
+MAX_TITLE = 300
+
+
 class VersionConflict(Exception):
     """Raised when a write's expected version no longer matches.
 
@@ -334,6 +339,29 @@ class DocumentRepo:
         return DocumentState(
             id=document_id, doc=doc, version=1, content_hash=digest, title=title
         )
+
+    async def rename(self, document_id: str, title: str) -> DocumentState | None:
+        """Give a document a different name.
+
+        Deliberately not an op. A title is *about* the document rather than in
+        it: it is not in `doc`, it does not change `content_hash`, and nothing
+        renders it onto the page. Routing it through `apply` would put a
+        rename in the undo stack between two edits to the résumé, and bump the
+        version that every open client is holding as its compare-and-set base
+        -- a 409 for everyone, over a word nobody typed into the sheet.
+        """
+        clean = title.strip()
+        if not clean:
+            return None
+
+        async with self._session() as session:
+            row = await session.get(Document, document_id)
+            if row is None:
+                return None
+            row.title = clean[:MAX_TITLE]
+            await session.commit()
+
+        return await self.get(document_id)
 
     async def get(self, document_id: str) -> DocumentState | None:
         async with self._session() as session:

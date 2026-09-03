@@ -24,6 +24,7 @@ import {
   fetchDocument,
   fetchRevisions,
   isVersionConflict,
+  renameDocument,
   reverseHistory,
 } from '@/lib/api';
 import { coalesce, rebase } from '@/store/pending';
@@ -137,6 +138,7 @@ interface StudioState {
   /** Light the region a schedule row names, or nothing. */
   setSpotlight: (nid: string | null) => void;
   /** Wipe the clouds. Called when a new instruction is given. */
+  rename: (title: string) => Promise<void>;
   loadRevisions: (documentId: string) => Promise<void>;
   draft: (target: string, text: string) => void;
   clearDrafts: () => void;
@@ -391,6 +393,33 @@ export const useStudio = create<StudioState>((set, get) => ({
         unverified: new Set(state.doc.unverified ?? []),
       });
     } catch (cause) {
+      set({ error: (cause as Error).message });
+    }
+  },
+
+  /**
+   * Give this document a different name.
+   *
+   * Optimistic, and deliberately so: a rename is a label, the field already
+   * shows what was typed, and snapping it back to the old name for a moment
+   * while a request lands would read as the edit being rejected. On failure it
+   * is put back and the error is shown, which is the honest version of the
+   * same thing.
+   */
+  async rename(title) {
+    const documentId = get().documentId;
+    const previous = get().title;
+    const clean = title.trim();
+    if (!documentId || !clean || clean === previous) return;
+
+    set({ title: clean });
+    try {
+      const response = await renameDocument(documentId, clean);
+      // The server trims and caps; take its answer rather than assuming ours
+      // survived intact.
+      if (get().documentId === documentId) set({ title: response.title });
+    } catch (cause) {
+      if (get().documentId === documentId) set({ title: previous });
       set({ error: (cause as Error).message });
     }
   },

@@ -153,6 +153,33 @@ async def get_document(
     return _as_response(state)
 
 
+class RenameRequest(BaseModel):
+    title: str
+
+
+@router.patch("/{document_id}", response_model=DocumentResponse)
+async def rename_document(
+    request: Request, document_id: str, body: RenameRequest
+) -> DocumentResponse:
+    """Rename a document.
+
+    `PATCH` rather than a write through `/ops`: a title is about the document
+    rather than in it, so it carries no version and takes no `If-Match`. Two
+    people renaming at once is a last-writer-wins race over a label, which is
+    the right trade against making every open editor rebase for it.
+    """
+    state = await _repo(request).rename(document_id, body.title)
+    if state is None:
+        # Either there is no such document, or the name was only whitespace.
+        # A blank title would leave the register with an unclickable-looking
+        # row, so it is refused rather than stored.
+        if await _repo(request).get(document_id) is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        raise HTTPException(status_code=422, detail="A title cannot be empty.")
+
+    return _as_response(state)
+
+
 @router.get("/{document_id}/revisions")
 async def get_revisions(request: Request, document_id: str) -> dict[str, Any]:
     """The revision number, and the marks of the latest issue.
