@@ -19,6 +19,7 @@ from studio.llm import catalog
 from studio.llm.backend import ChatBackend, ModelSpec, StreamEnd, TextDelta
 from studio.llm.litellm_backend import LiteLLMBackend, probe_supports_tools
 from studio.llm import subscription
+from studio.llm.claude_code_backend import ClaudeCodeBackend
 from studio.llm.resilience import CircuitBreaker
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle: persistence imports nothing here
@@ -81,7 +82,22 @@ class BackendFactory:
             api_base=config.api_base or None,
             supports_tools=probe_supports_tools(config.provider, config.model),
         )
-        backend = LiteLLMBackend(spec, api_key=config.api_key)
+
+        # The subscription is not a litellm provider and never will be: it is
+        # reached through the Agent SDK, using the login this machine already
+        # has. Handed to `LiteLLMBackend` it produced a provider error on every
+        # call -- which import surfaced as four sections that "could not be
+        # read" while the mechanically-parsed ones came through fine.
+        if config.provider == catalog.CLAUDE_CODE:
+            backend: ChatBackend = ClaudeCodeBackend(
+                ModelSpec(
+                    provider=config.provider,
+                    model=catalog.claude_code_model(config.model) or "",
+                    supports_tools=True,
+                )
+            )
+        else:
+            backend = LiteLLMBackend(spec, api_key=config.api_key)
         self._cache[key] = backend
         logger.info(
             "Built backend %s/%s (tools=%s)",

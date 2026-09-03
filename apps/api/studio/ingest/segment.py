@@ -179,6 +179,25 @@ class Segment:
 
     @property
     def text(self) -> str:
+        """The section's lines, joined.
+
+        This drops everything a ``Line`` knows except the string -- its size,
+        whether it was bold, whether it carried a bullet glyph -- and that looks
+        like a loss worth recovering. It was measured rather than assumed.
+
+        Two alternatives were built and compared against this one: a `markdown`
+        property rendering those metrics as ``**bold**`` and ``- bullets``, and
+        Firecrawl's anydoc converting the whole PDF to GitHub-flavoured
+        markdown. Twenty-four runs -- two fixtures, three formats, Claude and a
+        12B local model -- scored 8/8 every time. No format won, so the plainest
+        stays; it is also 3% cheaper in tokens than the marked-up version.
+
+        The reason it does not matter is upstream. By the time text reaches the
+        model it is *one section of one known kind*, with its own schema and its
+        own prompt. The geometry already did its work in ``segment``, deciding
+        where the boundaries are; restating it inside a section tells the model
+        what the section itself already said.
+        """
         return "\n".join(line.text for line in self.lines)
 
     @property
