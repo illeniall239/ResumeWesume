@@ -206,6 +206,15 @@ class SkillsGuard:
                 item_key = normalise_key(item.text)
                 if item_key in current_keys:
                     continue
+                # A blank is not a skill. `starter_doc` ships one as the slot
+                # to click into, and filling it removes the empty key from the
+                # group -- which read here as a skill dropped without a
+                # request, so the guard restored the blank it had just been
+                # rid of. A tailored resume ended with a dot and no words
+                # after it, every time, and the restore left no op behind to
+                # explain why.
+                if not item_key:
+                    continue
                 if ledger.covers(GrantScope.SKILL_REMOVE, item_key):
                     continue
                 current_group.items.append(item.model_copy(deep=True))
@@ -219,11 +228,22 @@ class SkillsGuard:
                 )
 
             original_keys = {normalise_key(item.text) for item in original_group.items}
+            original_nids = {item.nid for item in original_group.items}
             for item in list(current_group.items):
                 item_key = normalise_key(item.text)
                 if item_key in original_keys:
                     continue
                 if ledger.covers(GrantScope.SKILL_ADD, item_key):
+                    continue
+                # A skill whose *text* changed is not a skill added: it is the
+                # same node, rewritten. Identity here is the nid, and a
+                # requested rewrite carries a TEXT grant against it. Without
+                # this the two halves of this guard fought each other -- one
+                # restoring the old reading, the other deleting the new one --
+                # so filling the starter's blank slot was undone twice over.
+                if item.nid in original_nids and ledger.covers(
+                    GrantScope.TEXT, item.nid
+                ):
                     continue
                 current_group.items.remove(item)
                 reports.append(

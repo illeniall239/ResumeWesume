@@ -16,7 +16,7 @@ import respx
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from studio.llm import catalog
+from studio.llm import catalog, subscription
 from studio.llm.factory import BackendFactory
 from studio.persistence.providers import ProviderStore, Selection
 from studio.persistence.repo import DocumentRepo
@@ -321,12 +321,83 @@ class TestProviderApi:
         assert groq["hint"] == ""
 
 
+@pytest.fixture
+def no_subscription(monkeypatch):
+    """Pin the machine as having no Claude login.
+
+    Without this these tests pass or fail depending on whether the developer
+    happens to be signed in to Claude Code, because an existing login is now
+    preferred over the configured default. That is the intended behaviour and
+    exactly why it has to be stated rather than inherited from the machine.
+    """
+    monkeypatch.setattr(
+        subscription, "detect", lambda: subscription.Subscription(available=False)
+    )
+
+
+@pytest.fixture
+def signed_in(monkeypatch):
+    monkeypatch.setattr(
+        subscription,
+        "detect",
+        lambda: subscription.Subscription(available=True, via="subscription"),
+    )
+
+
 class TestResolution:
     """Which backend a turn actually gets."""
 
-    async def test_no_selection_falls_back_to_settings(self, store) -> None:
+    async def test_no_selection_falls_back_to_settings(
+        self, store, no_subscription
+    ) -> None:
         backend = await BackendFactory().resolve(store)
         assert backend.spec.provider == "ollama"
+
+    async def test_a_signed_in_subscription_is_preferred_over_the_default(
+        self, store, signed_in
+    ) -> None:
+        """The whole point of picking it up automatically.
+
+        Somebody who already pays for Claude should get it without finding a
+        settings page, and without typing a key that does not exist.
+        """
+        resolution = await BackendFactory().effective(store)
+        assert resolution.config.provider == catalog.CLAUDE_CODE
+
+    async def test_an_explicit_choice_beats_a_subscription(
+        self, store, signed_in
+    ) -> None:
+        """Preferred is not the same as imposed.
+
+        A subscription is the default when nothing was chosen. Someone who
+        deliberately picked a local model keeps it.
+        """
+        await store.select(Selection("ollama", "mistral-nemo:12b"))
+        resolution = await BackendFactory().effective(store)
+
+        assert resolution.config.provider == "ollama"
+        assert resolution.config.model == "mistral-nemo:12b"
+
+    async def test_a_subscription_that_went_away_says_so(
+        self, store, monkeypatch
+    ) -> None:
+        """Chosen on one machine, opened on another.
+
+        Failing the turn with an SDK stack trace would leave the user guessing;
+        the reason names the remedy.
+        """
+        await store.select(Selection(catalog.CLAUDE_CODE, catalog.CLAUDE_CODE_DEFAULT))
+        monkeypatch.setattr(
+            subscription,
+            "detect",
+            lambda: subscription.Subscription(
+                available=False, detail="Claude Code is not installed."
+            ),
+        )
+
+        resolution = await BackendFactory().effective(store)
+        assert resolution.config.provider == "ollama"
+        assert "not installed" in resolution.fallback_reason
 
     async def test_a_selection_is_honoured(self, store) -> None:
         await store.put("openai", api_key=SECRET)
@@ -336,7 +407,9 @@ class TestResolution:
         assert backend.spec.provider == "openai"
         assert backend.spec.model == "gpt-4o"
 
-    async def test_a_selection_whose_key_was_deleted_falls_back(self, store) -> None:
+    async def test_a_selection_whose_key_was_deleted_falls_back(
+        self, store, no_subscription
+    ) -> None:
         """A settings row must not be able to make the app unable to run at all."""
         await store.put("openai", api_key=SECRET)
         await store.select(Selection("openai", "gpt-4o"))
@@ -345,12 +418,90 @@ class TestResolution:
         backend = await BackendFactory().resolve(store)
         assert backend.spec.provider == "ollama"
 
-    async def test_an_unknown_provider_falls_back(self, store) -> None:
+    async def test_an_unknown_provider_falls_back(
+        self, store, no_subscription
+    ) -> None:
         await store.select(Selection("pigeon-post", "carrier-1"))
         backend = await BackendFactory().resolve(store)
         assert backend.spec.provider == "ollama"
+
+    async def test_a_hosted_provider_is_not_handed_the_listing_url(
+        self, store
+    ) -> None:
+        """The bug this pins cost a working API key an afternoon.
+
+        ``default_api_base`` is where the *model listing* lives, and litellm
+        builds a completion URL from a different shape. Gemini is the case that
+        exposed it: the listing is ``{base}/v1beta/models``, so the base cannot
+        carry the version, while litellm appends its own path and needs the
+        version already there. Handing it the listing base produced
+
+            litellm.NotFoundError: ... - b''
+
+        a 404 with an empty body, from a key that was perfectly valid. litellm
+        already knows where every hosted provider lives, so it is told nothing.
+        """
+        await store.put("gemini", api_key=SECRET)
+        await store.select(Selection("gemini", "gemini-2.5-flash"))
+
+        backend = await BackendFactory().resolve(store)
+        assert backend.spec.provider == "gemini"
+        assert backend.spec.api_base is None
+
+    async def test_a_user_supplied_base_is_still_honoured(self, store) -> None:
+        """Overriding the endpoint is how someone points at a gateway.
+
+        The rule above suppresses the *default*, never an address the user
+        typed, or routing a hosted provider through a proxy would stop working.
+        """
+        await store.put("gemini", api_key=SECRET, api_base="https://proxy.internal/v1beta")
+        await store.select(Selection("gemini", "gemini-2.5-flash"))
+
+        backend = await BackendFactory().resolve(store)
+        assert backend.spec.api_base == "https://proxy.internal/v1beta"
+
+    async def test_a_local_provider_still_gets_its_default_base(self, store) -> None:
+        """Ollama has no address of its own as far as litellm is concerned."""
+        await store.select(Selection("ollama", "llama3:8b"))
+        backend = await BackendFactory().resolve(store)
+        assert backend.spec.api_base == "http://localhost:11434"
 
     async def test_a_local_selection_needs_no_credential_row(self, store) -> None:
         await store.select(Selection("ollama", "llama3:8b"))
         backend = await BackendFactory().resolve(store)
         assert backend.spec.model == "llama3:8b"
+
+
+class TestSubscriptionSurfacesToTheUI:
+    """What the settings page is told about a provider with no key.
+
+    "Needs no key" and "usable" were the same question until this provider
+    arrived: it needs no key and is still unusable until somebody has signed in
+    to Claude Code on this machine. The client cannot work that out, so the
+    server answers it.
+    """
+
+    def test_a_signed_in_machine_reports_ready(self, monkeypatch) -> None:
+        monkeypatch.setattr(
+            subscription,
+            "detect",
+            lambda: subscription.Subscription(
+                available=True, via="subscription", detail="Signed in."
+            ),
+        )
+        provider = catalog.PROVIDERS[catalog.CLAUDE_CODE]
+
+        assert provider.needs_key is False
+        assert subscription.detect().available is True
+
+    def test_the_default_model_is_representable(self) -> None:
+        """A selection is stored as ``provider/model`` and decodes to nothing
+        when either half is blank, so "let the plan decide" needs a name."""
+        assert catalog.claude_code_model(catalog.CLAUDE_CODE_DEFAULT) is None
+        assert catalog.claude_code_model("") is None
+        assert catalog.claude_code_model("claude-opus-5") == "claude-opus-5"
+
+    def test_no_key_is_ever_asked_for(self) -> None:
+        provider = catalog.PROVIDERS[catalog.CLAUDE_CODE]
+        assert provider.needs_key is False
+        assert provider.default_api_base is None

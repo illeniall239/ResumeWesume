@@ -20,11 +20,12 @@ prose is exactly what an injected instruction imitates.
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, ClassVar, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
-from studio.doc.arrange import ArrangeError
+from studio.doc.arrange import ArrangeError, Paper, paper_of
 from studio.doc.arrange import arrange as arrange_ops
 from studio.doc.nodes import NodeKind, mint
 from studio.doc.ops import (
@@ -208,6 +209,11 @@ class RewriteTextArgs(BaseModel):
     )
     reason: str = ""
 
+    @field_validator("value")
+    @classmethod
+    def _not_empty(cls, value: str) -> str:
+        return _said_something(value)
+
 
 class RewriteText(ToolSpec):
     name = "rewrite_text"
@@ -235,11 +241,45 @@ class RewriteText(ToolSpec):
         return "rewrote text"
 
 
+def _said_something(value: str) -> str:
+    """Reject text the assistant left empty.
+
+    Nothing stopped a tool writing "" or "   ", and an empty node is not
+    invisible: the page draws a skill as a bullet and a bullet as a bullet, so
+    a blank one is a dot with no words after it -- on the screen and in the
+    PDF.
+
+    Only the assistant is held to this. A person clearing a line they are about
+    to retype is editing, and direct edits never come through a tool. To take a
+    line *out*, there is `remove_bullet` and `remove_skill`, which is what the
+    message says so the model repairs rather than retries.
+    """
+    if not value.strip():
+        raise ValueError(
+            "this cannot be empty -- an empty line still draws a bullet. Use "
+            "remove_bullet or remove_skill to take one out"
+        )
+    return value
+
+
+def _entry_holding(doc: StudioDoc, nid: str) -> Any | None:
+    """The experience or project with this id, if either has it."""
+    for entry in (*doc.experience, *doc.projects):
+        if entry.nid == nid:
+            return entry
+    return None
+
+
 class AddBulletArgs(BaseModel):
     parent: str = Field(description="Id of the experience or project to add to.")
     value: str = Field(description="The bullet text.")
     position: int = Field(default=-1, description="-1 appends.")
     reason: str = ""
+
+    @field_validator("value")
+    @classmethod
+    def _not_empty(cls, value: str) -> str:
+        return _said_something(value)
 
 
 class AddBullet(ToolSpec):
@@ -249,6 +289,19 @@ class AddBullet(ToolSpec):
     Args = AddBulletArgs
 
     def compile(self, args: AddBulletArgs, doc: StudioDoc) -> list[DocOp]:
+        # The same skeleton slot as a blank skill, and the same defect: the
+        # starter ships two empty bullets to click into, and appending past
+        # them leaves a bullet with no words after it on the page.
+        #
+        # Written into rather than replaced, unlike a skill: a bullet carries no
+        # `source`, so there is nothing about the empty one that would be a
+        # false claim once it holds text -- and reusing the node keeps the id
+        # anything already pointing at it was given.
+        owner = _entry_holding(doc, args.parent)
+        blank = _blank_slot(owner.bullets) if owner is not None else None
+        if blank is not None and args.position == -1:
+            return [SetText(nid=blank.nid, value=args.value, reason=args.reason)]
+
         return [
             InsertNode(
                 parent=args.parent,
@@ -324,6 +377,11 @@ class SetBulletStyle(ToolSpec):
 # --- Tier B: claims ---------------------------------------------------------
 
 
+#: Past this a skills section stops being scannable and starts being a keyword
+#: dump, which reads as padding to a person and adds nothing for a filter.
+MAX_SKILLS_PER_GROUP = 14
+
+
 class AddSkillArgs(BaseModel):
     skill: str
     group: str = Field(
@@ -337,6 +395,37 @@ class AddSkillArgs(BaseModel):
     )
     reason: str = ""
 
+    @field_validator("skill")
+    @classmethod
+    def _not_empty(cls, value: str) -> str:
+        return _said_something(value)
+
+
+def _match_group(wanted: str, doc: StudioDoc) -> Any:
+    """Find a skill group by a name the model guessed.
+
+    Three rungs, loosest last: the key as given, the key ignoring case and
+    punctuation, then a prefix either way so "technical" reaches
+    "technicalSkills" and "skills" reaches "skillsTechnical". A résumé imported
+    from a PDF carries whatever group names its author used, and the model is
+    working from a default it was handed.
+    """
+    for group in doc.skills:
+        if group.key == wanted:
+            return group
+
+    target = normalise_key(wanted)
+    if not target:
+        return None
+    for group in doc.skills:
+        if normalise_key(group.key) == target:
+            return group
+    for group in doc.skills:
+        key = normalise_key(group.key)
+        if key.startswith(target) or target.startswith(key):
+            return group
+    return None
+
 
 class AddSkill(ToolSpec):
     name = "add_skill"
@@ -348,21 +437,61 @@ class AddSkill(ToolSpec):
     Args = AddSkillArgs
 
     def compile(self, args: AddSkillArgs, doc: StudioDoc) -> list[DocOp]:
-        group = next((item for item in doc.skills if item.key == args.group), None)
+        # Matched loosely, because the group key is whatever the résumé happened
+        # to be imported with. This argument defaults to "technical"; a real
+        # résumé came in with the group named "technicalSkills", so every
+        # add_skill on it failed with "No skill group 'technical'" while the
+        # group sat right there. An exact comparison here makes the default
+        # wrong for any document that did not come from our own templates.
+        group = _match_group(args.group, doc)
         if group is None:
             raise ToolError(
                 f"No skill group {args.group!r}. Existing groups: "
                 + ", ".join(item.key for item in doc.skills)
             )
-        source = {"jd": "jd", "resume": "resume", "user_request": "user"}[args.evidence]
-        return [
-            InsertNode(
-                parent=group.nid,
-                index=-1,
-                node={"nid": mint(NodeKind.SKILL), "text": args.skill, "source": source},
-                reason=args.reason,
+        # A skill the résumé already lists. Seen for real: a tailoring turn was
+        # asked for the skills an AI role expects and added "Python" to a group
+        # that already said Python, which reads as carelessness on the page.
+        # Told plainly, the model spends its next call on a skill that is
+        # actually missing; rejecting would have cost it the round.
+        # A skills section is read at a glance, so there is a length past which
+        # more entries subtract. Asked for "three or more", Gemini added
+        # thirty-four in one turn -- Agile Methodologies, Version Control, SQL --
+        # and buried the four that mattered. The instruction now names a range;
+        # this is the backstop for when it is read loosely.
+        if len(group.items) >= MAX_SKILLS_PER_GROUP:
+            raise ToolError(
+                f"{args.group!r} already lists {len(group.items)} skills, which "
+                "is as many as a reader takes in. Remove one before adding "
+                "another, or move on."
             )
-        ]
+
+        existing = {
+            normalise_key(item.text) for item in group.items if item.text.strip()
+        }
+        if normalise_key(args.skill) in existing:
+            raise ToolError(
+                f"{args.skill!r} is already in {args.group!r}. Add a different "
+                "skill, or move on."
+            )
+
+        source = {"jd": "jd", "resume": "resume", "user_request": "user"}[args.evidence]
+        insert = InsertNode(
+            parent=group.nid,
+            index=-1,
+            node={"nid": mint(NodeKind.SKILL), "text": args.skill, "source": source},
+            reason=args.reason,
+        )
+
+        # Take the skeleton's blank slot rather than appending past it. Removed
+        # and replaced rather than written into, because a blank ships as the
+        # user's own and this skill may not be -- and `source` is what the
+        # grounding notice reads to decide which lines nobody vouched for.
+        blank = _blank_slot(group.items)
+        if blank is not None:
+            return [RemoveNode(nid=blank.nid, reason=args.reason), insert]
+
+        return [insert]
 
     def grants(self, args: AddSkillArgs, doc: StudioDoc) -> list[IntentGrant]:
         return [IntentGrant(GrantScope.SKILL_ADD, normalise_key(args.skill))]
@@ -410,18 +539,46 @@ class RemoveSkill(ToolSpec):
 
 class SetEntryFieldArgs(BaseModel):
     nid: str
-    field: Literal["years", "location", "role"]
+    # "role" was on this list and is not a field an entry has -- the job title
+    # is `title`, and it lives behind `set_entry_identity` because it is a
+    # factual claim rather than metadata. Offered the word, models used it: one
+    # retargeting turn spent every round calling set_entry_field with
+    # field="role", being told the entry had no such field, and calling it again
+    # until the turn stalled with nothing changed. It was using the vocabulary
+    # we published.
+    field: Literal["years", "location"]
     value: str
     expect: str | None = None
     reason: str = ""
+
+    @field_validator("field", mode="before")
+    @classmethod
+    def _point_at_the_right_tool(cls, value: object) -> object:
+        """Say where the job title actually lives.
+
+        A bare Literal error lists the two valid values and leaves the model to
+        infer that the thing it wanted is somewhere else entirely.
+        """
+        if isinstance(value, str) and value.strip().lower() in {
+            "role",
+            "title",
+            "position",
+            "job_title",
+            "jobtitle",
+        }:
+            raise ValueError(
+                "the job title is not entry metadata -- use set_entry_identity "
+                "with title= to change it"
+            )
+        return value
 
 
 class SetEntryField(ToolSpec):
     name = "set_entry_field"
     tier = "B"
     description = """
-    Change descriptive metadata on an entry: dates, location, or role. Employer
-    and job title are identity and need set_entry_identity instead.
+    Change descriptive metadata on an entry: dates or location. Employer and
+    job title are identity and need set_entry_identity instead.
     """
     Args = SetEntryFieldArgs
 
@@ -506,7 +663,8 @@ class AddExperience(ToolSpec):
                     ],
                 },
                 reason=args.reason,
-            )
+            ),
+            *cover_for(doc, "experience"),
         ]
 
     def grants(self, args: AddExperienceArgs, doc: StudioDoc) -> list[IntentGrant]:
@@ -516,6 +674,515 @@ class AddExperience(ToolSpec):
 
     def label(self, args: AddExperienceArgs) -> str:
         return f"added {args.company}"
+
+
+def cover_for(doc: StudioDoc, section: str) -> list[DocOp]:
+    """A frame for a section nothing on the page is drawing yet.
+
+    The coverage gate refuses content no frame renders, which is what keeps a
+    document from holding words that never appear. That is right, and it means
+    adding the *first* project to a resume laid out without a projects section
+    is rejected -- "Nothing on the page would render prj_wzwdb" -- for a request
+    that was perfectly reasonable.
+
+    So the entry brings its own frame. Placed below everything else on the last
+    page with a nominal height: `autogrow` means the browser measures the text
+    and the reflow pass corrects both the height and the position, exactly as it
+    does for a frame the server placed at import.
+
+    Empty when the section is already covered, which is the common case -- a
+    second job goes inside the frame the first one is already in.
+    """
+    if frames_bound_to(doc, section) or not doc.pages:
+        return []
+
+    page = doc.pages[-1]
+    bottom = max(
+        (element.rect.y + element.rect.h for element in page.elements),
+        default=_PAGE_MARGIN,
+    )
+
+    return [
+        InsertNode(
+            parent=page.nid,
+            index=-1,
+            node={
+                "nid": mint(NodeKind.FRAME),
+                "ref": section,
+                "rect": {
+                    "x": _PAGE_MARGIN,
+                    "y": bottom + _SECTION_GAP,
+                    "w": paper_of(page).width - _PAGE_MARGIN * 2,
+                    "h": _NOMINAL_HEIGHT,
+                },
+                "rotation": 0.0,
+                "autogrow": "height",
+                "visible": True,
+                "locked": False,
+                "style": {},
+            },
+            reason=f"a frame to render the {section} section",
+        )
+    ]
+
+
+#: Space between one section's frame and the next, in points.
+_SECTION_GAP = 12.0
+
+#: A frame's stored height is the server's guess and always wrong -- it has no
+#: fonts and cannot measure text. The browser corrects it on first paint.
+_NOMINAL_HEIGHT = 64.0
+
+#: The margin the PDF export passes to Chromium.
+_PAGE_MARGIN = 28.35
+
+
+def _slug(label: str) -> str:
+    """A section key from the label a person typed.
+
+    Keys are how the layout, the renderer and ``set_section`` address a
+    section, so they have to be stable and free of the punctuation a label
+    carries: "Certifications & Training" becomes ``certificationsTraining``,
+    which is the shape imported résumés already use.
+    """
+    words = re.findall(r"[A-Za-z0-9]+", label)
+    if not words:
+        return "section"
+    head, *rest = words
+    return head.lower() + "".join(word.capitalize() for word in rest)
+
+
+def _blank_slot(items: list[Any]) -> Any | None:
+    """A skeleton node still waiting to be filled, if there is one.
+
+    ``starter_doc`` ships one blank skill and two blank bullets on purpose:
+    they are what a person clicks into to start typing, and without them a
+    freshly created résumé is a blank sheet with nothing to type into.
+
+    Nothing ever consumed them. So a résumé the assistant filled with nine
+    skills carried a tenth empty one, which the page draws as a bullet with no
+    words after it -- straight into the PDF.
+
+    Returned rather than removed here: the caller decides whether to fill it or
+    step past it, and only the first addition should claim it.
+    """
+    return next((item for item in items if not (item.text or "").strip()), None)
+
+
+class AddSkillGroupArgs(BaseModel):
+    label: str = Field(
+        description='What the group is called on the page, e.g. "Languages".'
+    )
+    skills: list[str] = Field(
+        default_factory=list, description="Skills to put in it straight away."
+    )
+    reason: str = ""
+
+
+class AddSkillGroup(ToolSpec):
+    name = "add_skill_group"
+    tier = "B"
+    description = """
+    Start a new group of skills -- Languages, Tools, Certifications. Use this
+    when add_skill says the group does not exist. Adding to a group that is
+    already there needs add_skill, not this.
+    """
+    Args = AddSkillGroupArgs
+
+    def compile(self, args: AddSkillGroupArgs, doc: StudioDoc) -> list[DocOp]:
+        key = _slug(args.label)
+        existing = _match_group(key, doc)
+        if existing is not None:
+            raise ToolError(
+                f"{existing.key!r} already exists; use add_skill to put "
+                "something in it."
+            )
+
+        return [
+            InsertNode(
+                parent="skills",
+                index=-1,
+                node={
+                    "nid": mint(NodeKind.SKILL_GROUP),
+                    "key": key,
+                    "label": args.label,
+                    "items": [
+                        # `source` is how the grounding notice knows which lines
+                        # nobody has vouched for. A skill arriving with a group
+                        # is the user's own, because they just named it.
+                        {"nid": mint(NodeKind.SKILL), "text": text, "source": "user"}
+                        for text in args.skills
+                    ],
+                },
+                reason=args.reason,
+            ),
+            *cover_for(doc, "skills"),
+        ]
+
+    def label(self, args: AddSkillGroupArgs) -> str:
+        return f"added the {args.label} group"
+
+
+class AddSectionArgs(BaseModel):
+    label: str = Field(
+        description='The heading, e.g. "Certifications" or "Publications".'
+    )
+    items: list[str] = Field(
+        default_factory=list,
+        description="One line each. Only what the user gave you.",
+    )
+    reason: str = ""
+
+
+class AddSection(ToolSpec):
+    name = "add_section"
+    tier = "C"
+    description = """
+    Add a section the resume does not have: Certifications, Publications,
+    Volunteering, Awards. Each item is one line. Only with details the user
+    gave you.
+    """
+    Args = AddSectionArgs
+
+    def compile(self, args: AddSectionArgs, doc: StudioDoc) -> list[DocOp]:
+        key = _slug(args.label)
+        if any(section.key == key for section in doc.custom):
+            raise ToolError(f"There is already a {args.label!r} section.")
+
+        return [
+            InsertNode(
+                parent="custom",
+                index=-1,
+                node={
+                    "nid": mint(NodeKind.CUSTOM_SECTION),
+                    "key": key,
+                    "label": args.label,
+                    # `stringList` rather than `itemList`: a certification or an
+                    # award is one line, and the item shape carries a title, a
+                    # subtitle, dates and bullets that would all render empty.
+                    "kind": "stringList",
+                    "strings": [
+                        {"nid": mint(NodeKind.SKILL), "text": text, "source": "user"}
+                        for text in args.items
+                    ],
+                },
+                reason=args.reason,
+            ),
+            *cover_for(doc, "custom"),
+        ]
+
+    def label(self, args: AddSectionArgs) -> str:
+        return f"added a {args.label} section"
+
+
+class AddShapeArgs(BaseModel):
+    shape: Literal["rect", "ellipse", "line"] = Field(
+        default="line", description="A box, an ellipse, or a rule."
+    )
+    where: Literal[
+        "under_the_name",
+        "top_of_page",
+        "bottom_of_page",
+        "left_edge",
+        "right_edge",
+    ] = Field(
+        default="under_the_name",
+        description="Where to put it. You cannot see the page, so say a place.",
+    )
+    page: int = Field(default=1, ge=1)
+    colour: str | None = Field(
+        default=None,
+        description='A hex colour like "#334155". Left out, it follows the ink.',
+    )
+    reason: str = ""
+
+
+class AddShape(ToolSpec):
+    name = "add_shape"
+    tier = "A"
+    description = """
+    Draw a rule, a box or an ellipse on the page: a line under the name, a band
+    down one edge. Decoration only -- nothing here is read by an ATS, so never
+    put information in a shape.
+    """
+    Args = AddShapeArgs
+
+    def compile(self, args: AddShapeArgs, doc: StudioDoc) -> list[DocOp]:
+        if not doc.pages:
+            raise ToolError("This document has no pages yet. Add a page first.")
+        if args.page > len(doc.pages):
+            raise ToolError(
+                f"There is no page {args.page}; this resume has {len(doc.pages)}."
+            )
+
+        page = doc.pages[args.page - 1]
+        rect = _shape_rect(args.where, args.shape, paper_of(page), page)
+        ink = args.colour or _DEFAULT_INK
+
+        return [
+            InsertNode(
+                parent=page.nid,
+                index=-1,
+                node={
+                    "nid": mint(NodeKind.SHAPE),
+                    "shape": args.shape,
+                    "rect": rect,
+                    "rotation": 0.0,
+                    # A line is a rule, not a box: it is drawn with a stroke and
+                    # has no fill, and giving it one paints a filled sliver.
+                    "fill": None if args.shape == "line" else ink,
+                    "stroke": ink if args.shape == "line" else None,
+                    "stroke_width": 1.0 if args.shape == "line" else 0.0,
+                    "visible": True,
+                    "locked": False,
+                },
+                reason=args.reason,
+            )
+        ]
+
+    def label(self, args: AddShapeArgs) -> str:
+        return f"added a {args.shape}"
+
+
+#: The ink a shape takes when nobody named a colour. A mid slate, dark enough
+#: to read on white and quiet enough not to compete with the words.
+_DEFAULT_INK = "#334155"
+
+#: Fallback for where the name ends, when the page has no header frame to
+#: measure. A constant is a guess; the frame's own height is not, and the
+#: browser has already corrected it -- so the real one is preferred below.
+_NAME_BAND = 76.0
+
+#: How thick an edge band is.
+_BAND = 6.0
+
+
+def _under_the_name(page: Any) -> float:
+    """Where to draw a rule that belongs to the header.
+
+    Measured from the *top* of the personal frame, not its bottom. A frame's
+    stored height is the server's guess -- it has no fonts and cannot measure
+    text -- and for the header that guess is 64pt against a real 120pt, so
+    "below the frame" put the rule through the SUMMARY heading underneath.
+
+    The top edge is real geometry. A name and a title is two lines whatever the
+    template, so a fixed drop from there lands under the pair without needing a
+    height nobody has measured yet.
+    """
+    for element in page.elements:
+        if getattr(element, "ref", None) == "personal":
+            return element.rect.y + _HEADER_DROP
+    return _NAME_BAND
+
+
+#: How far below the top of the header a rule sits: enough to clear a name and
+#: a title at the sizes every template uses.
+_HEADER_DROP = 52.0
+
+
+def _shape_rect(
+    where: str, shape: str, paper: "Paper", page: Any = None
+) -> dict[str, float]:
+    """A named place on the page, as a rectangle.
+
+    Named for the same reason `arrange` takes presets and `add_text_box` takes
+    a corner: the model cannot see the page, so a coordinate from it is a
+    guess. "Under the name" it can mean.
+    """
+    width = paper.width - _PAGE_MARGIN * 2
+    height = 0.0 if shape == "line" else _BAND
+
+    places: dict[str, dict[str, float]] = {
+        "under_the_name": {
+            "x": _PAGE_MARGIN,
+            "y": _under_the_name(page) if page is not None else _NAME_BAND,
+            "w": width,
+            "h": height,
+        },
+        "top_of_page": {"x": _PAGE_MARGIN, "y": _PAGE_MARGIN, "w": width, "h": height},
+        "bottom_of_page": {
+            "x": _PAGE_MARGIN,
+            "y": paper.height - _PAGE_MARGIN - max(height, 1.0),
+            "w": width,
+            "h": height,
+        },
+        "left_edge": {
+            "x": _PAGE_MARGIN,
+            "y": _PAGE_MARGIN,
+            "w": 0.0 if shape == "line" else _BAND,
+            "h": paper.height - _PAGE_MARGIN * 2,
+        },
+        "right_edge": {
+            "x": paper.width - _PAGE_MARGIN - (0.0 if shape == "line" else _BAND),
+            "y": _PAGE_MARGIN,
+            "w": 0.0 if shape == "line" else _BAND,
+            "h": paper.height - _PAGE_MARGIN * 2,
+        },
+    }
+    return places[where]
+
+
+class AddImageArgs(BaseModel):
+    asset: str = Field(
+        description=(
+            "Id of an image already uploaded to this resume, from the UPLOADS "
+            "list. You cannot upload one yourself."
+        )
+    )
+    where: Literal["top_left", "top_right", "top_center"] = Field(
+        default="top_right", description="Where to put it."
+    )
+    page: int = Field(default=1, ge=1)
+    alt: str = Field(default="", description="What the image shows, for screen readers.")
+    reason: str = ""
+
+
+class AddImage(ToolSpec):
+    name = "add_image"
+    tier = "B"
+    description = """
+    Place an image the user has already uploaded -- a headshot, a logo. Only
+    ids from the UPLOADS list work; you cannot upload anything yourself, so if
+    there are none, say so rather than guessing an id.
+    """
+    Args = AddImageArgs
+
+    def compile(self, args: AddImageArgs, doc: StudioDoc) -> list[DocOp]:
+        if not doc.pages:
+            raise ToolError("This document has no pages yet. Add a page first.")
+        if args.page > len(doc.pages):
+            raise ToolError(
+                f"There is no page {args.page}; this resume has {len(doc.pages)}."
+            )
+
+        page = doc.pages[args.page - 1]
+        paper = paper_of(page)
+        side = _IMAGE_SIDE
+        x = {
+            "top_left": _PAGE_MARGIN,
+            "top_right": paper.width - _PAGE_MARGIN - side,
+            "top_center": (paper.width - side) / 2,
+        }[args.where]
+
+        return [
+            InsertNode(
+                parent=page.nid,
+                index=-1,
+                node={
+                    "nid": mint(NodeKind.IMAGE),
+                    "asset": args.asset,
+                    "rect": {"x": x, "y": _PAGE_MARGIN, "w": side, "h": side},
+                    "rotation": 0.0,
+                    # `contain`, not `cover`: a headshot cropped to a square by
+                    # the renderer is a worse default than one that fits.
+                    "fit": "contain",
+                    "crop": None,
+                    "alt": args.alt,
+                    "visible": True,
+                    "locked": False,
+                    "style": {},
+                },
+                reason=args.reason,
+            )
+        ]
+
+    def label(self, args: AddImageArgs) -> str:
+        return "placed an image"
+
+
+#: A square to fit the image inside. Square because the aspect ratio is the
+#: asset's business and `fit: contain` honours it; a guess here would letterbox
+#: every portrait photo.
+_IMAGE_SIDE = 96.0
+
+
+class AddEducationArgs(BaseModel):
+    institution: str
+    degree: str
+    years: str = ""
+    detail: str = Field(
+        default="", description="One line of detail: honours, thesis, coursework."
+    )
+    reason: str = ""
+
+
+class AddEducation(ToolSpec):
+    name = "add_education"
+    tier = "C"
+    description = """
+    Add a degree. Only with details the user gave you -- an institution or a
+    date nobody said is a false claim on a document they will be asked about.
+    """
+    Args = AddEducationArgs
+
+    def compile(self, args: AddEducationArgs, doc: StudioDoc) -> list[DocOp]:
+        node: dict[str, Any] = {
+            "nid": mint(NodeKind.EDUCATION),
+            "institution": args.institution,
+            "degree": args.degree,
+            "years": args.years,
+        }
+        # `detail` is a single optional node, not a list. Sending an empty one
+        # would put a blank line under the degree on the page.
+        if args.detail.strip():
+            node["detail"] = {
+                "nid": mint(NodeKind.BULLET),
+                "text": args.detail.strip(),
+            }
+
+        return [
+            # Index 0: education is read newest-first like experience, and a
+            # degree somebody just added is the one they are adding *now*.
+            InsertNode(parent="education", index=0, node=node, reason=args.reason),
+            *cover_for(doc, "education"),
+        ]
+
+    def label(self, args: AddEducationArgs) -> str:
+        return f"added {args.institution}"
+
+
+class AddProjectArgs(BaseModel):
+    name: str
+    role: str = ""
+    years: str = ""
+    github: str | None = None
+    website: str | None = None
+    bullets: list[str] = Field(default_factory=list)
+    reason: str = ""
+
+
+class AddProject(ToolSpec):
+    name = "add_project"
+    tier = "C"
+    description = """
+    Add a project. Only with details the user gave you.
+    """
+    Args = AddProjectArgs
+
+    def compile(self, args: AddProjectArgs, doc: StudioDoc) -> list[DocOp]:
+        return [
+            InsertNode(
+                parent="projects",
+                index=0,
+                node={
+                    "nid": mint(NodeKind.PROJECT),
+                    "name": args.name,
+                    "role": args.role,
+                    "years": args.years,
+                    "github": args.github,
+                    "website": args.website,
+                    "bullets": [
+                        {"nid": mint(NodeKind.BULLET), "text": text}
+                        for text in args.bullets
+                    ],
+                },
+                reason=args.reason,
+            ),
+            *cover_for(doc, "projects"),
+        ]
+
+    def label(self, args: AddProjectArgs) -> str:
+        return f"added {args.name}"
 
 
 class RemoveEntryArgs(BaseModel):
@@ -747,6 +1414,10 @@ class ArrangeArgs(BaseModel):
         "center_on_page_horizontally",
         "center_on_page_vertically",
         "center_on_page",
+        "snap_page_left",
+        "snap_page_right",
+        "snap_page_top",
+        "snap_page_bottom",
         "match_width",
         "match_height",
     ] = Field(description="Which arrangement to apply.")
@@ -887,6 +1558,213 @@ class RemovePage(ToolSpec):
         return [IntentGrant(GrantScope.ENTRY_REMOVE, page.nid, origin="consent")] if page else []
 
 
+class AddTextBoxArgs(BaseModel):
+    # `value`, not `text`, because salvage normalises `text` to `value` for
+    # every tool -- every other one calls this field `value`, and models reach
+    # for the synonym often enough to be worth correcting. Named `text` here,
+    # the argument was renamed out from under the only tool expecting it, and
+    # the call was rejected as "text: Field required" while the model insisted
+    # it had sent one. It had.
+    value: str = Field(description="What the box should say.")
+    corner: Literal[
+        "top_left",
+        "top_right",
+        "bottom_left",
+        "bottom_right",
+        "top_center",
+        "bottom_center",
+    ] = Field(
+        default="bottom_right",
+        description="Where on the page to put it.",
+    )
+    page: int = Field(default=1, ge=1, description="Which page, counting from 1.")
+    align: Literal["left", "center", "right", "auto"] = Field(
+        default="auto",
+        description=(
+            "How the text sits inside the box. 'auto' follows the corner, "
+            "which is almost always what you want."
+        ),
+    )
+    reason: str = ""
+
+    @field_validator("value")
+    @classmethod
+    def _not_empty(cls, value: str) -> str:
+        return _said_something(value)
+
+
+class AddTextBox(ToolSpec):
+    name = "add_text_box"
+    tier = "A"
+    description = """
+    Put a standalone line of text on the page: a footer, a caption, a note in a
+    corner. Unlike a bullet or the summary, this belongs to no section and sits
+    where you place it. Say which corner -- you cannot see the page, so you
+    cannot give a position.
+    """
+    Args = AddTextBoxArgs
+
+    def compile(self, args: AddTextBoxArgs, doc: StudioDoc) -> list[DocOp]:
+        if not doc.pages:
+            raise ToolError(
+                "This document has no pages yet, so there is nowhere to put a "
+                "box. Add a page first."
+            )
+        if args.page > len(doc.pages):
+            raise ToolError(
+                f"There is no page {args.page}; this resume has "
+                f"{len(doc.pages)}."
+            )
+
+        page = doc.pages[args.page - 1]
+        paper = paper_of(page)
+        rect = _corner_rect(args.corner, paper)
+        # The box is wider than a short line, so a left-aligned footer in the
+        # bottom-right corner sits a box-width in from the edge -- which is
+        # what "it was not all the way to the right" meant. The corner already
+        # says which edge was asked for.
+        align = _ALIGN_FOR_CORNER[args.corner] if args.align == "auto" else args.align
+
+        block_nid = mint(NodeKind.BLOCK)
+        line_nid = mint(NodeKind.SUMMARY)
+        frame_nid = mint(NodeKind.FRAME)
+
+        return [
+            # Content before the frame that renders it: the coverage gate
+            # rejects a frame whose `ref` does not resolve yet, and ops within
+            # a batch apply in order.
+            InsertNode(
+                parent="blocks",
+                index=-1,
+                node={
+                    "nid": block_nid,
+                    "role": "caption",
+                    "lines": [
+                        {"nid": line_nid, "text": args.value, "style": "plain"}
+                    ],
+                },
+                reason=args.reason,
+            ),
+            InsertNode(
+                parent=page.nid,
+                index=-1,
+                node={
+                    "nid": frame_nid,
+                    "ref": block_nid,
+                    "rect": rect,
+                    "rotation": 0.0,
+                    "autogrow": "height",
+                    "visible": True,
+                    "locked": False,
+                    # Hand-placed, so the reflow pass leaves it where it was
+                    # put. Without this the column would sweep a footer back
+                    # into the flow on the next measure.
+                    "pinned": True,
+                    "style": {"align": align},
+                },
+                reason=args.reason,
+            ),
+        ]
+
+    def label(self, args: AddTextBoxArgs) -> str:
+        return f"added a text box: {args.value[:40]}"
+
+
+#: Which way the words face in each corner. A box against the right edge whose
+#: text is left-aligned is not against the right edge as far as a reader is
+#: concerned.
+_ALIGN_FOR_CORNER: dict[str, str] = {
+    "top_left": "left",
+    "bottom_left": "left",
+    "top_center": "center",
+    "bottom_center": "center",
+    "top_right": "right",
+    "bottom_right": "right",
+}
+
+#: A corner box, in points. Wide enough for a line of small print and short
+#: enough not to cover anything; `autogrow` corrects the height once the
+#: browser has measured the text.
+_BOX = (200.0, 18.0)
+
+def _corner_rect(corner: str, paper: "Paper") -> dict[str, float]:
+    """Turn a named corner into a rectangle on this page.
+
+    Named rather than numeric, for the same reason `arrange` takes a preset:
+    the model cannot see the page, so a coordinate from it is a guess. A corner
+    is something it can mean.
+    """
+    width, height = _BOX
+    left = _PAGE_MARGIN
+    right = paper.width - _PAGE_MARGIN - width
+    top = _PAGE_MARGIN
+    bottom = paper.height - _PAGE_MARGIN - height
+    middle = (paper.width - width) / 2
+
+    x, y = {
+        "top_left": (left, top),
+        "top_right": (right, top),
+        "top_center": (middle, top),
+        "bottom_left": (left, bottom),
+        "bottom_right": (right, bottom),
+        "bottom_center": (middle, bottom),
+    }[corner]
+    return {"x": x, "y": y, "w": width, "h": height}
+
+
+class StyleElementArgs(BaseModel):
+    nid: str = Field(
+        description="Id of the box, image or shape, as listed under LAYOUT."
+    )
+    align: Literal["left", "center", "right"] | None = Field(
+        default=None, description="How text sits inside the box."
+    )
+    font_scale: float | None = Field(
+        default=None, ge=0.5, le=2.0, description="Text size, 1.0 being normal."
+    )
+    opacity: float | None = Field(default=None, ge=0.0, le=1.0)
+    padding: float | None = Field(default=None, ge=0.0, le=48.0)
+    reason: str = ""
+
+
+class StyleElement(ToolSpec):
+    """Named for the class, not the tool: ``SetElementStyle`` is already the
+    *op* this compiles to, and shadowing it here silently rebound every other
+    tool that emits one."""
+
+    name = "set_element_style"
+    tier = "A"
+    description = """
+    Change how a placed box looks: which way its text is aligned, its size on
+    the page, how solid it is. Never what it says -- use rewrite_text for that.
+    Pass only what you want changed.
+    """
+    Args = StyleElementArgs
+
+    def compile(self, args: StyleElementArgs, doc: StudioDoc) -> list[DocOp]:
+        patch = {
+            key: value
+            for key, value in (
+                ("align", args.align),
+                ("font_scale", args.font_scale),
+                ("opacity", args.opacity),
+                ("padding", args.padding),
+            )
+            if value is not None
+        }
+        if not patch:
+            raise ToolError(
+                "Say what to change: align, font_scale, opacity or padding."
+            )
+
+        return [SetElementStyle(nid=args.nid, patch=patch, reason=args.reason)]
+
+    def label(self, args: StyleElementArgs) -> str:
+        if args.align:
+            return f"aligned a box {args.align}"
+        return "restyled a box"
+
+
 # --- registry ---------------------------------------------------------------
 
 
@@ -936,8 +1814,16 @@ def _default_specs() -> list[ToolSpec]:
         SetEntryField(),
         SetPersonalInfo(),
         AddExperience(),
+        AddEducation(),
+        AddProject(),
+        AddSkillGroup(),
+        AddSection(),
+        AddShape(),
+        AddImage(),
         RemoveEntry(),
         SetEntryIdentity(),
+        AddTextBox(),
+        StyleElement(),
     ]
 
 

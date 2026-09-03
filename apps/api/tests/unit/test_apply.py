@@ -803,3 +803,89 @@ class TestAgentEllipsis:
         """Stripping it would produce an empty rewrite, which is a different
         and worse failure than a visibly silly one."""
         assert self.rewrite("…") == "…"
+
+
+class TestSkillsStayReadable:
+    """The skills group has a length past which more entries subtract."""
+
+    def test_a_duplicate_is_refused_by_name(self) -> None:
+        """Rejecting silently is not enough -- the model retries.
+
+        Told only "no", it proposed the same skill three more times and the turn
+        stalled with nothing added, so the message says what to do instead.
+        """
+        from studio.agent.tools import REGISTRY, ToolError
+
+        doc = StudioDoc(
+            skills=[
+                SkillGroup(
+                    nid="sgp_ggggg",
+                    key="technical",
+                    items=[SkillItem(nid="skl_ppppp", text="Python")],
+                )
+            ]
+        )
+        spec = REGISTRY.get("add_skill")
+        args = spec.Args(skill="python", group="technical", evidence="user_request")
+
+        with pytest.raises(ToolError, match="already in"):
+            spec.compile(args, doc)
+
+    def test_a_full_group_is_refused(self) -> None:
+        from studio.agent.tools import MAX_SKILLS_PER_GROUP, REGISTRY, ToolError
+
+        doc = StudioDoc(
+            skills=[
+                SkillGroup(
+                    nid="sgp_ggggg",
+                    key="technical",
+                    items=[
+                        SkillItem(nid=f"skl_{index:05d}", text=f"Skill {index}")
+                        for index in range(MAX_SKILLS_PER_GROUP)
+                    ],
+                )
+            ]
+        )
+        spec = REGISTRY.get("add_skill")
+        args = spec.Args(skill="Kubernetes", group="technical", evidence="user_request")
+
+        with pytest.raises(ToolError, match="as many as a reader takes in"):
+            spec.compile(args, doc)
+
+
+class TestSkillGroupMatching:
+    """The group key is whatever the résumé was imported with.
+
+    `add_skill` defaults its group to "technical". A real résumé came in with
+    the group named "technicalSkills", so every add_skill on that document
+    failed with "No skill group 'technical'" while the group sat right there in
+    the error message.
+    """
+
+    def _doc(self) -> StudioDoc:
+        return StudioDoc(
+            skills=[
+                SkillGroup(nid="sgp_aaaaa", key="technicalSkills", items=[]),
+                SkillGroup(nid="sgp_bbbbb", key="certificationsTraining", items=[]),
+            ]
+        )
+
+    def test_the_default_reaches_an_imported_group(self) -> None:
+        from studio.agent.tools import _match_group
+
+        assert _match_group("technical", self._doc()).key == "technicalSkills"
+
+    def test_case_and_punctuation_do_not_matter(self) -> None:
+        from studio.agent.tools import _match_group
+
+        assert _match_group("TECHNICAL", self._doc()).key == "technicalSkills"
+        assert (
+            _match_group("certifications & training", self._doc()).key
+            == "certificationsTraining"
+        )
+
+    def test_a_group_that_is_not_there_is_still_reported(self) -> None:
+        """Loose is not limitless -- a wrong guess still gets told."""
+        from studio.agent.tools import _match_group
+
+        assert _match_group("languages", self._doc()) is None

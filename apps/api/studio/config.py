@@ -31,6 +31,21 @@ class Settings(BaseSettings):
     llm_api_base: str = "http://localhost:11434"
     llm_api_key: str = ""
 
+    #: How many tokens a turn may generate.
+    #:
+    #: 2048 was too tight and produced the worst failure this app can have: a
+    #: reasoning model spends its whole budget inside its thinking block, is cut
+    #: off before it writes either a reply or a tool call, and the turn ends
+    #: having silently done nothing. Measured on qwen3:4b against a full-size
+    #: prompt, the same instruction needs about 1,500 generated tokens to reach
+    #: its first tool call and was still thinking at 2,048.
+    #:
+    #: 4096 is double the old ceiling and still inside the output cap of every
+    #: mainstream cloud provider, so raising it cannot start failing a request
+    #: that used to succeed. A model that runs away is caught by the turn's own
+    #: wall-clock budget rather than by this.
+    llm_max_tokens: int = 4096
+
     def resolved_database_url(self) -> str:
         if self.database_url:
             return self.database_url

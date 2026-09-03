@@ -177,6 +177,22 @@ class Done(Event):
     status: Literal["ok", "partial", "failed", "cancelled"] = "ok"
 
 
+class Drafting(Event):
+    """A tool call in flight, so the page can show the text arriving.
+
+    A picture, never a change: no op is compiled, no version moves, and a call
+    that never balances leaves the document exactly as it was. The patch that
+    follows is what actually edits anything.
+    """
+
+    type: Literal["drafting"] = "drafting"
+    call_id: str
+    #: A node id, or a field path like ``personal.phone``.
+    target: str
+    #: As much of the new text as has been written so far.
+    text: str
+
+
 class Heartbeat(Event):
     """Keeps intermediaries from closing an idle connection.
 

@@ -32,6 +32,19 @@ ENUMS = {
     "BulletStyle": ["bullet", "plain"],
     "SkillSource": ["original", "jd", "resume", "user"],
     "Tier": ["A", "B", "C"],
+    # Mirrors ``Template`` in studio/doc/schema.py. Named rather than inlined
+    # so the picker on the home screen cannot offer a value the server would
+    # reject.
+    "Template": [
+        "plain",
+        "ruled",
+        "compact",
+        "book",
+        "centered",
+        "banner",
+        "bold",
+        "quiet",
+    ],
     "RejectCode": [
         "unknown_node",
         "kind_mismatch",
@@ -255,6 +268,12 @@ export interface TextBlockNode {
 
 export interface StudioDoc {
   schema_version: 1 | 2;
+  /** Presentation only, and never touched by an op. */
+  template: Template;
+  /** True while nothing in the document is yet the user's own. */
+  scaffold: boolean;
+  /** Nodes the assistant invented while scaffolding, pending confirmation. */
+  unverified: NodeId[];
   personal: PersonalInfo;
   summary: TextNode | null;
   experience: ExperienceNode[];

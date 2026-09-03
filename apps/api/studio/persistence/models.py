@@ -207,3 +207,35 @@ class Asset(Base):
     filename: Mapped[str] = mapped_column(String(255), default="")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+
+class ChatMessage(Base):
+    """One turn of the sidebar conversation.
+
+    Stored on the server rather than in the browser because it is not only
+    something to redraw. Every turn sends the last few exchanges to the model,
+    and a chat that lived in memory meant a page reload silently emptied that
+    history -- the assistant would ask again for dates the person had already
+    given it, mid-task, with no sign anything had been lost.
+
+    Deliberately narrow: role, text, and how the turn ended. The tool chips the
+    sidebar draws while a turn runs are reconstructed by the client's event
+    reducer, and a second reduction here would be a copy of that logic drifting
+    out of step with it. What a tool call *did* is in the document and its op
+    log, which outlive any transcript.
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    document_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    #: How the turn this message belongs to ended: ok, partial, failed,
+    #: cancelled. Null for the user's own message, which does not end.
+    status: Mapped[str | None] = mapped_column(String(16), default=None)
+    turn_id: Mapped[str | None] = mapped_column(String(36), default=None)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

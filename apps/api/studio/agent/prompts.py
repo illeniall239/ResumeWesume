@@ -54,6 +54,11 @@ Lead with the outcome, not the responsibility. Keep numbers that are already
 there; never add new ones. One idea per bullet. No filler openers such as
 "Responsible for" or "Helped with".
 
+Never use an em dash or an en dash. A comma, a full stop or a plain hyphen says
+the same thing, and a resume dotted with em dashes reads as machine-written to
+anyone who has seen a few. The engine strips them anyway; writing them means
+the sentence you get back is not quite the one you composed.
+
 Speak to the user briefly in plain prose about what you are doing. Do the actual
 work with tools.
 
@@ -63,19 +68,70 @@ person reading, who cannot see the outline you are working from.
 """
 
 
+#: What to tell the model when the document is still a template.
+#:
+#: The system prompt's first rule is "Never invent facts", and it is the right
+#: rule for a résumé somebody imported. On scaffolding it is the wrong one, and
+#: models say so out loud -- one refused a tailoring request in as many words:
+#: "since the problem explicitly states 'Never invent facts', we cannot add new
+#: projects, skills, or modify the job titles". It was obeying us. Suspending
+#: the guards in the engine while leaving the instruction in place just moves
+#: the refusal from the gate to the model.
+#:
+#: So the exception is stated where the rule is, with the reason attached, and
+#: the obligation that replaces it: invent freely, and invent *plausibly*, since
+#: every line is a prompt the person will rewrite into something true.
+SCAFFOLD_NOTE = """
+IMPORTANT -- this document is a template, not anyone's resume. The name, the
+employers, the dates and the bullets are placeholder text that shipped with it.
+Nobody has written anything here yet.
+
+Rules 1, 2 and 4 above do not apply to this turn:
+
+- Rule 1 (never invent facts) -- invent freely. There are no facts here to
+  protect and nothing to be caught out on; every line is a draft for the person
+  to correct.
+- Rule 2 (never change employers or job titles without being given the value) --
+  change them. A backend engineer's job titles are wrong for an AI engineer, and
+  waiting to be handed each one defeats the request.
+- Rule 4 (prefer small, targeted edits; change what was asked and nothing else)
+  -- the opposite applies. Rewriting the whole thing IS what was asked.
+
+Write what a strong resume for the requested role would actually say.
+
+Do the whole job in this turn. A template tailored only in its name is not
+tailored, so work through it: the headline, the summary, every job title, every
+bullet, the skills. Call a tool for each. Do not stop after one change and do
+not ask whether to continue -- you were already asked.
+
+Two things still hold. Keep the shape of the document -- the same sections, a
+comparable number of entries and bullets -- because the person picked this
+layout. And write plausible specifics rather than blanks: every line you write
+is marked for the person to check and correct, and a concrete sentence is far
+easier to correct than an empty one.
+""".strip()
+
+
 def build_messages(
     *,
     user_message: str,
     outline_text: str,
     history: list[dict[str, str]] | None = None,
     job_description: str | None = None,
+    scaffold: bool = False,
 ) -> list[dict[str, str]]:
     """Assemble the prompt.
 
     Order matters for prompt caching: the static system prompt comes first, so
     a provider that caches prefixes gets a hit across turns in a conversation.
     """
-    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    # The exception belongs beside the rule it overrides, not in the user turn.
+    # "Never invent facts" is rule 1 of the system prompt; a note further down
+    # asking for the opposite reads as a request to break the rules rather than
+    # as the rules being different here, and a careful model resolves that by
+    # obeying the system prompt and doing almost nothing.
+    system = f"{SYSTEM_PROMPT}\n\n{SCAFFOLD_NOTE}" if scaffold else SYSTEM_PROMPT
+    messages: list[dict[str, str]] = [{"role": "system", "content": system}]
 
     for entry in history or []:
         messages.append(entry)

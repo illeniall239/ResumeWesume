@@ -6,6 +6,7 @@ the same repo, so both actors share one mutation path and one set of gates.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Header, HTTPException, Request, Response
@@ -15,7 +16,7 @@ from studio.doc.apply import OpContext
 from studio.doc.autolayout import layout
 from studio.doc.legacy import from_resume_data, to_resume_data
 from studio.doc.ops import DocOp
-from studio.doc.schema import DEFAULT_SECTIONS, StudioDoc
+from studio.doc.schema import DEFAULT_SECTIONS, StudioDoc, Template, starter_doc
 from studio.persistence.repo import DocumentRepo, VersionConflict
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -27,6 +28,18 @@ class CreateRequest(BaseModel):
     # export or parser produces.
     doc: dict[str, Any] | None = None
     resume_data: dict[str, Any] | None = None
+    # How the résumé is set. Chosen on the home screen before anything exists
+    # to choose it for, so it arrives here rather than as a later edit -- and
+    # it is applied after the document is built, so it holds whichever shape
+    # above produced it, an import included.
+    template: Template | None = None
+    # Start from a skeleton -- headings and one empty entry per section -- so a
+    # new document is something to fill in rather than a blank sheet. Opt-in so
+    # that an import, which arrives with its own content, is untouched.
+    starter: bool = False
+    # The content is a template's example text rather than anyone's résumé.
+    # Set by the gallery, which seeds a document with the card it was shown.
+    scaffold: bool = False
     # The text an import was parsed from, when this document came from a file.
     # Stored verbatim and never consulted during editing; it exists so a later
     # question about what the source actually said has an answer.
@@ -39,6 +52,10 @@ class DocumentResponse(BaseModel):
     version: int
     hash: str
     doc: StudioDoc
+    #: When it last changed, ISO-8601 and UTC. The register lists documents by
+    #: this rather than by how many writes they have taken: "3 hours ago" says
+    #: which résumé you were working on, and "173 writes" does not.
+    updated_at: datetime | None = None
 
 
 class ApplyRequest(BaseModel):
@@ -68,6 +85,7 @@ def _as_response(state: Any) -> DocumentResponse:
         version=state.version,
         hash=state.content_hash,
         doc=state.doc,
+        updated_at=getattr(state, "updated_at", None),
     )
 
 
@@ -93,8 +111,18 @@ async def create_document(request: Request, body: CreateRequest) -> DocumentResp
         doc = StudioDoc.model_validate(body.doc)
     elif body.resume_data is not None:
         doc = from_resume_data(body.resume_data)
+    elif body.starter:
+        doc = starter_doc(body.template or "plain")
     else:
         doc = StudioDoc(sections=list(DEFAULT_SECTIONS))
+
+    if body.template is not None:
+        doc.template = body.template
+    if body.scaffold:
+        # A document created from a gallery card carries the card's example
+        # content. Marking it says the words in it are placeholders, not claims
+        # about anybody -- which is what lets the assistant replace them.
+        doc.scaffold = True
 
     # A document without a page cannot be placed on a canvas. Laid out here, at
     # the one point every new document passes through, rather than lazily on
@@ -123,6 +151,60 @@ async def get_document(
         raise HTTPException(status_code=404, detail="Document not found")
     response.headers["ETag"] = state.etag
     return _as_response(state)
+
+
+@router.get("/{document_id}/revisions")
+async def get_revisions(request: Request, document_id: str) -> dict[str, Any]:
+    """The revision number, and the marks of the latest issue.
+
+    Read on page load, beside the conversation. Without it a reload cleared the
+    clouds and their readings while the chat came back -- the record of what
+    changed on weaker footing than the dialogue about it, which is exactly the
+    wrong way round.
+    """
+    state = await _repo(request).get(document_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return await _repo(request).revisions(document_id)
+
+
+@router.get("/{document_id}/messages")
+async def get_conversation(request: Request, document_id: str) -> dict[str, Any]:
+    """The sidebar conversation for this document, oldest first.
+
+    Read on page load. A chat that lived only in the browser was not merely
+    redrawn empty on reload -- the history sent to the model came from it, so a
+    refresh silently wiped the assistant's memory of the exchange it was in the
+    middle of.
+    """
+    state = await _repo(request).get(document_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    messages = await _repo(request).conversation(document_id)
+    return {
+        "messages": [
+            {
+                "id": str(message.id),
+                "role": message.role,
+                "text": message.text,
+                "status": message.status,
+            }
+            for message in messages
+        ]
+    }
+
+
+@router.delete("/{document_id}/messages", status_code=204)
+async def clear_conversation(request: Request, document_id: str) -> None:
+    """Forget the conversation, leaving the document untouched.
+
+    The transcript is the only thing removed: edits the assistant made are the
+    document's own history and are undone through the op log, not by deleting
+    what was said about them.
+    """
+    await _repo(request).clear_conversation(document_id)
 
 
 @router.get("/{document_id}/legacy")
@@ -190,6 +272,30 @@ async def revert_document(
         state = await _repo(request).revert(document_id, body.checkpoint_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="Checkpoint not found") from None
+    return _as_response(state)
+
+
+class ConfirmRequest(BaseModel):
+    """Which invented lines the person has checked. Empty means all of them."""
+
+    nids: list[str] = Field(default_factory=list)
+
+
+@router.post("/{document_id}/confirm", response_model=DocumentResponse)
+async def confirm_document(
+    request: Request, document_id: str, body: ConfirmRequest
+) -> DocumentResponse:
+    """Accept text the assistant invented while the document was scaffolding.
+
+    Confirming is a statement about truth, not about style, so it clears the
+    mark and nothing else -- the words are untouched. It also ends the
+    scaffolding: a document whose claims someone has read and accepted is that
+    person's résumé, and every guarantee applies to it from here.
+    """
+    try:
+        state = await _repo(request).confirm_unverified(document_id, set(body.nids))
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Document not found") from None
     return _as_response(state)
 
 

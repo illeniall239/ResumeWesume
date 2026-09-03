@@ -24,6 +24,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
+from studio.agent import drafting
 from studio.llm.backend import ModelChunk, StreamEnd, TextDelta, ThinkingDelta, ToolCallDelta
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,8 @@ class PendingCall:
     # iteration hands litellm arguments it cannot parse ("Extra data: line 1
     # column 196"), which kills the turn. Observed against Ollama.
     payload: str = ""
+    #: The last draft reported, so an unchanged buffer is not re-emitted.
+    draft: "drafting.Draft | None" = None
 
     # Depth bookkeeping, updated incrementally so each fragment costs O(len)
     # rather than rescanning the whole buffer.
@@ -94,6 +97,16 @@ class AssembledCall:
 
 
 @dataclass(frozen=True)
+class CallProgress:
+    """A tool call mid-flight: what it is aimed at, and what it says so far."""
+
+    call_id: str
+    name: str
+    target: str
+    text: str
+
+
+@dataclass(frozen=True)
 class TextEvent:
     text: str
 
@@ -109,7 +122,9 @@ class StreamFinished:
     usage: dict[str, Any]
 
 
-AssemblerEvent = TextEvent | ThinkingEvent | AssembledCall | StreamFinished
+AssemblerEvent = (
+    TextEvent | ThinkingEvent | CallProgress | AssembledCall | StreamFinished
+)
 
 
 @dataclass
@@ -160,6 +175,18 @@ class ToolCallAssembler:
         # that index is a provider artefact and must not corrupt it.
         if chunk.arguments and not pending.fired:
             pending.feed(chunk.arguments)
+            # The call is still being written. Report what it says so far so
+            # the page can show the text arriving rather than appearing whole
+            # a second later. Nothing is decided here and nothing is applied.
+            draft = drafting.read(pending.buffer, pending.name)
+            if draft is not None and draft != pending.draft:
+                pending.draft = draft
+                yield CallProgress(
+                    call_id=pending.id or f"call_{pending.index}",
+                    name=pending.name,
+                    target=draft.target,
+                    text=draft.text,
+                )
 
         # Fire as soon as the arguments close. Waiting for the stream to end
         # would batch every edit in a turn into one visible jump.

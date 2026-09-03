@@ -39,6 +39,15 @@ _EMBEDDED_PATTERNS = [
     re.compile(r"```(?:json|tool_call)?\s*(\{.*?\})\s*```", re.DOTALL),
 ]
 
+# A tool named, then its arguments, with no JSON envelope around either:
+#
+#     set_personal_info: {"field": "name", "value": "Rao Muhammad Hamza"}
+#
+# Seen from reasoning-tuned models, which finish by presenting the call as a
+# conclusion rather than making it. The name must be a real tool and the object
+# must parse, which is what keeps this from firing on ordinary prose.
+_NAMED_CALL = re.compile(r"([a-zA-Z_][\w.]{2,})\s*[:=]\s*(\{.*?\})", re.DOTALL)
+
 # A bare object mentioning a tool by name, with no wrapper at all.
 _BARE_CALL = re.compile(
     r'\{\s*"(?:name|tool|function)"\s*:\s*"([\w.-]+)"\s*,\s*'
@@ -144,11 +153,39 @@ def _unwrap_double_encoded(value: dict[str, Any]) -> dict[str, Any]:
     return value
 
 
+#: LaTeX a reasoning model wraps its conclusion in, and what it means without
+#: the escaping. A maths-tuned model presents its answer as a boxed expression
+#: with every underscore and brace escaped, so a real call arrives looking like
+#:
+#:     $$\boxed{set\_personal\_info: \{"name": "..."\}}$$
+#:
+#: which matches none of the patterns above and parses as no JSON. The escapes
+#: carry no meaning of their own -- they exist to survive a LaTeX renderer -- so
+#: dropping them costs nothing and turns the line back into something readable.
+_LATEX_ARTIFACTS = (
+    (r"\boxed", " "),
+    (r"\text", " "),
+    (r"\_", "_"),
+    (r"\{", "{"),
+    (r"\}", "}"),
+    (r"\"", '"'),
+    ("$$", " "),
+)
+
+
+def _unlatex(text: str) -> str:
+    """Strip LaTeX escaping so the patterns above can read the line."""
+    for artifact, plain in _LATEX_ARTIFACTS:
+        text = text.replace(artifact, plain)
+    return text
+
+
 def extract_embedded_calls(text: str, known_tools: set[str]) -> list[SalvagedCall]:
     """Find tool calls a model wrote into its prose."""
     if not text or "{" not in text:
         return []
 
+    text = _unlatex(text)
     found: list[SalvagedCall] = []
     seen: set[str] = set()
 
@@ -175,6 +212,21 @@ def extract_embedded_calls(text: str, known_tools: set[str]) -> list[SalvagedCal
             if key not in seen:
                 seen.add(key)
                 found.append(SalvagedCall(name, arguments, via="bare"))
+
+    # Last, and only for names the registry actually knows: this pattern is the
+    # loosest of the three, so anything the stricter ones already found is
+    # deduplicated away before it runs.
+    for match in _NAMED_CALL.finditer(text):
+        name = match.group(1)
+        if name not in known_tools:
+            continue
+        arguments = repair_json(match.group(2))
+        if not isinstance(arguments, dict):
+            continue
+        key = f"{name}:{json.dumps(arguments, sort_keys=True)}"
+        if key not in seen:
+            seen.add(key)
+            found.append(SalvagedCall(name, arguments, via="named"))
 
     if found:
         logger.info("Recovered %s tool call(s) from message content", len(found))

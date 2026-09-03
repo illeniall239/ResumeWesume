@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
+from studio.agent.worklist import is_scope_probe
 from studio.llm.backend import (
     BackendError,
     ChatBackend,
@@ -53,6 +54,10 @@ class ScriptedBackend(ChatBackend):
         self._fail_with = fail_with
         # Recorded for assertions: what the agent actually sent.
         self.received: list[dict[str, Any]] = []
+        #: What the scope classifier gets back. Most scripts are a targeted edit
+        #: and a sign-off, so one part is the default; a test exercising the
+        #: whole-document pass names several and scripts the rounds.
+        self.scope_answer = "BULLETS"
 
     @property
     def calls(self) -> int:
@@ -74,8 +79,25 @@ class ScriptedBackend(ChatBackend):
                 "tools": [tool["function"]["name"] for tool in tools or []],
                 "tool_choice": tool_choice,
                 "think": think,
+                # Recorded so a test can hold the turn budget to the setting.
+                # It is not a detail: too small a budget cuts a reasoning model
+                # off before it writes a tool call, and the turn silently does
+                # nothing.
+                "max_tokens": max_tokens,
             }
         )
+
+        # The scope question is not a round of the conversation being scripted,
+        # so it is answered here and the script stays where it was -- otherwise
+        # every test spends its first scripted turn on a handful of labels.
+        #
+        # Matched on the prompt itself, not on "a call with no tools": résumé
+        # ingest parses sections with tool-free calls too, and the looser test
+        # silently answered ten of those.
+        if is_scope_probe(messages):
+            yield TextDelta(text=self.scope_answer)
+            yield StreamEnd(finish_reason="stop")
+            return
 
         if self._fail_with is not None:
             raise self._fail_with

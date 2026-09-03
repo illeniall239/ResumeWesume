@@ -36,3 +36,14 @@ packages/contracts/.cache/
 # OS
 .DS_Store
 Thumbs.db
+
+# Impeccable working state. The direction contract (surfaces/), the build
+# record (build/) and critique snapshots are history worth keeping; these two
+# are not -- `questions/` is a decision-page server's scratch log, and
+# `review/` is regenerable screenshot evidence, several hundred KB a round.
+.impeccable/questions/
+.impeccable/review/
+
+# Session state for an in-progress design run, not an artifact of one. The
+# critique and surface notes beside it are durable and are tracked.
+.impeccable/build/

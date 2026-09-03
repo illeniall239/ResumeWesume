@@ -418,6 +418,23 @@ def apply_ops(
 
 
 def _touched(op: DocOp) -> list[str]:
+    """The node this op is about, for marks, guards and the busy check.
+
+    An insert is about the node being *added*, not the list it goes into. Read
+    from ``parent`` -- which is what the op carries at the top level -- the
+    revision row for an added bullet pointed at "experience" or "blocks",
+    neither of which is a node with text, so the row rendered "Removed" for a
+    line that had just been created.
+
+    ``parent`` remains the fallback for an insert whose node arrives without an
+    id, which the schema gate rejects a moment later anyway.
+    """
+    node = getattr(op, "node", None)
+    if isinstance(node, dict):
+        nid = node.get("nid")
+        if isinstance(nid, str) and nid:
+            return [nid]
+
     for attribute in ("nid", "parent", "target", "key"):
         value = getattr(op, attribute, None)
         if isinstance(value, str) and value:
@@ -650,10 +667,20 @@ def _do_set_field(doc: StudioDoc, index: NodeIndex, op: SetField) -> RejectedOp 
             f"{owner} is a layout element; use set_geometry or set_element_style",
         )
     if attribute not in type(location.node).model_fields:
+        # Naming the alternatives, because a rejection that only says "no" gets
+        # retried unchanged. Asked to retarget a résumé, a model reached for
+        # `role`, was told exp has no field 'role', tried `role` again, and the
+        # turn stalled out having changed nothing -- with the field it wanted,
+        # `title`, sitting one line away in the model it could not see.
+        offered = ", ".join(
+            name
+            for name in type(location.node).model_fields
+            if name not in {"nid", "kind"} and not name.startswith("_")
+        )
         return _reject(
             op,
             RejectCode.INVALID_ARGS,
-            f"{location.kind.value} has no field {attribute!r}",
+            f"{location.kind.value} has no field {attribute!r}. It has: {offered}",
         )
     current = getattr(location.node, attribute)
     if not _matches(current, op.expect):

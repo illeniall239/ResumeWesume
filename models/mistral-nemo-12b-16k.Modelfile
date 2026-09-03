@@ -1,0 +1,13 @@
+# mistral-nemo:12b with a context that holds a whole turn.
+#
+# Nemo is trained for 128k, but Ollama still serves it at 4096 unless told
+# otherwise. 16384 is chosen rather than the full 128k because the KV cache is
+# resident VRAM: at 7.1 GB of weights on a 12 GB card, 16k leaves comfortable
+# headroom, and this app's turns do not need more.
+#
+# Nemo does not emit a reasoning block, so its whole generation budget goes on
+# the answer -- which is the failure mode that makes a small reasoning model
+# unusable here.
+FROM mistral-nemo:12b
+
+PARAMETER num_ctx 16384

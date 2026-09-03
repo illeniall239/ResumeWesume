@@ -27,6 +27,7 @@ because of one bad call.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -38,22 +39,32 @@ from pydantic import BaseModel, ValidationError
 
 from studio.agent.assembler import (
     AssembledCall,
+    CallProgress,
     StreamFinished,
     TextEvent,
     ThinkingEvent,
     ToolCallAssembler,
 )
 from studio.agent.budget import BudgetExceeded, TurnBudget
-from studio.agent.context import find, full_section, outline
+from studio.agent.context import find, full_section, outline, uploads
 from studio.agent.grounding import Grounder
 from studio.agent.prompts import build_messages, repair_message
+from studio.agent.prose import ProseStream
 from studio.agent.salvage import (
     closest_tool,
     coerce_arguments,
     extract_embedded_calls,
     repair_json,
 )
+from studio.agent import typography
 from studio.agent.tools import REGISTRY, ToolError, ToolRegistry, ToolSpec, tiers_for_message
+from studio.agent.worklist import (
+    WHOLE_DOCUMENT_PARTS,
+    Worklist,
+    classify_parts,
+    plan_for,
+)
+from studio.config import settings
 from studio.doc.apply import OpContext
 from studio.doc.index import NodeIndex
 from studio.doc.ops import DocOp
@@ -104,6 +115,16 @@ class TurnRunner:
         self._backend = backend
         self._registry = registry or REGISTRY
         self._budget = budget or TurnBudget()
+        # Set per turn from the document. A runner handles one turn at a time,
+        # which is what makes this safe to hold here rather than thread through
+        # every execute path.
+        self._scaffolding = False
+        #: What used to stop a turn and now gets written down instead: skills
+        #: with no support anywhere in the résumé, and edits to the person's own
+        #: identity or history. Neither blocks anything. Both are reported once,
+        #: over a finished document.
+        self._unsupported: list[str] = []
+        self._identity_changes: list[str] = []
 
     async def run(self, request: TurnRequest, channel: TurnChannel) -> TurnResult:
         started = time.monotonic()
@@ -123,7 +144,22 @@ class TurnRunner:
             jd_keywords=_keywords(request.job_description),
         )
 
-        tiers = tiers_for_message(request.message)
+        # Scaffolding is not somebody's résumé, so the guards that protect one
+        # are suspended here and only here. Every tier is granted and grounding
+        # is not enforced, because "Alex Morgan" is not a person and the bullets
+        # are not claims -- refusing to invent is refusing to do the only thing
+        # being asked. Everything written under this is marked; see
+        # ``unverified``.
+        scaffolding = base_doc.scaffold
+        self._scaffolding = scaffolding
+        self._unsupported = []
+        self._identity_changes = []
+        if scaffolding:
+            # Lifts only the runaway-rewrite cap; every other limit stands.
+            self._budget = self._budget.for_scaffold()
+        tiers = {"R", "A", "B", "C"} if scaffolding else tiers_for_message(
+            request.message
+        )
         schemas = self._registry.schemas(tiers)
 
         checkpoint_id = await self._repo.checkpoint(
@@ -140,17 +176,37 @@ class TurnRunner:
             )
         )
 
+        # Only when there are any: a résumé with no pictures pays nothing for
+        # the capability, which is almost every résumé.
+        outline_text = outline(base_doc)
+        listing = uploads(await self._repo.list_assets(request.document_id))
+        if listing:
+            outline_text = f"{outline_text}\n\n{listing}"
+
         messages = build_messages(
             user_message=request.message,
-            outline_text=outline(base_doc),
+            outline_text=outline_text,
             history=request.history,
             job_description=request.job_description,
+            scaffold=scaffolding,
         )
 
         applied_total = 0
         rejected_total = 0
         status = "ok"
         repairs_per_call: dict[str, int] = {}
+        # Which sections the request is about, asked of the model as an
+        # enumeration rather than a label -- the difference between 12/12 and
+        # 6/12 on a 12B model. Started here and awaited after the first round,
+        # so it runs while that round streams and costs no wall-clock time.
+        parts_task = asyncio.create_task(
+            classify_parts(self._backend, request.message)
+        )
+        worklist: Worklist | None = None
+        nudged_key: str | None = None
+        # What the assistant says, with a blank line between the thought it had
+        # before it started working and the one it had after.
+        prose = ProseStream(channel.emit)
 
         try:
             while True:
@@ -160,15 +216,29 @@ class TurnRunner:
                 assembler = ToolCallAssembler()
                 tool_messages: list[dict[str, Any]] = []
                 executed_any = False
+                applied_this_round = 0
+                # A round is an utterance: the model spoke, did some work, and
+                # is speaking again.
+                prose.new_utterance()
 
                 async for chunk in self._backend.stream(
-                    messages, tools=schemas or None
+                    messages, tools=schemas or None, max_tokens=settings.llm_max_tokens
                 ):
                     channel.raise_if_cancelled()
 
                     for event in assembler.feed(chunk):
                         if isinstance(event, TextEvent):
-                            channel.emit(ev.AssistantDelta(text=event.text))
+                            prose.say(event.text)
+                        elif isinstance(event, CallProgress):
+                            # Shown, not applied. The edit lands when the call
+                            # balances, a moment later.
+                            channel.emit(
+                                ev.Drafting(
+                                    call_id=event.call_id,
+                                    target=event.target,
+                                    text=event.text,
+                                )
+                            )
                         elif isinstance(event, ThinkingEvent):
                             channel.emit(ev.ThinkingDelta(text=event.text))
                         elif isinstance(event, AssembledCall):
@@ -182,9 +252,34 @@ class TurnRunner:
                                 repairs_per_call,
                             )
                             applied_total += applied
+                            applied_this_round += applied
                             rejected_total += rejected
                             tool_messages.append(result_message)
                         elif isinstance(event, StreamFinished):
+                            # Cut off mid-answer rather than finished.
+                            #
+                            # A reasoning model can spend its whole generation
+                            # budget inside its thinking block and stop before
+                            # it writes anything -- no reply and no tool call.
+                            # The provider says so plainly, and until now that
+                            # signal was read into the assembler and dropped,
+                            # so the turn ended looking like the model had
+                            # simply chosen to do nothing. It is the difference
+                            # between "it decided not to" and "it never got to
+                            # the answer", and only one of those is worth the
+                            # user retrying.
+                            if event.finish_reason == "length":
+                                channel.emit(
+                                    ev.Warning(
+                                        source="truncated",
+                                        message=(
+                                            "The model was cut off before it "
+                                            "finished: it used its whole "
+                                            "response budget and stopped "
+                                            "mid-answer."
+                                        ),
+                                    )
+                                )
                             channel.emit(
                                 ev.Usage(
                                     prompt_tokens=event.usage.get("prompt_tokens", 0),
@@ -204,6 +299,7 @@ class TurnRunner:
                         leftover, request, channel, ledger, grounder, repairs_per_call
                     )
                     applied_total += applied
+                    applied_this_round += applied
                     rejected_total += rejected
                     tool_messages.append(result_message)
 
@@ -222,22 +318,95 @@ class TurnRunner:
                             call, request, channel, ledger, grounder, repairs_per_call
                         )
                         applied_total += applied
+                        applied_this_round += applied
                         rejected_total += rejected
                         tool_messages.append(result_message)
 
-                if not executed_any:
+                # A round that changed something resets the stall counter, so a
+                # turn working steadily through a resume runs as long as it
+                # needs to. Only rounds that change nothing count against it.
+                self._budget.end_iteration(applied_this_round)
+
+                if parts_task is not None:
+                    parts = await parts_task
+                    parts_task = None
+                    # Only the count. Asked which parts "tailor this resume for
+                    # an AI engineer" touches, the model names four and omits
+                    # BULLETS -- enough to know the request is broad, and not a
+                    # description of the work. Building the list from those four
+                    # produced a résumé with a new headline over the old job's
+                    # bullets. A narrow request names one part, gets no list,
+                    # and ends when the model stops, exactly as before.
+                    if len(parts) >= WHOLE_DOCUMENT_PARTS:
+                        worklist = plan_for(base_doc)
+
+                if worklist is not None:
+                    # The budget already accumulates every nid the turn has
+                    # touched and marking is cumulative, so this needs no
+                    # per-round bookkeeping. Done before anything is settled, so
+                    # an item the model actually did is recorded as done rather
+                    # than passed over.
+                    worklist.mark(sorted(self._budget.touched))
+
+                # Every item is offered once. Whatever the model did with the
+                # offer -- the edit, a different edit, or a sentence saying why
+                # not -- the turn moves on. Re-asking made a whole tailoring do
+                # nothing: the identical nudge went out twice, and a model that
+                # has already answered a question answers the repeat with
+                # silence, three times, until the stall counter ended the turn.
+                if worklist is not None and nudged_key:
+                    if nudged_key not in worklist.done:
+                        worklist.settle(nudged_key)
+                    if not executed_any:
+                        worklist.note_silence()
+                    if worklist.abandoned:
+                        # Silence three rounds running means the request was
+                        # narrower than the list assumed. Stop offering; the turn
+                        # then ends when the model stops, as it did before.
+                        worklist = None
+
+                outstanding = worklist.remaining() if worklist else []
+
+                # A turn ends when the model stops calling tools *and* there is
+                # nothing left on the list. Without that second half a model
+                # that announces "here is your tailored resume" after one edit
+                # ends the turn on its own say-so, which is the whole failure
+                # this list exists to correct.
+                if not executed_any and not outstanding:
                     break
 
                 messages.append(assembler.assistant_message())
                 messages.extend(tool_messages)
 
+                if outstanding:
+                    nudged_key = outstanding[0].key
+                    messages.append(
+                        {"role": "user", "content": worklist.nudge()}  # type: ignore[union-attr]
+                    )
+                else:
+                    nudged_key = None
+
+            # Said once, on a turn that ran to completion. The user is judging a
+            # finished document with one undo behind it, rather than a
+            # half-rewritten one with an apology attached.
         except Cancelled:
             status = "cancelled"
+
         except BudgetExceeded as limit:
             logger.info("Turn %s hit the %s budget", channel.turn_id, limit.limit)
-            channel.emit(
-                ev.Warning(source="budget", message=str(limit))
-            )
+            # "Some changes could not be applied" is the wrong thing to tell
+            # someone whose turn attempted no change at all. A turn that spends
+            # every round reading has a different problem and a different
+            # remedy, and the two read identically without this.
+            message = str(limit)
+            if applied_total == 0 and rejected_total == 0:
+                message += (
+                    " Nothing was changed: the assistant spent the turn looking"
+                    " things up rather than editing. Naming what to change --"
+                    " a section, or words that appear in the document -- usually"
+                    " settles it."
+                )
+            channel.emit(ev.Warning(source="budget", message=message))
             status = "partial"
         except BackendError as error:
             channel.emit(ev.ErrorEvent(code="provider_error", message=str(error)))
@@ -251,6 +420,47 @@ class TurnRunner:
                 )
             )
             status = "failed"
+        finally:
+            # A turn that ends in its first round -- cancelled, or the model
+            # errored -- leaves the classification in flight. Nothing awaits it
+            # after this point, and an orphaned task logs a warning at exit.
+            if parts_task is not None:
+                parts_task.cancel()
+
+        # Outside the try, because a turn that ended at the wall clock or on a
+        # provider error still changed the document, and what it changed is
+        # exactly what somebody needs to be told about. Emitted once, over a
+        # finished document with one undo behind it -- these three replaced a
+        # cap and two refusals, and each names what to look at rather than what
+        # was prevented.
+        for notice in self._budget.review(len(NodeIndex(base_doc))):
+            channel.emit(ev.Warning(source="scale", message=notice))
+
+        if self._unsupported:
+            skills = ", ".join(dict.fromkeys(self._unsupported))
+            channel.emit(
+                ev.Warning(
+                    source="grounding",
+                    message=(
+                        f"Added without finding support in your resume: {skills}. "
+                        "Keep them only if they are true -- you will be asked "
+                        "about them."
+                    ),
+                )
+            )
+
+        if self._identity_changes:
+            channel.emit(
+                ev.Warning(
+                    source="identity",
+                    message=(
+                        "Changed without being named in your instructions: "
+                        + ", ".join(dict.fromkeys(self._identity_changes))
+                        + ". These are claims about your history -- worth "
+                        "checking before you send it."
+                    ),
+                )
+            )
 
         final = await self._finalise(request, base_doc, ledger, channel)
 
@@ -354,36 +564,46 @@ class TurnRunner:
         if name in _READ_ONLY:
             return 0, 0, self._read(name, args, doc, call.call_id)
 
-        if spec.tier == "B" and name == "add_skill":
+        # Grounding used to reject an ungrounded skill outright. It now records
+        # one. The rejection was the engine overruling a request the person had
+        # already made in plain words -- and it overruled the model too, which
+        # can see the whole résumé and knows perfectly well whether Kubernetes
+        # is a fair claim for somebody who ran the cluster migration. What the
+        # engine can do that neither of them can is remember exactly which lines
+        # went in without support and show them for checking, which is the
+        # review that was actually wanted.
+        if spec.tier == "B" and name == "add_skill" and not self._scaffolding:
             verdict = grounder.check(args.skill, args.evidence)  # type: ignore[attr-defined]
             if not verdict.ok:
-                return self._reject(
-                    call, channel, "not_grounded", verdict.detail, spec=spec
-                )
+                self._unsupported.append(args.skill)  # type: ignore[attr-defined]
 
-        if spec.tier == "C" and not self._consented(name, args, request):
-            consent_id = uuid.uuid4().hex
-            channel.emit(
-                ev.ConfirmRequired(
-                    call_id=call.call_id,
-                    tool=name,
-                    args=args.model_dump(mode="json"),
-                    risk=_risk_of(name),
-                    consent_id=consent_id,
-                )
-            )
-            return (
-                0,
-                0,
-                _tool_message(
-                    call.call_id,
-                    "Waiting for the user to confirm this change. Tell them what you "
-                    "are about to do and why, then stop.",
-                ),
-            )
+        # Consent used to stop here and ask. The dialog was the wrong shape for
+        # the request it interrupted: somebody who says "retarget this for data
+        # science" has already answered the question, and being asked it four
+        # more times mid-turn is the assistant refusing to believe them.
+        #
+        # What made asking first look necessary was the fear of a change that
+        # could not be taken back, and that fear is unfounded here -- the whole
+        # turn is one checkpoint, so a single undo puts every one of these back.
+        # So the change is made, recorded, and shown afterwards: the person
+        # judges a finished résumé instead of authorising edits one at a time
+        # against a document they cannot see yet.
+        if (
+            spec.tier == "C"
+            and not self._scaffolding
+            and not _was_asked_for(args, request)
+        ):
+            self._identity_changes.append(spec.label(args))
 
         try:
-            ops: list[DocOp] = spec.compile(args, doc)
+            # Cleaned here, at the one point every tool funnels through on its
+            # way to the document -- so a tool added later is covered without
+            # anyone remembering the rule exists. Only the assistant's words:
+            # a dash somebody typed themselves is a choice, and this never sees
+            # a direct edit.
+            ops: list[DocOp] = [
+                typography.clean_op(op) for op in spec.compile(args, doc)
+            ]
         except ToolError as error:
             return self._reject(
                 call, channel, error.code, str(error), spec=spec
@@ -410,7 +630,6 @@ class TurnRunner:
             ledger.grant_many(spec.grants(args, doc))
             ledger.grant_many(_grants_from_ops(applied))
             self._budget.record_ops(len(applied), touched)
-            self._budget.check_touch_ratio(len(NodeIndex(new_state.doc)))
 
             channel.emit(
                 ev.PatchApplied(
@@ -443,28 +662,52 @@ class TurnRunner:
                 _tool_message(call.call_id, f"Rejected: {rejected[0].code}. {detail}"),
             )
 
-        return (
-            len(applied),
-            len(rejected),
-            _tool_message(
-                call.call_id,
-                f"Applied {len(applied)} change(s)."
-                + (f" {len(rejected)} rejected." if rejected else ""),
-            ),
+        note = (
+            f"Applied {len(applied)} change(s)."
+            + (f" {len(rejected)} rejected." if rejected else "")
         )
+
+        # Adding a skill is the one edit whose next call depends on what the
+        # last one did, and the outline the model was given is from before the
+        # turn. Without this it proposes the skill it just added: TensorFlow
+        # went in, then came back four times against a rejection saying it was
+        # already there, and the turn stalled out.
+        if name == "add_skill":
+            listed = ", ".join(
+                item.text for group in new_state.doc.skills for item in group.items
+            )
+            note += f" Skills now: {listed}."
+
+        return (len(applied), len(rejected), _tool_message(call.call_id, note))
 
     def _read(
         self, name: str, args: BaseModel, doc: StudioDoc, call_id: str
     ) -> dict[str, Any]:
         if name == "find_text":
-            matches = find(doc, args.query, args.limit)  # type: ignore[attr-defined]
-            body = (
-                "\n".join(
+            query = args.query  # type: ignore[attr-defined]
+            matches = find(doc, query, args.limit)  # type: ignore[attr-defined]
+            if matches:
+                body = "\n".join(
                     f"[{match['nid']}] ({match['kind']}) {match['text']}"
                     for match in matches
                 )
-                or "No matches."
-            )
+            else:
+                # A miss used to answer "No matches." and nothing else, which is
+                # a dead end: the model knows no more than before it asked, so
+                # it rephrases and asks again. Six of those exhaust the round
+                # budget with no edit ever attempted -- an entire turn spent
+                # searching, which is what "Stopped after 6 rounds without
+                # settling" was reporting.
+                #
+                # A miss now answers the question actually being asked, which is
+                # "then which node do I edit?". Handing back the outline makes a
+                # second search pointless rather than tempting, and it is the
+                # same text the turn opened with, so it costs nothing to trust.
+                body = (
+                    f"No node matches {query!r}. Do not search again -- this is "
+                    "the whole document, and every id in it can be edited "
+                    "directly:\n\n" + outline(doc)
+                )
         else:
             section = args.section  # type: ignore[attr-defined]
             body = (
@@ -508,24 +751,6 @@ class TurnRunner:
                 )
 
         return 0, 1, _tool_message(call.call_id, f"Rejected: {code}. {detail}")
-
-    def _consented(
-        self, name: str, args: BaseModel, request: TurnRequest
-    ) -> bool:
-        """Whether a Tier C call may proceed without an explicit prompt.
-
-        Auto-approved only when the value being written literally appears in the
-        user's own message this turn. That is the difference between "change my
-        email to x@y.com" (they typed it, no prompt needed) and the model
-        deciding on its own what the address should be.
-        """
-        if f"{name}:{_consent_ref(name, args)}" in request.consent_tokens:
-            return True
-
-        value = getattr(args, "value", None) or getattr(args, "company", None)
-        if isinstance(value, str) and value.strip():
-            return value.strip().casefold() in request.message.casefold()
-        return False
 
     async def _finalise(
         self,
@@ -583,15 +808,6 @@ def _describe_validation(error: ValidationError) -> str:
     return "; ".join(parts)
 
 
-def _risk_of(name: str) -> str:
-    return {
-        "remove_entry": "This permanently deletes an entry.",
-        "set_personal_info": "This changes your contact details.",
-        "set_entry_identity": "This changes a factual claim about your history.",
-        "add_experience": "This adds a job to your history.",
-    }.get(name, "This is a significant change.")
-
-
 def _consent_ref(name: str, args: BaseModel) -> str:
     """What a confirmation is *for*.
 
@@ -624,6 +840,52 @@ def _grants_from_ops(applied: list[Any]) -> list[IntentGrant]:
             if isinstance(nid, str) and nid.startswith(("exp_", "edu_", "prj_")):
                 grants.append(IntentGrant(GrantScope.ENTRY_ADD, nid))
     return grants
+
+
+#: Argument fields that carry a claim about the person: who they are, where
+#: they worked, what they were called. Bullets and summaries are not here --
+#: those are wording, and rewording is what the assistant is for.
+_IDENTITY_FIELDS = (
+    "value",
+    "name",
+    "company",
+    "title",
+    "institution",
+    "degree",
+)
+
+
+def _was_asked_for(args: BaseModel, request: TurnRequest) -> bool:
+    """Whether the person named these values themselves.
+
+    The notice this feeds exists for identity edits nobody asked for -- a
+    tailoring turn that quietly retitles a job, or changes an employer. Fired on
+    every Tier C call it said the opposite of something useful: asked to add two
+    named jobs, it reported back that the turn had "changed your identity or
+    history", which is a warning about the instruction the person had just
+    typed.
+
+    The whole conversation counts, not just this message. Details arrive across
+    turns -- the employer in one, the dates in the next -- and checking only the
+    latest message would flag a job the person named two turns ago.
+
+    A removal names no values, so it is always reported. That is the most
+    consequential thing on this tier and the one worth reading twice.
+    """
+    values = [
+        getattr(args, field, None)
+        for field in _IDENTITY_FIELDS
+    ]
+    claimed = [
+        value.strip() for value in values if isinstance(value, str) and value.strip()
+    ]
+    if not claimed:
+        return False
+
+    said = " ".join(
+        [request.message, *(entry.get("content", "") for entry in request.history)]
+    ).casefold()
+    return all(value.casefold() in said for value in claimed)
 
 
 def _keywords(job_description: str | None) -> list[str]:

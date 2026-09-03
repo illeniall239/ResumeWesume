@@ -28,6 +28,25 @@ def _clip(text: str, limit: int = _SNIPPET) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def uploads(assets: list[Any]) -> str:
+    """The images this document holds, so the assistant can name one.
+
+    Appended to the prompt only when there are any -- which is almost never --
+    so a résumé with no pictures pays nothing for the capability. The assistant
+    cannot upload anything itself; these ids are the only images it may place.
+    """
+    if not assets:
+        return ""
+
+    lines = ["UPLOADS: images already on this resume, for `add_image`."]
+    for asset in assets:
+        lines.append(
+            f"  {asset.id} ({asset.mime.split('/')[-1]}, "
+            f"{asset.width}x{asset.height})"
+        )
+    return "\n".join(lines)
+
+
 def outline(doc: StudioDoc, *, section: str | None = None) -> str:
     """A compact, id-annotated view of the document."""
     lines: list[str] = []
@@ -183,7 +202,7 @@ def find(doc: StudioDoc, query: str, limit: int = 5) -> list[dict[str, str]]:
     model to find a node would make the search fail exactly when the model is
     already struggling.
     """
-    terms = {term for term in _tokens(query) if len(term) > 2}
+    terms = _tokens(query) - _STOPWORDS
     if not terms:
         return []
 
@@ -228,6 +247,23 @@ def find(doc: StudioDoc, query: str, limit: int = 5) -> list[dict[str, str]]:
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [payload for _, payload in scored[:limit]]
+
+
+#: Words carrying no signal in a search over a resume. Used instead of a
+#: minimum length, which is what this replaced.
+#:
+#: The length rule dropped every term of two characters or fewer, and a resume
+#: is full of two-character terms that are the whole point of the query: AI, ML,
+#: UX, QA, Go, R, C. Searching for the skill "Go" -- a word sitting in the
+#: document -- returned nothing, and so did "AI" for someone tailoring towards
+#: an AI role. A miss for a word that is genuinely absent is an answer; a miss
+#: for one that is present is a lie the caller cannot tell apart from it.
+_STOPWORDS = {
+    "a", "an", "and", "any", "are", "as", "at", "be", "by", "can", "for",
+    "from", "in", "is", "it", "its", "me", "my", "of", "on", "or", "our",
+    "that", "the", "their", "them", "then", "there", "these", "they", "this",
+    "to", "was", "were", "with", "you", "your",
+}
 
 
 def _tokens(text: str) -> set[str]:

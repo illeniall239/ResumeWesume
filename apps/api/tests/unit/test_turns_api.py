@@ -7,12 +7,14 @@ to the loop tests and fatal in the browser.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from studio.llm.backend import ModelSpec
+from studio.llm.backend import BackendError, ModelSpec
+from studio.llm.factory import ProviderConfig, Resolution
 from studio.llm.scripted import ScriptedBackend, call_tool, done, say, turn
 from studio.main import app
 from studio.persistence.providers import ProviderStore
@@ -38,9 +40,13 @@ SEED = {
 class StubFactory:
     """Stands in for the backend factory so no network is reachable.
 
-    Implements ``resolve`` as well as ``from_settings`` because the routers ask
-    for the *selected* model now, and a stub that only answers the older call
-    would let a real provider lookup run in a test.
+    Implements the whole surface the routers use -- ``from_settings``,
+    ``resolve``, and now ``effective`` plus ``build`` -- because the turn router
+    has to know *which provider* was chosen before it builds anything: a Claude
+    subscription runs a different harness and never streams through a backend at
+    all. A stub answering only the older calls let the real resolver run, which
+    on a developer machine with Claude Code signed in routed every test down the
+    subscription path.
     """
 
     def __init__(self, backend: ScriptedBackend) -> None:
@@ -50,6 +56,12 @@ class StubFactory:
         return self._backend
 
     async def resolve(self, store: object = None) -> ScriptedBackend:
+        return self._backend
+
+    async def effective(self, store: object = None) -> Resolution:
+        return Resolution(ProviderConfig(provider="scripted", model="test"), "")
+
+    def build(self, config: object = None) -> ScriptedBackend:
         return self._backend
 
 
@@ -293,3 +305,88 @@ class TestHealth:
             "/api/v1/health", headers={"X-Request-Id": "abc123"}
         )
         assert response.headers["x-request-id"] == "abc123"
+
+
+async def turn_finished() -> None:
+    """Wait for the turn task itself, not for a row to appear.
+
+    The transcript is written in the turn task's ``finally``, which runs just
+    after the response body ends -- the task outlives the request on purpose, so
+    an exchange is saved even when the client navigated away.
+
+    Awaiting the task rather than polling the database is not a style
+    preference. Polling ``conversation()`` every 10ms opened a session each
+    time, and against a shared in-memory SQLite connection that starved the
+    writer it was waiting for: the rows never appeared and the test failed
+    against working code.
+    """
+    tasks = [task for task in app.state.turns._tasks.values() if not task.done()]
+    for task in tasks:
+        await task
+
+
+class TestConversationSurvivesAReload:
+    """The transcript is stored on the server, not in the browser.
+
+    Not only so the sidebar can be redrawn. Every turn sends the last few
+    exchanges to the model, and a chat held in memory meant a page reload
+    silently emptied that history -- the assistant would ask again for dates it
+    had just been given, mid-task, with nothing on screen to say why.
+    """
+
+    async def test_a_turn_is_stored_and_read_back(self, harness) -> None:
+        client, repo = harness
+        created = await seed(client)
+        use_backend(ScriptedBackend([turn(say("Tightened it."), done("stop"))]))
+
+        await client.post(
+            "/api/v1/turns",
+            json={"document_id": created["id"], "message": "tighten my first bullet"},
+        )
+        await turn_finished()
+
+        stored = await client.get(f"/api/v1/documents/{created['id']}/messages")
+        messages = stored.json()["messages"]
+
+        assert [message["role"] for message in messages] == ["user", "assistant"]
+        assert messages[0]["text"] == "tighten my first bullet"
+        assert messages[1]["text"] == "Tightened it."
+        assert messages[1]["status"] == "ok"
+
+    async def test_the_users_words_are_kept_even_when_the_turn_fails(
+        self, harness
+    ) -> None:
+        """What they asked is part of the conversation whatever came back."""
+        client, repo = harness
+        created = await seed(client)
+        use_backend(ScriptedBackend([], fail_with=BackendError("provider down")))
+
+        await client.post(
+            "/api/v1/turns",
+            json={"document_id": created["id"], "message": "do the thing"},
+        )
+
+        await turn_finished()
+
+        stored = await repo.conversation(created["id"])
+        assert [message.text for message in stored] == ["do the thing"]
+
+    async def test_clearing_forgets_the_chat_and_keeps_the_document(
+        self, harness
+    ) -> None:
+        client, repo = harness
+        created = await seed(client)
+        await repo.add_messages(created["id"], [("user", "hello", None)])
+
+        cleared = await client.delete(f"/api/v1/documents/{created['id']}/messages")
+
+        assert cleared.status_code == 204
+        assert await repo.conversation(created["id"]) == []
+        # The resume itself is untouched: edits are undone through the op log,
+        # not by deleting what was said about them.
+        assert await repo.get(created["id"]) is not None
+
+    async def test_an_unknown_document_has_no_conversation(self, harness) -> None:
+        client, _ = harness
+        missing = await client.get("/api/v1/documents/nope/messages")
+        assert missing.status_code == 404

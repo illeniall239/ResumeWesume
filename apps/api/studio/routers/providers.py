@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from studio.config import settings
-from studio.llm import catalog
+from studio.llm import catalog, subscription
 from studio.llm.factory import ProviderConfig, health
 from studio.persistence.providers import ProviderStore, Selection
 
@@ -41,6 +41,14 @@ class ProviderInfo(BaseModel):
     id: str
     label: str
     needs_key: bool
+    #: Whether a turn could actually run on this provider right now.
+    #:
+    #: Computed here because the client cannot. "No key needed" means ready for
+    #: Ollama and means nothing for the Claude subscription, whose readiness is
+    #: a fact about this machine -- whether Claude Code is installed and signed
+    #: in. The rule `!needs_key || configured` gave the right answer for every
+    #: provider until one arrived that needs no key and can still be unusable.
+    ready: bool = False
     base_editable: bool
     note: str = ""
     default_api_base: str | None = None
@@ -77,15 +85,31 @@ async def read_catalog(request: Request) -> CatalogResponse:
     for provider in catalog.PROVIDERS.values():
         credential = stored.get(provider.id)
         redacted = credential.redacted() if credential else None
+
+        note = provider.note
+        configured = bool(redacted and redacted.configured)
+
+        # The one provider whose readiness is a fact about this machine rather
+        # than about a key we stored. Without this it renders as ready whenever
+        # it is listed -- there is no key to be missing -- and a turn then fails
+        # inside the SDK on a machine where nobody has ever run `claude`.
+        if provider.id == catalog.CLAUDE_CODE:
+            state = subscription.detect()
+            configured = state.available
+            note = state.detail
+
         providers.append(
             ProviderInfo(
                 id=provider.id,
                 label=provider.label,
                 needs_key=provider.needs_key,
                 base_editable=provider.base_editable,
-                note=provider.note,
+                note=note,
                 default_api_base=provider.default_api_base,
-                configured=bool(redacted and redacted.configured),
+                configured=configured,
+                ready=configured or not provider.needs_key
+                if provider.id != catalog.CLAUDE_CODE
+                else configured,
                 hint=redacted.hint if redacted else "",
                 api_base=redacted.api_base if redacted else None,
             )
@@ -165,6 +189,7 @@ async def put_credentials(
         id=provider.id,
         label=provider.label,
         needs_key=provider.needs_key,
+        ready=redacted.configured or not provider.needs_key,
         base_editable=provider.base_editable,
         note=provider.note,
         default_api_base=provider.default_api_base,

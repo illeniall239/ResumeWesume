@@ -28,7 +28,7 @@ from typing import Annotated, Any, Literal, Union
 
 from pydantic import BaseModel, Discriminator, Field, Tag, field_validator
 
-from studio.doc.nodes import NodeId
+from studio.doc.nodes import NodeId, NodeKind, mint
 
 SectionKey = Literal[
     "summary", "experience", "education", "projects", "skills", "custom"
@@ -36,6 +36,29 @@ SectionKey = Literal[
 
 SkillSource = Literal["original", "jd", "resume", "user"]
 BulletStyle = Literal["bullet", "plain"]
+
+#: How the résumé is set: type, rules, spacing and the shape of a section
+#: heading. Chosen when the document is created and stored on the document
+#: because the PDF is rendered server-side from it -- a template kept in the
+#: browser would print as whatever the default is.
+#:
+#: It is deliberately not reachable by any op, so the assistant cannot restyle
+#: someone's résumé. Tiers are derived from what an op touches, and there is no
+#: op that touches this.
+#:
+#: Every template changes presentation only. None of them reorder the DOM, so
+#: the text an ATS parser extracts is identical whichever is chosen -- which is
+#: what makes offering a choice here safe at all.
+Template = Literal[
+    "plain",
+    "ruled",
+    "compact",
+    "book",
+    "centered",
+    "banner",
+    "bold",
+    "quiet",
+]
 
 
 def _as_text(value: Any) -> str:
@@ -344,6 +367,28 @@ class StudioDoc(BaseModel):
     """The whole resume. Every mutation in the system produces one of these."""
 
     schema_version: Literal[1, 2] = 2
+    #: Presentation only, and never touched by an op. See ``Template``.
+    template: Template = "plain"
+    #: Whether nothing in this document is yet the user's own.
+    #:
+    #: A document started from a template is scaffolding: "Alex Morgan" is not
+    #: a person and the bullets are not claims. The engine's central promise --
+    #: never invent a fact about this person -- is exactly right for a résumé
+    #: somebody imported and exactly backwards here, where wholesale invention
+    #: is the entire point of asking. Without this the two are indistinguishable
+    #: and the guards fire on placeholder text.
+    #:
+    #: It ends at the first real edit: the moment the user types into the
+    #: document, or an assistant turn's changes land and are kept. From then on
+    #: the document is theirs and every guarantee applies unchanged.
+    scaffold: bool = False
+    #: Nodes written by the assistant while this was still scaffolding.
+    #:
+    #: Invented text is allowed here, but it may never be quiet about it: this
+    #: is a résumé, and the failure that matters is a person carrying a claim
+    #: into an interview that nobody ever checked. Marked until the user
+    #: confirms the line is true.
+    unverified: list[NodeId] = Field(default_factory=list)
     personal: PersonalInfo = Field(default_factory=PersonalInfo)
     summary: TextNode | None = None
     experience: list[ExperienceNode] = Field(default_factory=list)
@@ -361,6 +406,56 @@ class StudioDoc(BaseModel):
     # Overrides the derived reading order for the designed PDF. Only set when
     # the user has said the automatic order is wrong.
     reading_order: list[NodeId] | None = None
+
+
+def starter_doc(template: Template = "plain") -> "StudioDoc":
+    """A résumé to fill in, rather than an empty one.
+
+    What this exists to fix: creating a document with no content produced a
+    ``StudioDoc`` with no summary, no experience, no education and no skills,
+    which ``autolayout`` correctly turned into a single page carrying exactly
+    one frame -- the header. Opening it showed a blank sheet. Every section
+    renders only when it has something in it, so there was nothing to see and
+    nothing to type into, and picking a template landed on a page that made the
+    template look broken.
+
+    So the skeleton is real nodes with empty text. Empty text is not a
+    placeholder in the document -- the editor draws the hint from
+    ``data-placeholder`` precisely so a blur cannot commit it as a value -- and
+    a node with no text is an ordinary, valid node the person can click into
+    and start typing. It also means the chosen template is visible immediately,
+    because headings and entries exist to be set in it.
+
+    Deliberately one of each. A skeleton is a shape to follow, not a form to
+    empty out first: two blank jobs are not more helpful than one, and the
+    assistant adds the rest on request.
+    """
+
+    return StudioDoc(
+        template=template,
+        # Nothing here is the user's yet, so nothing here is a fact.
+        scaffold=True,
+        summary=TextNode(nid=mint(NodeKind.SUMMARY), text="", style="plain"),
+        experience=[
+            ExperienceNode(
+                nid=mint(NodeKind.EXPERIENCE),
+                bullets=[
+                    TextNode(nid=mint(NodeKind.BULLET), text="", style="bullet"),
+                    TextNode(nid=mint(NodeKind.BULLET), text="", style="bullet"),
+                ],
+            )
+        ],
+        education=[EducationNode(nid=mint(NodeKind.EDUCATION))],
+        skills=[
+            SkillGroup(
+                nid=mint(NodeKind.SKILL_GROUP),
+                key="technicalSkills",
+                label="Technical Skills",
+                items=[SkillItem(nid=mint(NodeKind.SKILL), text="", source="user")],
+            )
+        ],
+        sections=list(DEFAULT_SECTIONS),
+    )
 
 
 DEFAULT_SECTIONS: list[SectionMeta] = [

@@ -18,6 +18,7 @@ from studio.config import settings
 from studio.llm import catalog
 from studio.llm.backend import ChatBackend, ModelSpec, StreamEnd, TextDelta
 from studio.llm.litellm_backend import LiteLLMBackend, probe_supports_tools
+from studio.llm import subscription
 from studio.llm.resilience import CircuitBreaker
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle: persistence imports nothing here
@@ -91,14 +92,7 @@ class BackendFactory:
         return backend
 
     def from_settings(self) -> ChatBackend:
-        return self.build(
-            ProviderConfig(
-                provider=settings.llm_provider,
-                model=settings.llm_model,
-                api_base=settings.llm_api_base,
-                api_key=settings.llm_api_key,
-            )
-        )
+        return self.build(_default_config())
 
     async def effective(self, store: "ProviderStore | None") -> "Resolution":
         """What will actually run, and why, if it is not what was asked for.
@@ -110,12 +104,7 @@ class BackendFactory:
         which is exactly what it did, and is the worst kind of wrong, because
         the screen is confidently reporting the wrong model.
         """
-        default = ProviderConfig(
-            provider=settings.llm_provider,
-            model=settings.llm_model,
-            api_base=settings.llm_api_base,
-            api_key=settings.llm_api_key,
-        )
+        default = _default_config()
 
         if store is None:
             return Resolution(default, "")
@@ -136,9 +125,29 @@ class BackendFactory:
 
         credential = await store.get(selection.provider)
         api_key = credential.api_key if credential else ""
-        api_base = (
-            credential.api_base if credential else None
-        ) or provider.default_api_base
+
+        # A base the user typed always wins -- that is an explicit instruction
+        # to talk to a gateway. The provider's *default* is only forwarded when
+        # the provider has no address of its own, because that default exists
+        # to list models and litellm builds a completion URL differently from
+        # the listing one. Sending Gemini's listing base produced a 404 with an
+        # empty body; see ``Provider.routes_itself``.
+        override = credential.api_base if credential else None
+        api_base = override or (
+            None if provider.routes_itself else provider.default_api_base
+        )
+
+        # Chosen deliberately but no longer usable: the login expired, or this
+        # is a different machine. Saying so beats failing the turn with an SDK
+        # stack trace.
+        if selection.provider == catalog.CLAUDE_CODE:
+            state = subscription.detect()
+            if not state.available:
+                return Resolution(default, state.detail)
+            return Resolution(
+                ProviderConfig(provider=catalog.CLAUDE_CODE, model=selection.model),
+                "",
+            )
 
         if provider.needs_key and not api_key:
             logger.warning(
@@ -173,6 +182,34 @@ class BackendFactory:
 
     def clear(self) -> None:
         self._cache.clear()
+
+
+def _default_config() -> ProviderConfig:
+    """What to use when the user has not chosen anything.
+
+    A Claude subscription already signed in on this machine is preferred over
+    the configured local default, which is the whole point of "pick it up
+    automatically": somebody who pays for Claude should not have to find a
+    settings page to get the better model, and nothing has to be typed in for
+    it to work.
+
+    It is a default, not an override. An explicit selection is honoured even
+    when a subscription is sitting right there -- see ``effective``, which only
+    reaches this when ``selection`` is None.
+    """
+    state = subscription.detect()
+    if state.is_subscription:
+        logger.info("No provider selected; using the Claude login on this machine")
+        return ProviderConfig(
+            provider=catalog.CLAUDE_CODE, model=catalog.CLAUDE_CODE_DEFAULT
+        )
+
+    return ProviderConfig(
+        provider=settings.llm_provider,
+        model=settings.llm_model,
+        api_base=settings.llm_api_base,
+        api_key=settings.llm_api_key,
+    )
 
 
 async def health(backend: ChatBackend) -> dict[str, object]:

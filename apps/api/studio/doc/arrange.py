@@ -47,6 +47,10 @@ Preset = Literal[
     "center_on_page_horizontally",
     "center_on_page_vertically",
     "center_on_page",
+    "snap_page_left",
+    "snap_page_right",
+    "snap_page_top",
+    "snap_page_bottom",
     "match_width",
     "match_height",
 ]
@@ -63,6 +67,10 @@ PRESETS: tuple[str, ...] = (
     "center_on_page_horizontally",
     "center_on_page_vertically",
     "center_on_page",
+    "snap_page_left",
+    "snap_page_right",
+    "snap_page_top",
+    "snap_page_bottom",
     "match_width",
     "match_height",
 )
@@ -80,12 +88,25 @@ WORKS_ALONE: frozenset[str] = frozenset(
         "center_on_page_horizontally",
         "center_on_page_vertically",
         "center_on_page",
+        # Moving one box to an edge of the sheet. Without these the only answer
+        # to "push it further right" was `align_right`, which needs something to
+        # align *against* -- so a single footer could be placed and then never
+        # nudged, and the refusal was correct and useless.
+        "snap_page_left",
+        "snap_page_right",
+        "snap_page_top",
+        "snap_page_bottom",
     }
 )
 
 
 class ArrangeError(Exception):
     """The arrangement cannot be computed, in terms the model can act on."""
+
+
+#: The margin the PDF export passes to Chromium. Snapping to the paper's own
+#: edge would print at the very edge of the sheet or be trimmed off.
+_PAGE_MARGIN = 28.35
 
 
 class Paper(NamedTuple):
@@ -211,6 +232,26 @@ def compute(page: PageNode, preset: str, nids: list[str]) -> dict[str, Rect]:
             # rather than one axis winning.
             base = result.get(nid, rect)
             result[nid] = base.model_copy(update={"y": (paper.height - base.h) / 2})
+
+    if preset == "snap_page_left":
+        for nid, rect in chosen:
+            result[nid] = rect.model_copy(update={"x": _PAGE_MARGIN})
+
+    elif preset == "snap_page_right":
+        for nid, rect in chosen:
+            result[nid] = rect.model_copy(
+                update={"x": paper.width - _PAGE_MARGIN - rect.w}
+            )
+
+    elif preset == "snap_page_top":
+        for nid, rect in chosen:
+            result[nid] = rect.model_copy(update={"y": _PAGE_MARGIN})
+
+    elif preset == "snap_page_bottom":
+        for nid, rect in chosen:
+            result[nid] = rect.model_copy(
+                update={"y": paper.height - _PAGE_MARGIN - rect.h}
+            )
 
     if preset == "match_width":
         widest = max(rect.w for _, rect in chosen)

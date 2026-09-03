@@ -294,3 +294,63 @@ class TestChain:
         assert result.personal.email == "new@example.com"
         assert result.personal.phone == "+1-555-0142"
         assert result.experience[0].bullets[0].text == "Tightened."
+
+
+class TestABlankIsNotASkill:
+    """The guard that kept putting the empty slot back.
+
+    `starter_doc` ships one blank skill as the thing to click into. Filling it
+    removes the empty key from the group, which read as a skill dropped without
+    a request -- so the guard restored a copy of the blank it had just been rid
+    of. Every tailored résumé ended with a dot and no words after it, and
+    because a guard correction is written through `replace` it left no op
+    behind to explain why.
+    """
+
+    def _doc(self, *skills: str) -> StudioDoc:
+        return StudioDoc(
+            skills=[
+                SkillGroup(
+                    nid="sgp_ggggg",
+                    key="technical",
+                    items=[
+                        SkillItem(nid=f"skl_{index:05d}", text=text)
+                        for index, text in enumerate(skills)
+                    ],
+                )
+            ]
+        )
+
+    def test_filling_the_blank_slot_survives(self) -> None:
+        before = self._doc("")
+        after = self._doc("Python")
+        ledger = IntentLedger(turn_id="t1")
+        ledger.grant(IntentGrant(GrantScope.TEXT, "skl_00000"))
+
+        result, _ = run_guards(before, after, ledger)
+
+        assert [item.text for item in result.skills[0].items] == ["Python"]
+
+    def test_a_real_skill_is_still_restored(self) -> None:
+        """The guard's actual job, unchanged: losing "Python" is a real loss."""
+        before = self._doc("Python")
+        after = self._doc()
+
+        result, reports = run_guards(before, after, IntentLedger(turn_id="t1"))
+
+        assert [item.text for item in result.skills[0].items] == ["Python"]
+        assert any("restored a skill" in report.detail for report in reports)
+
+    def test_an_unrequested_rewrite_is_still_caught(self) -> None:
+        """The property that must survive the fix.
+
+        Changing "Python" to "Rust" with no grant is real drift, and both
+        halves should act: the old reading comes back and the new one goes.
+        """
+        before = self._doc("Python")
+        after = self._doc("Rust")
+
+        result, reports = run_guards(before, after, IntentLedger(turn_id="t1"))
+
+        assert [item.text for item in result.skills[0].items] == ["Python"]
+        assert len(reports) == 2

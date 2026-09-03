@@ -251,21 +251,33 @@ class TestRemovalTakesItsLayoutWithIt:
 
 
 class TestGuardsPreserveLayout:
-    async def test_an_ungranted_removal_is_reverted_with_its_frame(
+    async def test_a_removal_takes_its_frame_with_it(
         self, repo: DocumentRepo
     ) -> None:
-        """A guard correction is written through ``replace``, which never meets
-        the coverage gate -- so restoring content without its frame would
-        persist a document the engine would have refused, and the user's next
-        edit would be rejected for something they never did."""
+        """Whatever a turn does to the content, the layout stays consistent.
+
+        This used to assert that a removal without consent was blocked and then
+        restored with its frame. Consent no longer blocks a Tier C change --
+        the person asked, the turn checkpoint makes it one undo, and the change
+        is reported rather than refused -- so the removal now goes through and
+        the invariant to hold is the other one: nothing is left pointing at an
+        entry that is gone.
+
+        The revert-restores-its-frame path is covered directly against the
+        guards in ``test_guards_canvas.py``.
+        """
         result, final, channel = await run_turn(
             repo,
-            script(call_tool("remove_entry", {"nid": EXP_B, "reason": "unasked"})),
-            "tighten my bullets",  # no consent for a removal
+            script(call_tool("remove_entry", {"nid": EXP_B, "reason": "asked"})),
+            "drop the Contoso job",
         )
 
-        assert [entry.nid for entry in final.doc.experience] == [EXP, EXP_B]
+        assert [entry.nid for entry in final.doc.experience] == [EXP]
         assert _first_orphan(final.doc) is None
+        # And one undo puts the entry and its frame back together.
+        restored, _ = await repo.reverse(final.id, direction="undo")
+        assert [entry.nid for entry in restored.doc.experience] == [EXP, EXP_B]
+        assert _first_orphan(restored.doc) is None
 
     async def test_pages_are_not_replaced_with_pre_turn_geometry(
         self, repo: DocumentRepo

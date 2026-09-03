@@ -68,6 +68,108 @@ class TestCreate:
         assert response.status_code == 201
         assert response.json()["doc"]["experience"] == []
 
+    async def test_a_template_document_is_scaffolding(
+        self, client: AsyncClient
+    ) -> None:
+        """A résumé nobody has written yet holds no facts to protect.
+
+        The engine's promise is never to invent a claim about this person. On a
+        document seeded from a gallery card that promise is backwards: "Alex
+        Morgan" is not a person, and replacing his words wholesale is the only
+        thing being asked for. The two cases are indistinguishable without this
+        flag, so the guards fired on placeholder text and the turn did nothing.
+        """
+        response = await client.post(
+            "/api/v1/documents",
+            json={"title": "From a card", "template": "book", "scaffold": True},
+        )
+        assert response.status_code == 201
+        assert response.json()["doc"]["scaffold"] is True
+
+    async def test_an_imported_document_is_never_scaffolding(
+        self, client: AsyncClient
+    ) -> None:
+        """Someone's real résumé is theirs from the first moment."""
+        body = await seed(client)
+        assert body["doc"]["scaffold"] is False
+
+    async def test_confirming_ends_the_scaffolding_and_changes_no_words(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.post(
+            "/api/v1/documents",
+            json={"title": "Starter", "starter": True, "scaffold": True},
+        )
+        created = response.json()
+        before = created["doc"]
+
+        confirmed = await client.post(
+            f"/api/v1/documents/{created['id']}/confirm", json={"nids": []}
+        )
+        assert confirmed.status_code == 200
+        after = confirmed.json()["doc"]
+
+        assert after["scaffold"] is False
+        assert after["unverified"] == []
+        # Confirming is a statement about truth, not about wording.
+        assert after["experience"] == before["experience"]
+        assert after["summary"] == before["summary"]
+        # And it is not a content change, so the hash a client holds stays good.
+        assert confirmed.json()["hash"] == created["hash"]
+
+    async def test_create_records_the_template(self, client: AsyncClient) -> None:
+        response = await client.post(
+            "/api/v1/documents", json={"title": "Set", "template": "banner"}
+        )
+        assert response.status_code == 201
+        assert response.json()["doc"]["template"] == "banner"
+
+    async def test_new_documents_default_to_plain(self, client: AsyncClient) -> None:
+        response = await client.post("/api/v1/documents", json={"title": "Default"})
+        assert response.json()["doc"]["template"] == "plain"
+
+    async def test_starter_is_something_to_fill_in(self, client: AsyncClient) -> None:
+        """A new document must never open as a blank sheet.
+
+        The defect this pins: creating with no content produced a document with
+        no summary, no experience, no education and no skills, which laid out
+        as a single page carrying exactly one frame -- the header. Every
+        section renders only when it has something in it, so the page was
+        empty, nothing could be typed into, and choosing a template landed
+        somewhere that made the template look broken.
+        """
+        response = await client.post(
+            "/api/v1/documents",
+            json={"title": "Starter", "template": "book", "starter": True},
+        )
+        assert response.status_code == 201
+        doc = response.json()["doc"]
+
+        assert doc["template"] == "book"
+        assert doc["summary"] is not None
+        assert len(doc["experience"]) == 1
+        assert len(doc["experience"][0]["bullets"]) == 2
+        assert len(doc["education"]) == 1
+        assert len(doc["skills"]) == 1
+
+        # Empty, not pre-filled: a skeleton is a shape to follow, not a form to
+        # clear out before it is usable.
+        assert doc["summary"]["text"] == ""
+        assert doc["experience"][0]["title"] == ""
+        assert doc["experience"][0]["bullets"][0]["text"] == ""
+
+        # Real, addressable nodes -- the editor and the assistant both need an
+        # id to write to, and an empty document has nothing to address.
+        assert doc["summary"]["nid"].startswith("sum_")
+        assert doc["experience"][0]["nid"].startswith("exp_")
+        assert doc["education"][0]["nid"].startswith("edu_")
+
+        # And it lays out as a page with structure on it, not one lone header.
+        frames = [element for page in doc["pages"] for element in page["elements"]]
+        assert len(frames) > 1
+        refs = {frame.get("ref") for frame in frames}
+        assert {"personal", "summary", "experience", "education", "skills"} <= refs
+
     async def test_list(self, client: AsyncClient) -> None:
         await seed(client)
         response = await client.get("/api/v1/documents")
@@ -373,3 +475,50 @@ class TestUndoRedo:
         self, client: AsyncClient
     ) -> None:
         assert (await self.undo(client, "nope")).status_code == 404
+
+
+class TestTheRegisterKnowsWhenNotJustHowMuch:
+    """A document says when it last changed.
+
+    The register listed documents by write count, which is a fact about the
+    engine rather than about the person: "173 writes" does not tell you which
+    résumé you were working on and "3 hours ago" does.
+    """
+
+    async def test_a_listed_document_carries_a_timestamp(self, client) -> None:
+        await client.post("/api/v1/documents", json={"title": "Mine"})
+
+        listed = (await client.get("/api/v1/documents")).json()
+
+        assert listed[0]["updated_at"]
+
+    async def test_it_is_utc(self, client) -> None:
+        """The client reads a bare timestamp as local time otherwise, which put
+        a document saved a minute ago hours into the past or the future."""
+        from datetime import datetime, timezone
+
+        created = (await client.post("/api/v1/documents", json={"title": "Mine"})).json()
+        fetched = (await client.get(f"/api/v1/documents/{created['id']}")).json()
+
+        stamp = datetime.fromisoformat(fetched["updated_at"])
+        naive = stamp.replace(tzinfo=timezone.utc)
+        # Within a minute of now, which it cannot be if it were local time in
+        # any zone this is likely to run in.
+        assert abs((datetime.now(timezone.utc) - naive).total_seconds()) < 60
+
+    async def test_it_moves_when_the_document_does(self, client) -> None:
+        created = (await client.post("/api/v1/documents", json={"title": "Mine"})).json()
+        first = (await client.get(f"/api/v1/documents/{created['id']}")).json()[
+            "updated_at"
+        ]
+
+        await client.post(
+            f"/api/v1/documents/{created['id']}/ops",
+            json={"ops": []},
+            headers={"If-Match": f'W/"{created["version"]}-"'},
+        )
+        second = (await client.get(f"/api/v1/documents/{created['id']}")).json()[
+            "updated_at"
+        ]
+
+        assert second >= first

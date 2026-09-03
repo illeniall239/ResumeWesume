@@ -1,0 +1,8 @@
+# qwen3:14b with a context that holds a whole turn.
+#
+# Stock qwen3:14b runs at Ollama's default 4096, which truncates this app's
+# prompt from the front and drops the instructions. Everything else is
+# inherited from the base model.
+FROM qwen3:14b
+
+PARAMETER num_ctx 16384

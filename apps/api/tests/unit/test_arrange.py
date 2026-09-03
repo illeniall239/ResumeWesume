@@ -270,3 +270,64 @@ class TestFramesAreArrangeableToo:
         ops = arrange(doc_of(sheet), "align_left", ["frm_aaaaa", "frm_bbbbb"])
         assert [op.nid for op in ops] == ["frm_bbbbb"]
         assert round(ops[0].x, 3) == 10.0
+
+
+class TestNudgingOneBox:
+    """Moving a single element to an edge of the sheet.
+
+    Asked to push a footer further right, the only preset that sounded right
+    was `align_right` -- which aligns elements against *each other* and
+    correctly refuses a selection of one. So a box could be placed once and
+    then never adjusted, and the refusal explained itself without offering a
+    way forward.
+    """
+
+    def _page(self) -> PageNode:
+        return PageNode(
+            nid="pag_aaaaa",
+            elements=[
+                FrameElement(
+                    nid="frm_foot",
+                    ref="txb_foot",
+                    rect=Rect(x=100.0, y=400.0, w=200.0, h=18.0),
+                )
+            ],
+        )
+
+    def test_right_puts_it_against_the_margin(self) -> None:
+        page = self._page()
+        moved = compute(page, "snap_page_right", ["frm_foot"])
+        rect = moved["frm_foot"]
+
+        # A4 portrait, less the export's 28.35pt margin.
+        assert rect.x + rect.w == pytest.approx(595.276 - 28.35)
+        # And nothing else moved.
+        assert rect.y == 400.0
+
+    def test_bottom_puts_it_against_the_foot(self) -> None:
+        moved = compute(self._page(), "snap_page_bottom", ["frm_foot"])
+        rect = moved["frm_foot"]
+
+        assert rect.y + rect.h == pytest.approx(841.89 - 28.35)
+        assert rect.x == 100.0
+
+    def test_left_and_top(self) -> None:
+        page = self._page()
+        assert compute(page, "snap_page_left", ["frm_foot"]).get(
+            "frm_foot"
+        ).x == pytest.approx(28.35)
+        assert compute(page, "snap_page_top", ["frm_foot"]).get(
+            "frm_foot"
+        ).y == pytest.approx(28.35)
+
+    def test_one_element_is_enough(self) -> None:
+        """The whole point: the page is the reference, not the other boxes."""
+        from studio.doc.arrange import WORKS_ALONE
+
+        for preset in (
+            "snap_page_left",
+            "snap_page_right",
+            "snap_page_top",
+            "snap_page_bottom",
+        ):
+            assert preset in WORKS_ALONE

@@ -17,7 +17,11 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from studio.agent.claude_code import ClaudeCodeRunner
 from studio.agent.loop import TurnRequest, TurnRunner
+from studio.llm import catalog
+from studio.persistence.repo import DocumentRepo
+from studio.streaming import events as ev
 from studio.streaming.channel import TurnChannel
 from studio.streaming.http import MEDIA_TYPE, STREAM_HEADERS, ndjson
 
@@ -50,9 +54,22 @@ async def start_turn(request: Request, body: StartTurnRequest) -> StreamingRespo
     turn_id = uuid.uuid4().hex
     channel = app.state.turns.create(turn_id, body.document_id)
 
-    # The model the user picked in the sidebar, falling back to .env.
-    backend = await app.state.backends.resolve(app.state.providers)
-    runner = TurnRunner(repo=repo, backend=backend)
+    # The model the user picked in the sidebar, falling back to a Claude login
+    # on this machine, then to .env.
+    resolution = await app.state.backends.effective(app.state.providers)
+
+    # Two harnesses, one document. The Agent SDK brings its own agent loop, so
+    # the subscription path does not stream through a ChatBackend at all -- the
+    # split is here rather than behind the backend interface because pretending
+    # a loop is a stream is how one of them ends up quietly broken.
+    if resolution.config.provider == catalog.CLAUDE_CODE:
+        runner = ClaudeCodeRunner(
+            repo=repo, model=catalog.claude_code_model(resolution.config.model)
+        )
+    else:
+        runner = TurnRunner(
+            repo=repo, backend=app.state.backends.build(resolution.config)
+        )
     turn_request = TurnRequest(
         document_id=body.document_id,
         message=body.message,
@@ -68,6 +85,12 @@ async def start_turn(request: Request, body: StartTurnRequest) -> StreamingRespo
         except Exception:  # noqa: BLE001 - a crashed turn must still close
             logger.exception("Turn %s failed outside the loop", turn_id)
             channel.close()
+        finally:
+            # Recorded here rather than in either runner: this is the one place
+            # both harnesses pass through, and it is reached even when the
+            # client navigated away mid-turn -- the task outlives the response,
+            # so the exchange is saved whether or not anyone was watching.
+            await _remember(repo, turn_request, channel, turn_id)
 
     task = asyncio.create_task(drive(), name=f"turn-{turn_id}")
     app.state.turns.attach(turn_id, task)
@@ -128,3 +151,35 @@ async def turn_status(request: Request, turn_id: str) -> dict[str, Any]:
         "finished": channel.finished,
         "cancelled": channel.cancelled,
     }
+
+async def _remember(
+    repo: DocumentRepo,
+    request: TurnRequest,
+    channel: TurnChannel,
+    turn_id: str,
+) -> None:
+    """Store the exchange so a reload does not lose it.
+
+    Reconstructed from the events the turn already emitted rather than from
+    anything the client reports, because the client may be gone. A turn that
+    produced no prose at all still stores the user's message: what they asked
+    is part of the conversation even when the answer was an error.
+    """
+    prose = "".join(
+        event.text
+        for event in channel.replay_from(0)
+        if isinstance(event, ev.AssistantDelta)
+    ).strip()
+    status = next(
+        (event.status for event in channel.replay_from(0) if isinstance(event, ev.Done)),
+        "failed",
+    )
+
+    try:
+        await repo.add_messages(
+            request.document_id,
+            [("user", request.message, None), ("assistant", prose, status)],
+            turn_id=turn_id,
+        )
+    except Exception:  # noqa: BLE001 -- a transcript must never fail a turn
+        logger.exception("Could not store the conversation for turn %s", turn_id)

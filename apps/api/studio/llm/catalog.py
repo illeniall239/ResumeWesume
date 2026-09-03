@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 #: How to ask a provider what it has. ``none`` means there is nothing to ask --
 #: an arbitrary OpenAI-compatible server may or may not implement /models, and
 #: is tried optimistically anyway.
-Listing = Literal["ollama", "openai", "anthropic", "gemini"]
+Listing = Literal["none", "ollama", "openai", "anthropic", "gemini"]
 
 #: A dropdown that hangs is worse than one that shows the fallback. Short on
 #: purpose: this runs while a menu is open and a person is waiting.
@@ -56,10 +56,28 @@ class Provider:
     #: runtimes, which is what makes them the default.
     needs_key: bool
     listing: Listing
-    #: Where to reach it. Editable for the local and the compatible providers,
-    #: fixed for the cloud ones, which is why the UI keys off ``base_editable``.
+    #: Where to reach it *for listing models*. Editable for the local and the
+    #: compatible providers, fixed for the cloud ones, which is why the UI keys
+    #: off ``base_editable``.
+    #:
+    #: Read ``routes_itself`` before assuming this is also the URL to send a
+    #: completion to. It is not, for every cloud provider here.
     default_api_base: str | None = None
     base_editable: bool = False
+    #: Whether litellm already knows where this provider lives.
+    #:
+    #: True for every hosted provider, and it matters: litellm appends its own
+    #: path to whatever base it is handed, so passing one that is right for the
+    #: listing endpoint produces a URL that is wrong for completions. Gemini is
+    #: the case that caught it -- the listing is ``{base}/v1beta/models`` so the
+    #: base cannot carry the version, while litellm needs the version to be
+    #: there, and the mismatch returned a 404 with an empty body. One field
+    #: cannot satisfy both contracts, so the default is only forwarded when the
+    #: provider genuinely has no address of its own.
+    #:
+    #: A base the *user* typed is always forwarded, whatever this says: that is
+    #: an explicit instruction to talk to a gateway or a proxy.
+    routes_itself: bool = False
     #: Shown under the provider in the UI. Says what the user has to go and do.
     note: str = ""
     #: Prefixes litellm registry entries carry for this provider, stripped so a
@@ -67,7 +85,48 @@ class Provider:
     registry_key: str = ""
 
 
+#: The provider that is not a provider. It runs the Claude Agent SDK against
+#: whatever Claude login this machine already has, so there is no key to store
+#: and no base to point at -- and no model list to fetch, because the SDK asks
+#: Claude Code, which knows what the plan allows.
+CLAUDE_CODE = "claude_code"
+
+#: Offered for the subscription provider. Blank first, because the right answer
+#: for almost everyone is whatever their plan already picks; the rest are named
+#: so somebody who wants a cheaper or faster model can say so. Not fetched: the
+#: SDK resolves the name against the plan, and a list built here would be this
+#: file guessing about somebody else's subscription.
+CLAUDE_CODE_MODELS: list[str] = [
+    "default",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-haiku-4-5",
+]
+
+#: Means "whatever the signed-in plan picks". A named sentinel rather than an
+#: empty string because a selection is stored as ``provider/model`` and decodes
+#: to nothing when either half is blank -- so "no model" is unrepresentable
+#: there, and silently became "no selection at all".
+CLAUDE_CODE_DEFAULT = "default"
+
+
+def claude_code_model(value: str) -> str | None:
+    """The model to hand the Agent SDK, or None to let the plan decide."""
+    cleaned = value.strip()
+    return None if not cleaned or cleaned == CLAUDE_CODE_DEFAULT else cleaned
+
+
 PROVIDERS: dict[str, Provider] = {
+    CLAUDE_CODE: Provider(
+        id=CLAUDE_CODE,
+        label="Claude subscription",
+        needs_key=False,
+        listing="none",
+        note=(
+            "Uses the Claude login already on this machine. Draws from your "
+            "Claude plan rather than billing an API key."
+        ),
+    ),
     "ollama": Provider(
         id="ollama",
         label="Ollama (local)",
@@ -84,6 +143,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "openai": Provider(
         id="openai",
+        routes_itself=True,
         label="OpenAI",
         needs_key=True,
         listing="openai",
@@ -93,6 +153,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "anthropic": Provider(
         id="anthropic",
+        routes_itself=True,
         label="Anthropic",
         needs_key=True,
         listing="anthropic",
@@ -102,6 +163,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "gemini": Provider(
         id="gemini",
+        routes_itself=True,
         label="Google Gemini",
         needs_key=True,
         listing="gemini",
@@ -111,6 +173,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "openrouter": Provider(
         id="openrouter",
+        routes_itself=True,
         label="OpenRouter",
         needs_key=True,
         listing="openai",
@@ -120,6 +183,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "groq": Provider(
         id="groq",
+        routes_itself=True,
         label="Groq",
         needs_key=True,
         listing="openai",
@@ -129,6 +193,7 @@ PROVIDERS: dict[str, Provider] = {
     ),
     "deepseek": Provider(
         id="deepseek",
+        routes_itself=True,
         label="DeepSeek",
         needs_key=True,
         listing="openai",
@@ -339,6 +404,18 @@ async def list_models(
     provider = PROVIDERS.get(provider_id)
     if provider is None:
         return ModelListing(detail=f"Unknown provider {provider_id!r}")
+
+    if provider.listing == "none":
+        # Nothing to interrogate and nothing to guess. The Agent SDK asks Claude
+        # Code, which knows which models the signed-in plan allows -- a list
+        # assembled here would be a guess about somebody else's subscription.
+        # The empty entry means "whatever the plan gives you", which is the
+        # honest default and the one most people want.
+        return ModelListing(
+            models=CLAUDE_CODE_MODELS,
+            source="live",
+            detail="Models your Claude plan allows. Leave blank for its default.",
+        )
 
     fallback = fallback_models(provider_id)
 
