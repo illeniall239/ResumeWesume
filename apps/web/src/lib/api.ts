@@ -127,6 +127,16 @@ export function fetchMessages(id: string): Promise<{ messages: StoredMessage[] }
   return request<{ messages: StoredMessage[] }>(`/documents/${id}/messages`);
 }
 
+/**
+ * Delete a résumé and everything under it.
+ *
+ * There is no undo for this one. Undo reverses a batch *within* a document; a
+ * deleted document has no op log left to reverse, so the caller asks first.
+ */
+export function deleteDocument(id: string): Promise<void> {
+  return request<void>(`/documents/${id}`, { method: 'DELETE' });
+}
+
 export function clearMessages(id: string): Promise<void> {
   return request<void>(`/documents/${id}/messages`, { method: 'DELETE' });
 }

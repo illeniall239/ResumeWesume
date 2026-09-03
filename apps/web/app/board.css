@@ -1682,18 +1682,68 @@ textarea {
 }
 
 .recent {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
   width: 190px;
-  padding: 10px 12px;
   border: 1px solid var(--hair-soft);
-  text-decoration: none;
   transition: border-color 120ms ease-out;
 }
 
 .recent:hover {
   border-color: var(--legend-faint);
+}
+
+/* The link fills the card, so the whole thing opens the résumé -- the discard
+   button sits above it rather than beside it, and only where it is. */
+.recent__open {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+/* Quiet until wanted. Rendered always rather than on hover, so it is reachable
+   by keyboard and on a touch screen, where there is no hover to have. */
+.recent__discard {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: flex;
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  cursor: pointer;
+}
+
+.recent:hover .recent__discard,
+.recent__discard:focus-visible {
+  color: var(--legend-faint);
+}
+
+.recent__discard:hover {
+  color: var(--rev-text);
+}
+
+/* Asking is a state of the card, not a dialog over it: the row keeps its size
+   so the strip does not jump while you decide. */
+.recent--asking {
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-color: var(--rev);
+}
+
+.recent__confirm {
+  display: flex;
+  gap: 12px;
+}
+
+.link--rev {
+  color: var(--rev-text);
 }
 
 .recent__title {

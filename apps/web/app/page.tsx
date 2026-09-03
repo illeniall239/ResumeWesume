@@ -7,7 +7,7 @@ import type { DocumentResponse } from '@/contracts/doc';
 import { createDocument, listDocuments } from '@/lib/api';
 import DocumentFlow from '@/render/document-flow';
 import { BLANK_DOC, PREVIEW_DOC } from '@/render/preview-doc';
-import { timeAgo } from '@/lib/when';
+import RecentSheet from '@/register/recent-sheet';
 import ProviderSettings from '@/settings/provider-settings';
 import { useModels } from '@/store/models';
 import { Sliders } from '@/ui/marks';
@@ -130,15 +130,15 @@ export default function Home() {
           <ul className="recents">
             {documents.map((document) => (
               <li key={document.id}>
-                <a className="recent" href={`/studio/${document.id}`}>
-                  <span className="recent__title">{document.title}</span>
-                  {/* When it last changed, not how many writes it has taken.
-                      A write count is a fact about the engine; what tells you
-                      which résumé this is, is when you last had it open. */}
-                  <span className="recent__rev">
-                    {timeAgo(document.updated_at)}
-                  </span>
-                </a>
+                <RecentSheet
+                  document={document}
+                  onDeleted={(id) =>
+                    setDocuments((current) =>
+                      current.filter((sheet) => sheet.id !== id)
+                    )
+                  }
+                  onError={setError}
+                />
               </li>
             ))}
           </ul>
