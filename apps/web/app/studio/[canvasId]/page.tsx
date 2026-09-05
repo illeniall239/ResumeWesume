@@ -12,7 +12,6 @@ import { BoardPlane } from '@/canvas/board-plane';
 import { mintLike } from '@/canvas/ids';
 import { removeElements } from '@/canvas/pages';
 import { useSelection } from '@/canvas/selection';
-import { textOf } from '@/doc/read';
 import { canZoom, fitZoom, useView } from '@/canvas/view';
 import { useReflow } from '@/canvas/use-reflow';
 import { Minus, Plus, Redo, Undo } from '@/ui/marks';
@@ -52,7 +51,6 @@ export default function StudioPage({
   const error = useStudio((state) => state.error);
   const changed = useStudio((state) => state.changed);
   const unverified = useStudio((state) => state.unverified);
-  const confirmClaims = useStudio((state) => state.confirmInvented);
   const version = useStudio((state) => state.version);
   const hash = useStudio((state) => state.hash);
   // Text a tool call is writing right now, shown in place while it arrives.
@@ -310,13 +308,6 @@ export default function StudioPage({
   // word twice for two different things.
   const hasBoard = Boolean(documentId);
 
-  // Lines only the job posting vouches for, in their own words. Read from the
-  // document rather than tracked separately, so they survive a reload and
-  // disappear the moment one is edited.
-  const claimed = [...unverified]
-    .map((nid) => textOf(doc, nid).trim())
-    .filter(Boolean);
-
   const scrollRef = useRef<HTMLDivElement>(null);
   // Dragging the canvas to move around it. Space-drag, middle-drag, or a drag
   // on the ground between versions -- never on a version, where the pointer
@@ -526,30 +517,6 @@ export default function StudioPage({
             <div className="notice notice--error">{error || canvasError}</div>
           )}
           {loading && <div className="notice">Reading the sheet…</div>}
-
-          {/* Claims the posting vouches for and nobody else does.
-              `add_skill(evidence="jd")` verifies only that the word is in the
-              advert -- not that it is anywhere in your résumé, and not that you
-              ever said you have it. Named rather than counted: "1 line was
-              written by the assistant" is nothing you can act on, and these two
-              words are exactly what to look at. */}
-          {claimed.length > 0 && (
-            <div className="claims">
-              <span>
-                <span className="claims__what">{claimed.join(', ')}</span>{' '}
-                came from the job posting, not from your résumé.
-              </span>
-              <span className="rail__spacer" />
-              <button
-                type="button"
-                className="ctl ctl--small"
-                onClick={() => void confirmClaims()}
-                title="Clear the marks"
-              >
-                {claimed.length === 1 ? 'I have this' : 'I have these'}
-              </button>
-            </div>
-          )}
 
 
           <div

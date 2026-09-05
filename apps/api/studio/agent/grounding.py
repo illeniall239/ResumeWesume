@@ -5,12 +5,18 @@ description, which meant that with no JD attached every ``add_skill`` was
 rejected. In a chat that is exactly backwards: the user typing "add Rust" *is*
 the evidence, and it is the strongest evidence available.
 
-Three sources are accepted, each verified server-side against something the
+Two sources are accepted, each verified server-side against something the
 model cannot fabricate:
 
-* ``jd`` — the skill appears in keywords extracted from the job description
 * ``resume`` — it already appears in the document's own text
 * ``user_request`` — the user typed it **in this turn's message**
+
+A third, ``jd``, was accepted and is not any more. A posting asking for a skill
+is not evidence the person has it: adding it on that alone put a claim on
+somebody's résumé that nobody had made, for them to catch afterwards from a
+notice. A gap is a question. Raised as one, their answer arrives as
+``user_request`` — the strongest evidence there is — and the skill goes on
+vouched for rather than flagged.
 
 That last check is the security boundary. Job-description text and resume text
 are never treated as the user's message, so an instruction embedded in a pasted
@@ -64,10 +70,18 @@ class Grounder:
             return GroundResult(False, evidence, "empty skill")
 
         if evidence == "jd":
-            if key in self._jd_keys:
-                return GroundResult(True, "jd")
+            # No longer an evidence class. A posting asking for a skill is not
+            # evidence the person has it, and adding it on that alone put a
+            # claim on somebody's résumé that nobody had made -- to be caught
+            # afterwards, by them, from a notice. A gap is a question, so the
+            # answer is to raise it and let them settle it in a sentence: their
+            # reply then satisfies `user_request`, which is the strongest
+            # evidence there is.
             return GroundResult(
-                False, "jd", f"{skill!r} is not among the job description keywords"
+                False,
+                "jd",
+                f"a posting asking for {skill!r} is not evidence the person has "
+                "it. Say it is missing and ask how they want to proceed.",
             )
 
         if evidence == "resume":

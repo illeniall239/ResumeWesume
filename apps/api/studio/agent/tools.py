@@ -509,10 +509,12 @@ class AddSkillArgs(BaseModel):
     group: str = Field(
         default="technical", description="technical, languages, certifications, awards."
     )
-    evidence: Literal["jd", "resume", "user_request"] = Field(
+    evidence: Literal["resume", "user_request"] = Field(
         description=(
-            "Why this skill belongs: it is in the job description, it already "
-            "appears in the resume text, or the user asked for it."
+            "Why this skill belongs: it already appears somewhere in the resume "
+            "text, or the user asked for it in this message. A job description "
+            "asking for a skill is NOT evidence the person has it -- say it is "
+            "missing and ask, rather than adding it."
         )
     )
     reason: str = ""
@@ -554,7 +556,9 @@ class AddSkill(ToolSpec):
     tier = "B"
     description = """
     Add a skill. You must say where the evidence comes from. Never add a skill
-    the user has not demonstrated or asked for.
+    the user has not demonstrated or asked for -- a job description asking for
+    one is not evidence they have it. Where the posting wants something the
+    resume does not support, say so and ask; do not add it.
     """
     Args = AddSkillArgs
 
@@ -597,7 +601,7 @@ class AddSkill(ToolSpec):
                 "skill, or move on."
             )
 
-        source = {"jd": "jd", "resume": "resume", "user_request": "user"}[args.evidence]
+        source = {"resume": "resume", "user_request": "user"}[args.evidence]
         insert = InsertNode(
             parent=group.nid,
             index=-1,

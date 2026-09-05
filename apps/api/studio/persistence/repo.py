@@ -225,57 +225,6 @@ def _link_messages_to_canvases(connection: Any) -> None:
         log.info("filed %d message(s) under their canvas", changed)
 
 
-def _settle_claims(
-    doc: "StudioDoc", applied: list[AppliedOp], ctx: OpContext | None
-) -> "StudioDoc":
-    """Mark what only the job posting vouches for, and unmark what you touch.
-
-    ``add_skill(evidence="jd")`` is allowed, and it has to be: a posting that
-    names Kubernetes is often naming something you have and forgot to list.
-    But the check behind it verifies only that the word is in the *advert* --
-    not that it is anywhere in your résumé, and not that you ever said you have
-    it. That is a claim nobody has vouched for, and a résumé may never be quiet
-    about one.
-
-    So it is marked rather than refused, and the mark is cleared the moment you
-    edit the line. Editing it is you saying it is yours, which is the same
-    reasoning ``_settle_scaffold`` uses for a template -- and it applies to a
-    finished résumé too, which is why this runs whether or not the document is
-    still scaffolding.
-    """
-    wrote = [op for op in applied if op.op.get("op") not in _LAYOUT_ONLY]
-    if not wrote:
-        return doc
-
-    actor = ctx.actor if ctx else "agent"
-    marked = list(doc.unverified)
-
-    if actor == "user":
-        # Anything the author has just written in is theirs, mark or no mark.
-        touched = {nid for op in wrote for nid in op.touched}
-        remaining = [nid for nid in marked if nid not in touched]
-        if remaining == marked:
-            return doc
-        return doc.model_copy(update={"unverified": remaining})
-
-    # The node dict is on the op as the agent sent it, and `source` is set by
-    # `add_skill` from the evidence it declared -- so this reads provenance
-    # that the tool already recorded rather than deriving it a second time.
-    fresh = [
-        nid
-        for op in wrote
-        if op.op.get("op") == "insert_node"
-        and isinstance(op.op.get("node"), dict)
-        and op.op["node"].get("source") == "jd"
-        for nid in op.touched
-    ]
-    if not fresh:
-        return doc
-
-    marked.extend(nid for nid in fresh if nid not in marked)
-    return doc.model_copy(update={"unverified": marked})
-
-
 def _settle_scaffold(
     doc: "StudioDoc", applied: list[AppliedOp], ctx: OpContext | None
 ) -> "StudioDoc":
@@ -823,10 +772,6 @@ class DocumentRepo:
 
             if applied:
                 updated = _settle_scaffold(updated, applied, ctx)
-                # After the scaffold rule, not before: on a template the two
-                # would mark the same node twice, and this one's clearing pass
-                # must see the marks that one has just left.
-                updated = _settle_claims(updated, applied, ctx)
 
             if not applied:
                 # Nothing changed: do not burn a version, or every rejected

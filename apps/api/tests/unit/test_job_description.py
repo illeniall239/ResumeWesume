@@ -5,9 +5,9 @@ conversation — you ask, you read it back, you ask again — and a posting sent
 with one message survived exactly one exchange, after which every follow-up
 worked with no idea what the sheet was being aimed at.
 
-Also here: what happens to a skill the posting is the only evidence for.
-``add_skill(evidence="jd")`` verifies that the word is in the *advert* — not
-that it is anywhere in the résumé, and not that anyone ever said they have it.
+Also here: what happens when the posting asks for something the résumé does not
+support. Nothing is added on the advert's word alone — the gap is raised as a
+question, and the answer is what lets the skill on.
 """
 
 from __future__ import annotations
@@ -17,8 +17,6 @@ from httpx import ASGITransport, AsyncClient
 
 from studio.agent.budget import TurnBudget
 from studio.agent.loop import TurnRequest, TurnRunner
-from studio.doc.apply import OpContext
-from studio.doc.ops import InsertNode
 from studio.llm.scripted import ScriptedBackend, done, say, turn
 from studio.main import app
 from studio.persistence.repo import MAX_JOB_DESCRIPTION, DocumentRepo
@@ -148,148 +146,52 @@ class TestReadingItFromAPdf:
         assert response.status_code == 400
 
 
-class TestAClaimOnlyTheAdvertVouchesFor:
-    """A skill added because the posting named it, and nothing else.
+class TestASkillThePostingAsksForAndTheResumeDoesNotSupport:
+    """A posting asking for a skill is not evidence the person has it.
 
-    Allowed, and it has to be: a posting naming Kubernetes is often naming
-    something the person has and forgot to list. But it is a claim nobody has
-    vouched for, so the line says so until they say otherwise.
+    This used to be an evidence class of its own: the assistant could add the
+    skill and the line was marked for checking. That put a claim on somebody's
+    résumé that nobody had made, for them to catch afterwards from a notice.
+    A gap is a question, so it is asked -- and the answer arrives as
+    ``user_request``, which is the strongest evidence there is.
     """
 
-    async def _skills_group(self, client: AsyncClient, document_id: str):
-        doc = (await client.get(f"/api/v1/documents/{document_id}")).json()["doc"]
-        return doc["skills"][0]
-
-    async def test_an_agent_skill_sourced_from_the_advert_is_marked(
+    async def test_the_posting_is_no_longer_evidence_at_all(
         self, client: AsyncClient
     ) -> None:
-        created = await seed(client)
-        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
-        group = await self._skills_group(client, created["id"])
+        from studio.agent.grounding import Grounder
+        from studio.doc.schema import StudioDoc
 
-        state, applied, rejected = await repo.apply(
-            created["id"],
-            [
-                InsertNode(
-                    parent=group["nid"],
-                    index=-1,
-                    node={"nid": "skl_jd001", "text": "Kubernetes", "source": "jd"},
-                )
-            ],
-            expected_version=created["version"],
-            ctx=OpContext(actor="agent", granted_tiers={"A", "B", "C"}),
+        grounder = Grounder.build(
+            StudioDoc(), user_message="tailor this", jd_keywords=["kubernetes"]
         )
-        assert not rejected
-        assert "skl_jd001" in state.doc.unverified
+        result = grounder.check("Kubernetes", "jd")
+        assert not result.ok
+        # And says what to do instead, because a rejection that only says no
+        # gets retried unchanged.
+        assert "ask" in result.detail.lower()
 
-    async def test_a_skill_the_user_asked_for_is_not_marked(
+    async def test_the_tool_will_not_accept_it(self, client: AsyncClient) -> None:
+        # Not reachable at all: the argument model no longer has the value, so
+        # a model asking for it is refused before any of this is consulted.
+        from studio.agent.tools import REGISTRY
+
+        schema = REGISTRY.get("add_skill").json_schema()
+        allowed = schema["function"]["parameters"]["properties"]["evidence"]["enum"]
+        assert allowed == ["resume", "user_request"]
+
+    async def test_what_the_user_confirms_goes_on_unmarked(
         self, client: AsyncClient
     ) -> None:
-        # The user typing "add Rust" is the strongest evidence there is. Marking
-        # it would be the app doubting the person about their own résumé.
-        created = await seed(client)
-        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
-        group = await self._skills_group(client, created["id"])
+        # The point of asking. Their answer is the evidence, and a skill they
+        # have vouched for needs no flag on the page.
+        from studio.agent.grounding import Grounder
+        from studio.doc.schema import StudioDoc
 
-        state, _, rejected = await repo.apply(
-            created["id"],
-            [
-                InsertNode(
-                    parent=group["nid"],
-                    index=-1,
-                    node={"nid": "skl_ask03", "text": "Rust", "source": "user"},
-                )
-            ],
-            expected_version=created["version"],
-            ctx=OpContext(actor="agent", granted_tiers={"A", "B", "C"}),
+        grounder = Grounder.build(
+            StudioDoc(), user_message="yes, add Kubernetes -- I ran the migration"
         )
-        assert not rejected
-        assert "skl_ask03" not in state.doc.unverified
-
-    async def test_editing_the_line_clears_the_mark(self, client: AsyncClient) -> None:
-        # Typing into it is the person saying it is theirs. The same reasoning
-        # the scaffold rule uses for a template, applied to a finished résumé.
-        created = await seed(client)
-        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
-        group = await self._skills_group(client, created["id"])
-
-        state, _, _ = await repo.apply(
-            created["id"],
-            [
-                InsertNode(
-                    parent=group["nid"],
-                    index=-1,
-                    node={"nid": "skl_jd002", "text": "Terraform", "source": "jd"},
-                )
-            ],
-            expected_version=created["version"],
-            ctx=OpContext(actor="agent", granted_tiers={"A", "B", "C"}),
-        )
-        assert "skl_jd002" in state.doc.unverified
-
-        # Read it back the way a browser does, and edit from that.
-        fetched = (await client.get(f"/api/v1/documents/{created['id']}")).json()
-        assert "skl_jd002" in [
-            item["nid"] for group in fetched["doc"]["skills"] for item in group["items"]
-        ]
-
-        response = await client.post(
-            f"/api/v1/documents/{created['id']}/ops",
-            json={
-                "ops": [
-                    {"op": "set_text", "nid": "skl_jd002", "value": "Terraform (CDK)"}
-                ],
-                "version": fetched["version"],
-            },
-        )
-        assert response.status_code == 200
-        assert response.json()["rejected"] == []
-        assert "skl_jd002" not in response.json()["doc"]["unverified"]
-
-    async def test_the_mark_survives_a_reload(self, client: AsyncClient) -> None:
-        # It lives in the document, not in the browser, so a refresh does not
-        # quietly launder a claim into looking like the person's own.
-        created = await seed(client)
-        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
-        group = await self._skills_group(client, created["id"])
-        await repo.apply(
-            created["id"],
-            [
-                InsertNode(
-                    parent=group["nid"],
-                    index=-1,
-                    node={"nid": "skl_jd004", "text": "Kafka", "source": "jd"},
-                )
-            ],
-            expected_version=created["version"],
-            ctx=OpContext(actor="agent", granted_tiers={"A", "B", "C"}),
-        )
-
-        fetched = await client.get(f"/api/v1/documents/{created['id']}")
-        assert "skl_jd004" in fetched.json()["doc"]["unverified"]
-
-    async def test_confirming_clears_it(self, client: AsyncClient) -> None:
-        created = await seed(client)
-        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
-        group = await self._skills_group(client, created["id"])
-        await repo.apply(
-            created["id"],
-            [
-                InsertNode(
-                    parent=group["nid"],
-                    index=-1,
-                    node={"nid": "skl_jd005", "text": "gRPC", "source": "jd"},
-                )
-            ],
-            expected_version=created["version"],
-            ctx=OpContext(actor="agent", granted_tiers={"A", "B", "C"}),
-        )
-
-        response = await client.post(
-            f"/api/v1/documents/{created['id']}/confirm", json={"nids": []}
-        )
-        assert response.status_code == 200
-        assert response.json()["doc"]["unverified"] == []
+        assert grounder.check("Kubernetes", "user_request").ok
 
 
 class TestWhatReachesTheModel:
@@ -360,7 +262,10 @@ class TestWhatReachesTheModel:
 
         sent = await self._run(repo, state, "tighten my summary")
 
-        assert "<job_description>" not in sent
+        # The closing tag, not the opening one: the system prompt names
+        # `<job_description>` when it explains what to do with a posting, so
+        # only a real block has both ends.
+        assert "</job_description>" not in sent
 
     async def test_a_posting_named_on_the_turn_wins(self, client: AsyncClient) -> None:
         # A one-off "try it against this instead", without disturbing what the

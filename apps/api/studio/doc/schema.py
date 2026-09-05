@@ -34,6 +34,12 @@ SectionKey = Literal[
     "summary", "experience", "education", "projects", "skills", "custom"
 ]
 
+#: Where a skill came from.
+#:
+#: ``jd`` is no longer produced: a posting asking for a skill is not evidence
+#: the person has it, so the assistant raises the gap and asks instead of
+#: adding one. The value stays in the union because documents written before
+#: that change carry it, and dropping it would fail their validation on load.
 SkillSource = Literal["original", "jd", "resume", "user"]
 BulletStyle = Literal["bullet", "plain"]
 

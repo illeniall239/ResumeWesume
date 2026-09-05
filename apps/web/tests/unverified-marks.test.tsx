@@ -1,11 +1,14 @@
 /**
- * Marking a claim only the job posting vouches for.
+ * Marking text the assistant wrote while the document was still a template.
+ *
+ * On a template it is allowed to invent — that is the only thing being asked —
+ * and invented text on a résumé may never be quiet about itself.
  *
  * The renderer had the class and the store had the set, and between them the
  * mark reached exactly one kind of node: the summary. Every bullet, every
  * skill and every custom entry built its `Editable` without passing
  * `unverified` through — which is precisely the set of nodes an agent writes,
- * so the one feature that needs this could never have shown anything.
+ * so the one thing that needs this could never have shown anything.
  *
  * Hence a test per node kind rather than one representative: the bug was that
  * they were each wired separately.
