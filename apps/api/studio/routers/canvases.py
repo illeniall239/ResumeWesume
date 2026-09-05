@@ -119,22 +119,26 @@ async def get_conversation(request: Request, canvas_id: str) -> dict[str, Any]:
         for board in (await _repo(request).get_canvas(canvas_id)).boards
     }
 
-    def undo_point(message: Any) -> str | None:
-        """The snapshot this turn can be put back to, if that means anything.
+    def undo_points(message: Any) -> list[dict[str, str]]:
+        """Where every board this turn touched stood before it.
 
-        Offered only where the board has moved since the snapshot was taken.
-        Every turn gets one, answers included, and restoring a document to the
-        state it is already in would write a new version and change nothing on
-        screen.
+        Offered only for boards that have moved since. Every turn takes a
+        snapshot, answers included, and restoring a document to the state it is
+        already in would write a new version and change nothing on screen —
+        which is the shape of a control that appears broken.
+
+        A list because a turn can move between versions, and putting one back
+        means putting back every board it reached.
         """
         if message.role != "assistant" or not message.turn_id:
-            return None
-        found = checkpoints.get(message.turn_id)
-        if found is None:
-            return None
-        checkpoint_id, version, document_id = found
-        board = boards.get(document_id)
-        return checkpoint_id if board and version < board.version else None
+            return []
+        return [
+            {"board_id": document_id, "checkpoint_id": checkpoint_id}
+            for checkpoint_id, version, document_id in checkpoints.get(
+                message.turn_id, []
+            )
+            if document_id in boards and version < boards[document_id].version
+        ]
 
     return {
         "messages": [
@@ -143,7 +147,17 @@ async def get_conversation(request: Request, canvas_id: str) -> dict[str, Any]:
                 "role": message.role,
                 "text": message.text,
                 "status": message.status,
-                "checkpoint": undo_point(message),
+                # The board the message itself names, for the common turn.
+                "checkpoint": next(
+                    (
+                        point["checkpoint_id"]
+                        for point in undo_points(message)
+                        if point["board_id"] == message.document_id
+                    ),
+                    None,
+                ),
+                # Every board it touched, which is what undoing it must restore.
+                "checkpoints": undo_points(message),
                 # Which version this turn acted on. The conversation is about
                 # the résumé; an edit landed on one of its versions.
                 "board_id": message.document_id,

@@ -136,11 +136,13 @@ class TurnRunner:
         #: each from the last would make them one version narrowed three times,
         #: each further from the résumé than the one before it.
         self._origin = ""
-        #: The snapshot taken before the first edit *to the board being
-        #: edited*. A fork replaces it, because a fresh copy has nothing to
-        #: undo back to and the checkpoint from the original board would put
-        #: the user back on the wrong document.
-        self._checkpoint = ""
+        #: Where each board this turn has touched stood before it did.
+        #:
+        #: A map rather than one id, because a turn can now move between
+        #: versions: "add Rust to the Stripe one" edits a board the turn did
+        #: not start on, and undoing that turn has to put back every board it
+        #: reached, not the last one it happened to be on.
+        self._checkpoints: dict[str, str] = {}
         #: What the guards compare against, for the same reason.
         self._base_doc: StudioDoc | None = None
 
@@ -192,7 +194,7 @@ class TurnRunner:
         checkpoint_id = await self._repo.checkpoint(
             request.document_id, label="before turn", turn_id=channel.turn_id
         )
-        self._checkpoint = checkpoint_id
+        self._checkpoints = {request.document_id: checkpoint_id}
         self._base_doc = base_doc
 
         channel.emit(
@@ -521,7 +523,11 @@ class TurnRunner:
             ev.Done(
                 doc_version=final.version if final else state.version,
                 hash=final.content_hash if final else state.content_hash,
-                checkpoint_id=self._checkpoint or checkpoint_id,
+                checkpoint_id=self._checkpoints.get(self._target) or checkpoint_id,
+                checkpoints=[
+                    {"board_id": board, "checkpoint_id": snapshot}
+                    for board, snapshot in self._checkpoints.items()
+                ],
                 applied=applied_total,
                 rejected=rejected_total,
                 status=status,  # type: ignore[arg-type]
@@ -533,7 +539,7 @@ class TurnRunner:
             status=status,
             applied=applied_total,
             rejected=rejected_total,
-            checkpoint_id=self._checkpoint or checkpoint_id,
+            checkpoint_id=self._checkpoints.get(self._target) or checkpoint_id,
             version=final.version if final else state.version,
         )
 
@@ -614,6 +620,12 @@ class TurnRunner:
 
         if name == "fork_board":
             return await self._fork(args, channel, call.call_id)
+
+        if name == "switch_board":
+            return await self._switch(args, state, channel, call.call_id)
+
+        if name == "rename_board":
+            return await self._rename(args, state, channel, call.call_id)
 
         # Grounding used to reject an ungrounded skill outright. It now records
         # one. The rejection was the engine overruling a request the person had
@@ -774,7 +786,7 @@ class TurnRunner:
 
         self._target = fresh.id
         self._base_doc = fresh.doc
-        self._checkpoint = await self._repo.checkpoint(
+        self._checkpoints[fresh.id] = await self._repo.checkpoint(
             fresh.id, label="before turn", turn_id=channel.turn_id
         )
 
@@ -796,6 +808,97 @@ class TurnRunner:
                 "changes for this job here.",
             ),
         )
+
+    async def _switch(
+        self,
+        args: BaseModel,
+        state: Any,
+        channel: TurnChannel,
+        call_id: str,
+    ) -> tuple[int, int, dict[str, Any]]:
+        """Move onto another existing version, and edit that one from here on.
+
+        The other half of the roster. Naming the versions is what lets somebody
+        say "add Rust to the Stripe one"; this is what makes it reach.
+
+        A checkpoint is taken on arrival, and kept alongside the others rather
+        than replacing them: a turn that edits two versions has two things to
+        put back, and undoing it has to do both.
+        """
+        wanted = args.name.strip()  # type: ignore[attr-defined]
+        if state is None or not state.canvas_id:
+            return self._reject_plain(
+                call_id, "no_canvas", "This résumé has only one version."
+            )
+
+        canvas = await self._repo.get_canvas(state.canvas_id)
+        board = _board_named(canvas.boards if canvas else [], wanted)
+        if board is None:
+            listed = ", ".join(
+                repr(item.title) for item in (canvas.boards if canvas else [])
+            )
+            return self._reject_plain(
+                call_id,
+                "unknown_board",
+                f"No version called {wanted!r}. There is: {listed}.",
+            )
+        if board.id == self._target:
+            # Already here. Answered rather than refused: the model asked for
+            # something that is true, and a rejection would send it looking for
+            # another way to get somewhere it already is.
+            return 0, 0, _tool_message(
+                call_id, f"Already editing {board.title!r}. Carry on."
+            )
+
+        self._target = board.id
+        self._base_doc = board.doc
+        if board.id not in self._checkpoints:
+            self._checkpoints[board.id] = await self._repo.checkpoint(
+                board.id, label="before turn", turn_id=channel.turn_id
+            )
+
+        channel.emit(
+            ev.BoardSwitched(call_id=call_id, board_id=board.id, title=board.title)
+        )
+        # With its outline, because the ids the model is holding belong to the
+        # version it just left. Versions that were forked share ids and it
+        # would mostly work; two résumés written separately share none, and
+        # every edit after the switch would be rejected against a node that is
+        # not there. Handing back the outline is the same answer `find_text`
+        # gives a miss: the question is "then which node do I edit?".
+        return 0, 0, _tool_message(
+            call_id,
+            f"Now editing {board.title!r}. Everything you do next lands on it. "
+            "Its ids are not the ones you were given -- use these:\n\n"
+            + outline(board.doc),
+        )
+
+    async def _rename(
+        self,
+        args: BaseModel,
+        state: Any,
+        channel: TurnChannel,
+        call_id: str,
+    ) -> tuple[int, int, dict[str, Any]]:
+        """Give the version being edited a different name."""
+        wanted = args.name.strip()  # type: ignore[attr-defined]
+        if not wanted:
+            return self._reject_plain(
+                call_id, "invalid_args", "A version needs a name."
+            )
+
+        renamed = await self._repo.rename(self._target, wanted)
+        if renamed is None:
+            return self._reject_plain(
+                call_id, "not_found", "That version is no longer there."
+            )
+
+        channel.emit(
+            ev.BoardRenamed(
+                call_id=call_id, board_id=renamed.id, title=renamed.title
+            )
+        )
+        return 0, 0, _tool_message(call_id, f"Renamed it {renamed.title!r}.")
 
     def _reject_plain(
         self, call_id: str, code: str, detail: str
@@ -920,6 +1023,32 @@ class TurnRunner:
 
 
 # --- helpers ----------------------------------------------------------------
+
+
+def _board_named(boards: list[Any], wanted: str) -> Any | None:
+    """The version somebody means by that name.
+
+    Forgiving, because the name comes back through a model that read it off a
+    roster and is as likely to say "Stripe" as "Stripe - Payments". Exact match
+    first so a canvas holding both is never guessed at; then a unique prefix or
+    containment, and nothing at all when two versions would answer to it --
+    editing the wrong résumé is worse than asking again.
+    """
+    folded = wanted.casefold().strip()
+    if not folded:
+        return None
+
+    for board in boards:
+        if (board.title or "").casefold().strip() == folded:
+            return board
+
+    near = [
+        board
+        for board in boards
+        if folded in (board.title or "").casefold()
+        or (board.title or "").casefold() in folded
+    ]
+    return near[0] if len(near) == 1 else None
 
 
 def _tool_message(call_id: str, content: str) -> dict[str, Any]:

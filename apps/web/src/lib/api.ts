@@ -134,6 +134,13 @@ export interface StoredMessage {
    * landed. Null on a turn that changed nothing, and on every user message.
    */
   checkpoint?: string | null;
+  /**
+   * Every version this turn touched, and where each stood before it.
+   *
+   * A turn can move between versions, so putting one back means putting back
+   * every board it reached rather than the last it happened to be on.
+   */
+  checkpoints?: { board_id: string; checkpoint_id: string }[];
   /** Which version this turn acted on, and what it is called. */
   board_id?: string | null;
   board?: string | null;

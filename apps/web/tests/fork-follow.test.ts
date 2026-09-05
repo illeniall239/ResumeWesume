@@ -163,3 +163,89 @@ describe('when the assistant starts a version', () => {
     expect(useStudio.getState().documentId).toBe('doc_1');
   });
 });
+
+
+/** Run one `board_switched` or `board_renamed` event through the reducer. */
+function event(type: string, extra: Record<string, unknown>) {
+  let held: ChatMessage = {
+    id: 'a1',
+    role: 'assistant',
+    text: '',
+    status: 'streaming',
+    activity: [{ callId: 'c1', name: type, tier: 'A', status: 'running' }],
+  };
+  applyEvent(
+    { v: 1, seq: 4, ts: '', turn_id: 't1', type, call_id: 'c1', ...extra },
+    (change) => {
+      held = change(held);
+    },
+    () => {},
+    'a1'
+  );
+  return held;
+}
+
+describe('when the assistant moves to another version', () => {
+  it('opens that version and selects it', async () => {
+    // The same reasoning as a fork: the patches after this land there, and a
+    // page still showing the previous one would draw them against a document
+    // that never received them.
+    useCanvas.setState({
+      boards: [board('doc_1', 'General'), board('doc_2', 'Stripe')],
+      selected: 'doc_1',
+    });
+    vi.mocked(fetchDocument).mockResolvedValue(board('doc_2', 'Stripe'));
+
+    event('board_switched', { board_id: 'doc_2', title: 'Stripe' });
+
+    await vi.waitFor(() => expect(useStudio.getState().documentId).toBe('doc_2'));
+    expect(useCanvas.getState().selected).toBe('doc_2');
+    // And it did not add a second copy of a board already on the plane.
+    expect(useCanvas.getState().boards).toHaveLength(2);
+  });
+
+  it('marks the step as done, naming the version', () => {
+    vi.mocked(fetchDocument).mockResolvedValue(board('doc_2', 'Stripe'));
+    const message = event('board_switched', { board_id: 'doc_2', title: 'Stripe' });
+    expect(message.activity[0].label).toBe('moved to Stripe');
+  });
+});
+
+describe('when the assistant renames a version', () => {
+  it('renames it on the plane', () => {
+    useCanvas.setState({
+      boards: [board('doc_1', 'General'), board('doc_2', 'Stripe')],
+      selected: 'doc_1',
+    });
+
+    event('board_renamed', { board_id: 'doc_2', title: 'Stripe — Ledger' });
+
+    expect(useCanvas.getState().boards.map((b) => b.title)).toEqual([
+      'General',
+      'Stripe — Ledger',
+    ]);
+  });
+
+  it('renames it in the bar when it is the version on screen', () => {
+    useCanvas.setState({ boards: [board('doc_1', 'General')], selected: 'doc_1' });
+    useStudio.setState({ documentId: 'doc_1', title: 'General' });
+
+    event('board_renamed', { board_id: 'doc_1', title: 'Backend, senior' });
+
+    expect(useStudio.getState().title).toBe('Backend, senior');
+  });
+
+  it('leaves the bar alone when it is some other version', () => {
+    // The title in the bar names the open board. Writing another board's name
+    // into it would say the wrong thing about the résumé being looked at.
+    useCanvas.setState({
+      boards: [board('doc_1', 'General'), board('doc_2', 'Stripe')],
+      selected: 'doc_1',
+    });
+    useStudio.setState({ documentId: 'doc_1', title: 'General' });
+
+    event('board_renamed', { board_id: 'doc_2', title: 'Stripe — Ledger' });
+
+    expect(useStudio.getState().title).toBe('General');
+  });
+});

@@ -57,7 +57,12 @@ beforeEach(() => {
 
 describe('remembering where a turn began', () => {
   it('keeps the checkpoint of a turn that changed something', () => {
-    expect(afterDone({ checkpoint_id: 'cp-1', applied: 3 }).checkpoint).toBe('cp-1');
+    expect(
+      afterDone({
+        checkpoints: [{ board_id: 'doc-1', checkpoint_id: 'cp-1' }],
+        applied: 3,
+      }).checkpoints
+    ).toEqual([{ boardId: 'doc-1', checkpointId: 'cp-1' }]);
   });
 
   it('keeps nothing for a turn that changed nothing', () => {
@@ -65,11 +70,16 @@ describe('remembering where a turn began', () => {
     // to undo a turn that only answered a question would restore a document
     // identical to the current one: a new version, a fresh history entry, and
     // no visible effect — which reads as a broken control.
-    expect(afterDone({ checkpoint_id: 'cp-1', applied: 0 }).checkpoint).toBeUndefined();
+    expect(
+      afterDone({
+        checkpoints: [{ board_id: 'doc-1', checkpoint_id: 'cp-1' }],
+        applied: 0,
+      }).checkpoints
+    ).toBeUndefined();
   });
 
-  it('survives a server that sends no checkpoint at all', () => {
-    expect(afterDone({ applied: 2 }).checkpoint).toBeUndefined();
+  it('has nothing to offer when the server sends no snapshot at all', () => {
+    expect(afterDone({ applied: 2 }).checkpoints).toEqual([]);
   });
 });
 
@@ -83,7 +93,7 @@ describe('undoing the turn', () => {
       doc: DOC as never,
       updated_at: '',
     } as never);
-    useChat.setState({ messages: [message({ checkpoint: 'cp-1' })] });
+    useChat.setState({ messages: [message({ checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }] })] });
 
     await useChat.getState().undoTurn('a1');
 
@@ -110,7 +120,7 @@ describe('undoing the turn', () => {
       local: [{ op: 'set_text', nid: 'gone', value: 'x' }] as never,
       changed: new Set(['gone']),
     });
-    useChat.setState({ messages: [message({ checkpoint: 'cp-1' })] });
+    useChat.setState({ messages: [message({ checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }] })] });
 
     await useChat.getState().undoTurn('a1');
 
@@ -123,7 +133,7 @@ describe('undoing the turn', () => {
     // A line saying "reverted" over a sheet that still carries the changes is
     // worse than no line at all.
     vi.mocked(revertToCheckpoint).mockRejectedValue(new Error('409: gone'));
-    useChat.setState({ messages: [message({ checkpoint: 'cp-1' })] });
+    useChat.setState({ messages: [message({ checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }] })] });
 
     await useChat.getState().undoTurn('a1');
 
@@ -132,7 +142,7 @@ describe('undoing the turn', () => {
   });
 
   it('will not revert the same turn twice', async () => {
-    useChat.setState({ messages: [message({ checkpoint: 'cp-1', reverted: true })] });
+    useChat.setState({ messages: [message({ checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }], reverted: true })] });
     await useChat.getState().undoTurn('a1');
     expect(revertToCheckpoint).not.toHaveBeenCalled();
   });
@@ -148,7 +158,7 @@ describe('the offer, in the transcript', () => {
   const shown = () => screen.queryByRole('button', { name: /undo this turn/i });
 
   it('is made on a turn that changed the document', () => {
-    render(<Revision message={message({ status: 'ok', checkpoint: 'cp-1' })} />);
+    render(<Revision message={message({ status: 'ok', checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }] })} />);
     expect(shown()).toBeInTheDocument();
   });
 
@@ -158,7 +168,7 @@ describe('the offer, in the transcript', () => {
   });
 
   it('is replaced by a statement once taken', () => {
-    render(<Revision message={message({ status: 'ok', checkpoint: 'cp-1', reverted: true })} />);
+    render(<Revision message={message({ status: 'ok', checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }], reverted: true })} />);
     expect(shown()).not.toBeInTheDocument();
     expect(screen.getByText(/as it was before this/i)).toBeInTheDocument();
   });
@@ -167,7 +177,7 @@ describe('the offer, in the transcript', () => {
     // A revert lands as a whole new version; racing it against a save in
     // flight is how two clients end up disagreeing about which one won.
     useStudio.setState({ saving: true });
-    render(<Revision message={message({ status: 'ok', checkpoint: 'cp-1' })} />);
+    render(<Revision message={message({ status: 'ok', checkpoints: [{ boardId: 'doc-1', checkpointId: 'cp-1' }] })} />);
     expect(shown()).toBeDisabled();
   });
 });

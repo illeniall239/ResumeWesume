@@ -228,7 +228,7 @@ export function Revision({ message }: { message: ChatMessage }) {
             presses -- long enough that people stop halfway and are left with a
             document nobody asked for. This is offered only on a turn that
             actually moved the sheet; see `ChatMessage.checkpoint`. */}
-        {message.checkpoint && !message.reverted && (
+        {message.checkpoints?.length && !message.reverted ? (
           <button
             type="button"
             className="revision__undo"
@@ -237,9 +237,9 @@ export function Revision({ message }: { message: ChatMessage }) {
             title="Put the résumé back to how it was before this turn"
           >
             <Undo size={12} />
-            Undo this turn
+            {message.checkpoints.length > 1 ? 'Undo this turn everywhere' : 'Undo this turn'}
           </button>
-        )}
+        ) : null}
         {message.reverted && (
           <p className="revision__status">Reverted. The sheet is as it was before this.</p>
         )}

@@ -39,15 +39,18 @@ export interface ChatMessage {
   activity: ToolActivity[];
   status?: 'streaming' | 'ok' | 'partial' | 'failed' | 'cancelled';
   /**
-   * The snapshot taken before this turn's first edit, streamed on `done`.
+   * Every version this turn touched, and where each stood before it.
+   *
+   * A list because a turn can move between versions: "add Rust to the Stripe
+   * one" edits a board the turn did not start on, and putting it back means
+   * putting back every board it reached.
    *
    * Only set when the turn actually changed something. A turn that answered a
-   * question and touched nothing has a checkpoint too, but reverting to it
-   * would restore a document identical to the current one -- a new version, a
-   * fresh entry in the history, and no visible effect, which is the shape of a
-   * control that appears broken.
+   * question and touched nothing has snapshots too, but restoring one would
+   * write a new version and change nothing on screen -- which is the shape of
+   * a control that appears broken.
    */
-  checkpoint?: string;
+  checkpoints?: { boardId: string; checkpointId: string }[];
   /** Already put back. The offer is not made twice. */
   reverted?: boolean;
   /**
@@ -252,10 +255,15 @@ export const useChat = create<ChatState>((set, get) => ({
    */
   async undoTurn(messageId) {
     const message = get().messages.find((held) => held.id === messageId);
-    if (!message?.checkpoint || message.reverted) return;
+    if (!message?.checkpoints?.length || message.reverted) return;
 
-    await useStudio.getState().revertTo(message.checkpoint);
-    if (useStudio.getState().error) return;
+    // Every board it touched, not the one that happens to be open. A turn that
+    // moved between versions changed both, and putting back only the one on
+    // screen would leave the other quietly edited.
+    for (const point of message.checkpoints) {
+      await useStudio.getState().revertTo(point.checkpointId, point.boardId);
+      if (useStudio.getState().error) return;
+    }
 
     set({
       messages: get().messages.map((held) =>
@@ -279,7 +287,12 @@ export const useChat = create<ChatState>((set, get) => ({
           text: message.text,
           activity: [],
           status: message.status ?? undefined,
-          checkpoint: message.checkpoint ?? undefined,
+          checkpoints: message.checkpoints?.length
+            ? message.checkpoints.map((point) => ({
+                boardId: point.board_id,
+                checkpointId: point.checkpoint_id,
+              }))
+            : undefined,
           board: message.board ?? undefined,
           boardId: message.board_id ?? undefined,
         })),
@@ -462,6 +475,45 @@ export function applyEvent(
       break;
     }
 
+    case 'board_switched': {
+      // The turn moved onto another version. Same reasoning as a fork: the
+      // patches after this land there, and a page still showing the previous
+      // one would draw them against a document that never received them.
+      studio.adoptBoard(String(event.board_id), String(event.title));
+      patch((message) => ({
+        ...message,
+        activity: message.activity.map((item) =>
+          item.callId === event.call_id
+            ? {
+                ...item,
+                status: 'applied' as const,
+                label: `moved to ${String(event.title)}`,
+              }
+            : item
+        ),
+      }));
+      break;
+    }
+
+    case 'board_renamed': {
+      // The name is what both the reader and the assistant refer to a version
+      // by, so the plane and the rails have to show the new one at once.
+      studio.renameBoard(String(event.board_id), String(event.title));
+      patch((message) => ({
+        ...message,
+        activity: message.activity.map((item) =>
+          item.callId === event.call_id
+            ? {
+                ...item,
+                status: 'applied' as const,
+                label: `renamed it ${String(event.title)}`,
+              }
+            : item
+        ),
+      }));
+      break;
+    }
+
     case 'patch_applied': {
       const touched = (event.touched as string[]) ?? [];
       patch((message) => ({
@@ -585,11 +637,26 @@ export function applyEvent(
       patch((message) => ({
         ...message,
         status: (event.status as ChatMessage['status']) ?? 'ok',
-        // Where this turn began. Kept only when it moved the document: see
-        // `ChatMessage.checkpoint`.
-        checkpoint:
-          Number(event.applied) > 0 && typeof event.checkpoint_id === 'string'
-            ? event.checkpoint_id
+        // Every board this turn touched. Kept only when it moved something:
+        // see `ChatMessage.checkpoints`.
+        checkpoints:
+          Number(event.applied) > 0
+            ? ((event.checkpoints as { board_id: string; checkpoint_id: string }[]) ?? [])
+                .map((point) => ({
+                  boardId: point.board_id,
+                  checkpointId: point.checkpoint_id,
+                }))
+                // An older server sends one id and no list.
+                .concat(
+                  typeof event.checkpoint_id === 'string' && !event.checkpoints
+                    ? [
+                        {
+                          boardId: useStudio.getState().documentId ?? '',
+                          checkpointId: event.checkpoint_id,
+                        },
+                      ]
+                    : []
+                )
             : undefined,
       }));
       break;

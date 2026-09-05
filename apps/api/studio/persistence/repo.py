@@ -461,13 +461,19 @@ class DocumentRepo:
 
     async def turn_checkpoints_for_canvas(
         self, canvas_id: str
-    ) -> dict[str, tuple[str, int, str]]:
-        """The same as ``turn_checkpoints``, for every board on a canvas.
+    ) -> dict[str, list[tuple[str, int, str]]]:
+        """Every snapshot each turn took, for every board on a canvas.
 
-        Returns ``turn_id`` -> (checkpoint id, version, document id). The
-        document id comes back because a canvas-wide transcript holds turns
-        against several boards, and whether a snapshot is worth offering
-        depends on how far *that* board has moved since.
+        ``turn_id`` -> [(checkpoint id, version, document id), ...].
+
+        A *list* per turn, because a turn can move between versions: "add Rust
+        to the Stripe one" takes a snapshot of the board it started on and
+        another of the board it moved to, and undoing that turn has to put back
+        both. Keyed by turn alone this silently kept whichever row the database
+        returned last.
+
+        The document id comes back with each because whether a snapshot is
+        worth offering depends on how far *that* board has moved since.
         """
         async with self._session() as session:
             result = await session.execute(
@@ -476,12 +482,16 @@ class DocumentRepo:
                 .join(Document, Document.id == Checkpoint.document_id)
                 .where(Document.canvas_id == canvas_id)
                 .where(Checkpoint.turn_id.is_not(None))
+                .order_by(Checkpoint.created_at)
             )
-            return {
-                turn_id: (checkpoint_id, version, document_id)
-                for turn_id, checkpoint_id, version, document_id in result.all()
-                if turn_id
-            }
+            found: dict[str, list[tuple[str, int, str]]] = {}
+            for turn_id, checkpoint_id, version, document_id in result.all():
+                if not turn_id:
+                    continue
+                found.setdefault(turn_id, []).append(
+                    (checkpoint_id, version, document_id)
+                )
+            return found
 
     async def clear_conversation(self, document_id: str) -> None:
         async with self._session() as session:

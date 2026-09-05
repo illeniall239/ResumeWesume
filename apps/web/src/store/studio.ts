@@ -157,8 +157,14 @@ interface StudioState {
   aimAt: (text: string) => Promise<void>;
   /** The same, read out of a PDF from a job board. */
   aimAtPdf: (file: File) => Promise<void>;
-  /** Put the document back to how it was before one agent turn. */
-  revertTo: (checkpointId: string) => Promise<void>;
+  /**
+   * Put one board back to how it was before an agent turn.
+   *
+   * `boardId` names which, because a turn can move between versions and the
+   * board being restored is not always the one on screen. Restoring a board
+   * that is not open updates the plane and leaves the live document alone.
+   */
+  revertTo: (checkpointId: string, boardId?: string) => Promise<void>;
   clearError: () => void;
   /** Point at where the agent is working. `null` puts the pen up. */
   attend: (attention: Attention | null) => void;
@@ -171,6 +177,15 @@ interface StudioState {
    * store's `adopt` is what makes it visible and selected.
    */
   adoptBoard: (boardId: string, title: string) => void;
+  /**
+   * A version the assistant has renamed.
+   *
+   * Applied to the plane always, and to the rails only when it is the version
+   * on screen -- the title in the bar names the open board, and writing
+   * another board's name into it would say the wrong thing about the résumé
+   * being looked at.
+   */
+  renameBoard: (boardId: string, title: string) => void;
   rename: (title: string) => Promise<void>;
   draft: (target: string, text: string) => void;
   clearDrafts: () => void;
@@ -411,6 +426,12 @@ export const useStudio = create<StudioState>((set, get) => ({
       });
   },
 
+  renameBoard(boardId, title) {
+    const held = useCanvas.getState().boards.find((board) => board.id === boardId);
+    if (held) useCanvas.getState().absorb({ ...held, title });
+    if (get().documentId === boardId) set({ title });
+  },
+
   attend(attention) {
     set({ attention });
   },
@@ -580,12 +601,25 @@ export const useStudio = create<StudioState>((set, get) => ({
    * otherwise be replayed on top of a document that no longer has the nodes
    * they name, which is a rejection at best and a mangled sheet at worst.
    */
-  async revertTo(checkpointId) {
+  async revertTo(checkpointId, boardId) {
     const { documentId } = get();
-    if (!documentId) return;
+    const target = boardId ?? documentId;
+    if (!target) return;
     set({ saving: true, error: null });
     try {
-      const result = await revertToCheckpoint(documentId, checkpointId);
+      const result = await revertToCheckpoint(target, checkpointId);
+
+      // A board the turn reached but which is not the one on screen. It still
+      // has to go back, and the plane has to show that it did -- but nothing
+      // about the live document changes, and overwriting it with another
+      // board's contents is the bug this branch exists to avoid.
+      if (target !== documentId) {
+        useCanvas.getState().absorb(result);
+        set({ saving: false });
+        return;
+      }
+
+      useCanvas.getState().absorb(result);
       set({
         doc: result.doc,
         // As with `history`: the server document has to move too, or the next

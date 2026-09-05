@@ -166,6 +166,79 @@ class ForkBoard(ToolSpec):
         return f"started {args.name}"
 
 
+class SwitchBoardArgs(BaseModel):
+    name: str = Field(
+        description=(
+            "The version to work on, by the name it is listed under in "
+            "VERSIONS. A close match is enough."
+        )
+    )
+    reason: str = ""
+
+
+class SwitchBoard(ToolSpec):
+    """Work on a version of the résumé other than the one that is open.
+
+    The other half of the roster: naming the versions is what lets somebody say
+    "add Rust to the Stripe one", and this is what makes that reach it. Without
+    it the assistant can see the other versions and can only answer that it
+    cannot get to them.
+
+    Tier A on the same reasoning as ``fork_board``: it changes which document
+    the following calls address and edits nothing itself, and every one of
+    those calls is gated on its own terms once it lands.
+    """
+
+    name = "switch_board"
+    tier = "A"
+    description = """
+    Work on a different version of this resume, named in VERSIONS. Use it when
+    the user names a version other than the one you are editing. Everything you
+    do after this lands on that version.
+    """
+    Args = SwitchBoardArgs
+
+    def compile(self, args: BaseModel, doc: StudioDoc) -> list[DocOp]:
+        # No ops: it acts on the repository, so the loop runs it directly.
+        return []
+
+    def label(self, args: SwitchBoardArgs) -> str:
+        return f"moved to {args.name}"
+
+
+class RenameBoardArgs(BaseModel):
+    name: str = Field(description="The new name for this version.")
+    reason: str = ""
+
+
+class RenameBoard(ToolSpec):
+    """Rename the version being edited.
+
+    A version is named when it is started, from what was asked for -- and what
+    a version is *for* can turn out to be different from what it was started
+    for. A name that has stopped describing its version is worse than no name,
+    because the roster is how both the user and the assistant refer to them.
+
+    Not an op, for the same reason a document's title is not: a name is about
+    the version rather than in it, moves no version number, and would otherwise
+    sit in the undo stack between two real edits.
+    """
+
+    name = "rename_board"
+    tier = "A"
+    description = """
+    Rename the version you are working on. Use it when its purpose has changed
+    from what it was named for, or when the user asks for a different name.
+    """
+    Args = RenameBoardArgs
+
+    def compile(self, args: BaseModel, doc: StudioDoc) -> list[DocOp]:
+        return []
+
+    def label(self, args: RenameBoardArgs) -> str:
+        return f"renamed it {args.name}"
+
+
 class FindTextArgs(BaseModel):
     query: str = Field(description="Words to look for, e.g. 'the AWS bullet'.")
     limit: int = Field(default=5, ge=1, le=20)
@@ -2012,6 +2085,8 @@ def _default_specs() -> list[ToolSpec]:
         ReadDocument(),
         FindText(),
         ForkBoard(),
+        SwitchBoard(),
+        RenameBoard(),
         RewriteText(),
         AddBullet(),
         RemoveBullet(),

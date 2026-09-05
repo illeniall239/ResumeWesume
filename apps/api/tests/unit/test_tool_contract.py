@@ -67,6 +67,10 @@ CALLS: dict[str, dict] = {
     # Compiles to nothing on purpose: it acts on the repository rather than on
     # the document, so the loop executes it directly the way it does a read.
     "fork_board": {"name": "Stripe - Payments"},
+    # Both compile to nothing for the same reason as fork_board: they act on
+    # the repository, so the loop executes them directly.
+    "switch_board": {"name": "Stripe - Payments"},
+    "rename_board": {"name": "Stripe - Backend"},
     "rewrite_text": {"nid": BULLET, "value": "Cut latency 96%."},
     "add_bullet": {"parent": EXP, "value": "Shipped the thing."},
     "remove_bullet": {"nid": BULLET},

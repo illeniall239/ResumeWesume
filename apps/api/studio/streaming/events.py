@@ -183,11 +183,41 @@ class BoardForked(Event):
     from_board: str
 
 
+class BoardSwitched(Event):
+    """The turn moved onto another existing version of the résumé.
+
+    The client follows, exactly as it does for a fork: everything after this
+    lands on that board, and a page still showing the previous one would draw
+    patches against a document that never received them.
+    """
+
+    type: Literal["board_switched"] = "board_switched"
+    call_id: str
+    board_id: str
+    title: str
+
+
+class BoardRenamed(Event):
+    """A version was given a different name."""
+
+    type: Literal["board_renamed"] = "board_renamed"
+    call_id: str
+    board_id: str
+    title: str
+
+
 class Done(Event):
     type: Literal["done"] = "done"
     doc_version: int
     hash: str
+    #: Where the board the turn ended on stood before it. Kept for the common
+    #: turn, which touches one.
     checkpoint_id: str | None = None
+    #: Every board the turn touched, and where each stood before it.
+    #:
+    #: A turn can move between versions, so undoing one has to put back every
+    #: board it reached rather than the last it happened to be on.
+    checkpoints: list[dict[str, str]] = Field(default_factory=list)
     applied: int = 0
     rejected: int = 0
     status: Literal["ok", "partial", "failed", "cancelled"] = "ok"
