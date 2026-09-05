@@ -46,7 +46,7 @@ from studio.agent.assembler import (
     ToolCallAssembler,
 )
 from studio.agent.budget import BudgetExceeded, TurnBudget
-from studio.agent.context import find, full_section, outline, uploads
+from studio.agent.context import find, full_section, outline, roster, uploads
 from studio.agent.grounding import Grounder
 from studio.agent.prompts import build_messages, repair_message
 from studio.agent.prose import ProseStream
@@ -125,6 +125,24 @@ class TurnRunner:
         #: over a finished document.
         self._unsupported: list[str] = []
         self._identity_changes: list[str] = []
+        #: The board this turn is editing. Starts as the one the request named
+        #: and moves when the assistant forks: everything after that lands on
+        #: the copy, which is the whole point of forking before tailoring.
+        self._target = ""
+        #: The board the turn *started* on, which never moves.
+        #:
+        #: Every fork cuts from here rather than from wherever the turn has got
+        #: to. Asked for three versions, a model forks three times -- and cutting
+        #: each from the last would make them one version narrowed three times,
+        #: each further from the résumé than the one before it.
+        self._origin = ""
+        #: The snapshot taken before the first edit *to the board being
+        #: edited*. A fork replaces it, because a fresh copy has nothing to
+        #: undo back to and the checkpoint from the original board would put
+        #: the user back on the wrong document.
+        self._checkpoint = ""
+        #: What the guards compare against, for the same reason.
+        self._base_doc: StudioDoc | None = None
 
     async def run(self, request: TurnRequest, channel: TurnChannel) -> TurnResult:
         started = time.monotonic()
@@ -137,11 +155,18 @@ class TurnRunner:
             return TurnResult("failed", 0, 0, None, 0)
 
         base_doc = state.doc
+        # The posting the sheet is aimed at, from the document rather than from
+        # the turn. Tailoring is not one instruction -- you ask, you read it
+        # back, you ask again -- and carried on the message alone it survived
+        # exactly one exchange, after which every follow-up worked with no idea
+        # what the résumé was being aimed at. A turn may still carry its own,
+        # which wins: that is a one-off "try it against this instead".
+        job_description = request.job_description or state.job_description
         ledger = IntentLedger(turn_id=channel.turn_id)
         grounder = Grounder.build(
             base_doc,
             user_message=request.message,
-            jd_keywords=_keywords(request.job_description),
+            jd_keywords=_keywords(job_description),
         )
 
         # Scaffolding is not somebody's résumé, so the guards that protect one
@@ -162,9 +187,13 @@ class TurnRunner:
         )
         schemas = self._registry.schemas(tiers)
 
+        self._target = request.document_id
+        self._origin = request.document_id
         checkpoint_id = await self._repo.checkpoint(
             request.document_id, label="before turn", turn_id=channel.turn_id
         )
+        self._checkpoint = checkpoint_id
+        self._base_doc = base_doc
 
         channel.emit(
             ev.TurnStarted(
@@ -183,11 +212,21 @@ class TurnRunner:
         if listing:
             outline_text = f"{outline_text}\n\n{listing}"
 
+        # The other versions of this résumé, by name. Read-only context: a turn
+        # edits one board, and knowing the others exist is what stops the
+        # assistant proposing a change that already lives on one of them -- and
+        # lets it name the one the user should open instead.
+        if state.canvas_id:
+            canvas = await self._repo.get_canvas(state.canvas_id)
+            listed = roster(canvas.boards, request.document_id) if canvas else ""
+            if listed:
+                outline_text = f"{outline_text}\n\n{listed}"
+
         messages = build_messages(
             user_message=request.message,
             outline_text=outline_text,
             history=request.history,
-            job_description=request.job_description,
+            job_description=job_description,
             scaffold=scaffolding,
         )
 
@@ -217,6 +256,10 @@ class TurnRunner:
                 tool_messages: list[dict[str, Any]] = []
                 executed_any = False
                 applied_this_round = 0
+                # Read back at the end of the round rather than flagged through
+                # three call sites: "did the turn move onto a new version" is
+                # exactly the question, and the target is where the answer is.
+                target_at_round_start = self._target
                 # A round is an utterance: the model spoke, did some work, and
                 # is speaking again.
                 prose.new_utterance()
@@ -324,8 +367,13 @@ class TurnRunner:
 
                 # A round that changed something resets the stall counter, so a
                 # turn working steadily through a resume runs as long as it
-                # needs to. Only rounds that change nothing count against it.
-                self._budget.end_iteration(applied_this_round)
+                # needs to. Only rounds that change nothing count against it --
+                # and starting a new version counts as something, though it
+                # applies no ops.
+                self._budget.end_iteration(
+                    applied_this_round,
+                    progressed=self._target != target_at_round_start,
+                )
 
                 if parts_task is not None:
                     parts = await parts_task
@@ -473,7 +521,7 @@ class TurnRunner:
             ev.Done(
                 doc_version=final.version if final else state.version,
                 hash=final.content_hash if final else state.content_hash,
-                checkpoint_id=checkpoint_id,
+                checkpoint_id=self._checkpoint or checkpoint_id,
                 applied=applied_total,
                 rejected=rejected_total,
                 status=status,  # type: ignore[arg-type]
@@ -485,7 +533,7 @@ class TurnRunner:
             status=status,
             applied=applied_total,
             rejected=rejected_total,
-            checkpoint_id=checkpoint_id,
+            checkpoint_id=self._checkpoint or checkpoint_id,
             version=final.version if final else state.version,
         )
 
@@ -501,7 +549,7 @@ class TurnRunner:
         repairs_per_call: dict[str, int],
     ) -> tuple[int, int, dict[str, Any]]:
         """Run one tool call. Returns (applied, rejected, tool message)."""
-        state = await self._repo.get(request.document_id)
+        state = await self._repo.get(self._target)
         doc = state.doc if state else StudioDoc()
 
         name = call.name
@@ -564,6 +612,9 @@ class TurnRunner:
         if name in _READ_ONLY:
             return 0, 0, self._read(name, args, doc, call.call_id)
 
+        if name == "fork_board":
+            return await self._fork(args, channel, call.call_id)
+
         # Grounding used to reject an ungrounded skill outright. It now records
         # one. The rejection was the engine overruling a request the person had
         # already made in plain words -- and it overruled the model too, which
@@ -617,7 +668,7 @@ class TurnRunner:
 
         try:
             new_state, applied, rejected = await self._repo.apply(
-                request.document_id, ops, ctx=ctx, turn_id=channel.turn_id
+                self._target, ops, ctx=ctx, turn_id=channel.turn_id
             )
         except Exception as error:  # noqa: BLE001
             logger.error("Applying %s failed: %s", name, error)
@@ -679,6 +730,78 @@ class TurnRunner:
             note += f" Skills now: {listed}."
 
         return (len(applied), len(rejected), _tool_message(call.call_id, note))
+
+    async def _fork(
+        self,
+        args: BaseModel,
+        channel: TurnChannel,
+        call_id: str,
+    ) -> tuple[int, int, dict[str, Any]]:
+        """Copy the board being edited, and edit the copy from here on.
+
+        Why the assistant is asked to do this before tailoring: a résumé cut
+        down for one job is thin material for the next, and cutting it in place
+        means the general version is gone. A copy costs nothing and keeps the
+        original whole.
+
+        Three things move with the target, and each of them is a real bug if it
+        does not. The **checkpoint**, because a fresh copy has nothing to undo
+        back to and the original's snapshot would put the user on the wrong
+        document. The **guard baseline**, because comparing a copy against the
+        original's pre-turn state reads every line of it as a change the
+        assistant just made. And the **document the client is showing**, which
+        is what the event below is for.
+        """
+        name = args.name.strip()  # type: ignore[attr-defined]
+        # From the board the turn started on, never from wherever it has got to.
+        # Asked for three versions a model forks three times, and cutting each
+        # from the last would make them one version narrowed three times.
+        source = await self._repo.get(self._origin)
+        if source is None or not source.canvas_id:
+            return self._reject_plain(
+                call_id, "no_canvas", "This résumé has no canvas to add a version to."
+            )
+
+        fresh = await self._repo.create(
+            source.doc,
+            title=name[:200] or "Untitled",
+            canvas_id=source.canvas_id,
+        )
+        # The posting comes with it: a version aimed at a job is still aimed at
+        # it, and the next turn reads this off the document.
+        if source.job_description:
+            await self._repo.set_job_description(fresh.id, source.job_description)
+
+        self._target = fresh.id
+        self._base_doc = fresh.doc
+        self._checkpoint = await self._repo.checkpoint(
+            fresh.id, label="before turn", turn_id=channel.turn_id
+        )
+
+        channel.emit(
+            ev.BoardForked(
+                call_id=call_id,
+                board_id=fresh.id,
+                title=fresh.title,
+                from_board=source.id,
+            )
+        )
+        return (
+            0,
+            0,
+            _tool_message(
+                call_id,
+                f"Created {fresh.title!r} as a copy of this résumé, and you are "
+                "now editing that copy. The original is untouched. Make the "
+                "changes for this job here.",
+            ),
+        )
+
+    def _reject_plain(
+        self, call_id: str, code: str, detail: str
+    ) -> tuple[int, int, dict[str, Any]]:
+        """A refusal with no tool spec to report against."""
+        return 0, 1, _tool_message(call_id, f"Rejected: {code}. {detail}")
 
     def _read(
         self, name: str, args: BaseModel, doc: StudioDoc, call_id: str
@@ -760,11 +883,15 @@ class TurnRunner:
         channel: TurnChannel,
     ):
         """Run the drift guards against the pre-turn document."""
-        state = await self._repo.get(request.document_id)
+        state = await self._repo.get(self._target)
         if state is None:
             return None
 
-        corrected, reports = run_guards(base_doc, state.doc, ledger)
+        # Against the board actually edited, and its state before this turn --
+        # both of which a fork moves. Comparing a forked board against the
+        # original's pre-turn document would read every line of the copy as an
+        # edit the assistant had just made.
+        corrected, reports = run_guards(self._base_doc or base_doc, state.doc, ledger)
 
         for report in reports:
             if report.reverted:
@@ -785,9 +912,9 @@ class TurnRunner:
             # A guard firing means something got past the gates. Persist the
             # corrected document rather than leaving the drift in place.
             await self._repo.replace(
-                request.document_id, corrected, reason="drift_guard"
+                self._target, corrected, reason="drift_guard"
             )
-            return await self._repo.get(request.document_id)
+            return await self._repo.get(self._target)
 
         return state
 

@@ -4,79 +4,81 @@
  * Everything that is not the document. Loaded after `globals.css` and never
  * reaching a PDF -- the print block at the foot of this file removes it all.
  *
- * The world is drawing-office revision practice. A resume is a controlled
- * document: alterations are numbered, ringed by a revision cloud, and the
- * superseded issue is never destroyed. That is not decoration, it is the
- * product's actual guarantee -- every AI edit compiles to validated primitives
- * with a total inverse -- rendered in the notation of a trade that solved the
- * same problem on paper a century ago.
+ * The world is a quiet workshop, from D10: warm grey ground, white chrome,
+ * near-black ink, hairlines. It replaced a dark drafting board, and the
+ * replacement is a retheme rather than a rewrite -- almost every rule below
+ * reads a token, so the light world is these values and everything the old one
+ * reasoned about (spacing, weight, where a rule falls) still holds.
  *
- * Three rules hold the whole sheet together:
+ * Three rules hold the sheet together:
  *
- * 1. The resume is the only paper-white surface. Nothing else may be white.
- *    The board is deep Prussian so that the print is the brightest thing on
- *    screen and stays that way at any zoom.
+ * 1. The résumé is still the brightest thing on screen. The board is warm grey
+ *    so the paper sits above it; nothing else may be paper-white except the
+ *    chrome that frames it.
  * 2. Colour means state and nothing else. Revision red is a proposal awaiting
  *    a decision; check green is accepted and grounded. Neither is ever brand,
  *    accent, or emphasis. If a colour appears where no state exists, it is a bug.
  * 3. Rank comes from lettering size and line weight. No box, bezel, card or
- *    container manufactures hierarchy -- a drawing does not have cards.
+ *    container manufactures hierarchy.
  */
 
 :root {
   /* --- the board --------------------------------------------------------
-     A black drafting board. Neutral rather than pure #000: a true black under
-     a paper-white sheet makes the sheet glare, and every rule drawn on it has
-     to be lifted to something that is no longer black anyway. These are grey
-     at very low value, so they read as black and still hold a hairline.
+     Warm grey rather than a neutral: against it the white sheet reads as paper
+     rather than as a brighter grey, which is the whole reason the board is not
+     white itself. `--board-deep` is the recessed surface (composer, wells),
+     `--board-raised` the lifted one (chrome, bars) -- the names are inherited
+     from the dark world and their *roles* are unchanged, so every rule that
+     used them still means what it meant. */
+  --board: #e8e7e3;
+  --board-deep: #efedea;
+  --board-raised: #ffffff;
+  --board-lift: #f6f5f2;
+  --hair: #d5d4cf;
+  --hair-soft: #e5e4e0;
 
-     The near-black-plus-one-neon-accent look is a real trap here, and the
-     guards against it are structural: colour appears only where a state
-     exists, no glow or bloom is used anywhere, and nothing is saturated except
-     the two state hues. */
-  --board: #0f0f10;
-  --board-deep: #08080a;
-  --board-raised: #1a1a1c;
-  --board-lift: #232326;
-  --hair: #2e2e33;
-  --hair-soft: #1e1e21;
+  /* Inks. Ratios computed against the board (#E8E7E3), not guessed:
+     14.3:1, 5.1:1 and 4.7:1. `--legend-faint` sits just above the body-text
+     floor and
+     is the dimmest ink permitted to carry words; anything quieter is a rule.
 
-  /* Legend inks, silkscreened onto the board. The ratios against --board are
-     computed, not guessed: 16.1:1, 8.0:1 and 4.6:1. --legend-faint sits
-     deliberately just above the 4.5:1 body-text floor and is the dimmest ink
-     permitted to carry words; anything quieter is a rule, not text. */
-  --legend: #ededed;
-  --legend-dim: #a8a8ad;
-  --legend-faint: #7e7e85;
+     D10's own faint (#9B9A92) is 2.3:1 -- fine for the hairline labels it uses
+     it for and not for text, so the token here is darkened to the floor and
+     the design's value survives as `--hair` where it belongs. */
+  --legend: #191913;
+  --legend-dim: #61605a;
+  --legend-faint: #67665f;
 
-  /* Revision red. Three values because one hue cannot clear 4.5:1 on both a
-     black board and white paper: --rev is the mark (strokes, clouds, rules,
-     which need only 3:1 and clear 4.2:1), --rev-text is red words on the board
-     at 6.5:1, and --rev-ink is red words on paper at 6.1:1. */
-  --rev: #d8402f;
-  --rev-text: #f2705c;
+  /* Revision red. Three values because one hue cannot clear 4.5:1 on both the
+     board and white paper: `--rev` is the mark (strokes, rules, which need
+     3:1), `--rev-text` is red words on the board, and `--rev-ink` red words on
+     paper at 6.0:1. On a light board the words want the ink value -- which is
+     the swap the dark theme made in the other direction. */
+  --rev: #c0392b;
+  --rev-text: #a8281c;
   --rev-ink: #b8301f;
-  --rev-wash: rgba(216, 64, 47, 0.15);
+  --rev-wash: rgba(184, 48, 31, 0.1);
 
-  /* Check green, same reasoning: 7.5:1 on the board, 5.2:1 on paper. */
-  --check: #43b878;
+  /* Check green, same reasoning: 5.1:1 on the board as words. Darker than the
+     value that reads on paper, because the board is lighter than the board the
+     old value was computed against and the same hue does not clear both. */
+  --check: #1b6e3e;
   --check-ink: #1e7a45;
-  --check-wash: rgba(67, 184, 120, 0.14);
+  --check-wash: rgba(30, 122, 69, 0.12);
 
-  /* Overrides the document-affordance accent from globals.css. Every place it
-     is used is drawn on the résumé rather than on the board -- a focus ring, a
-     marquee, a caret hover -- so it is chosen against white paper, where it
-     clears 8.4:1, and it is the one colour here the board does not own. */
+  /* The document-affordance accent from globals.css. Every place it is used is
+     drawn on the résumé -- a focus ring, a marquee, a caret hover -- so it is
+     chosen against white paper, where it clears 8.4:1. */
   --accent: #1b4f86;
   /* One ink for every control that cannot be pressed. Disabled components are
-     exempt from WCAG 1.4.3, but 2.5:1 reads as a rendering fault rather than
-     as unavailable -- and the state is already carried by the fill coming off
-     the control, so the label does not have to go faint as well to say it. */
-  --legend-off: #8a8a92;
-  /* Focus, on the board. Deliberately a third hue: red means a proposal and
-     green means accepted, so a focus ring in either would claim a state the
-     element is not in. */
-  --focus: #7cb8f0;
+     exempt from WCAG 1.4.3, but a value that reads as a rendering fault is
+     worse than one that reads as unavailable -- and the state is already
+     carried by the fill, so the label need not go faint as well to say it. */
+  --legend-off: #9b9a92;
+  /* Focus. Deliberately a third hue: red means a proposal and green means
+     accepted, so a focus ring in either would claim a state the element is
+     not in. */
+  --focus: #1b4f86;
 
   --font-legend: var(--font-narrow), 'Archivo Narrow', ui-sans-serif, system-ui,
     sans-serif;
@@ -167,19 +169,6 @@ textarea {
   color: var(--legend-dim);
 }
 
-/* The product name, where a legend used to say "Assistant".
-   Not `.legend`: that uppercases, and RESUMEWESUME is one long word with the
-   join lost -- the name only reads if the second capital survives. Wide
-   tracking goes with it, since letter-spacing is what makes small caps
-   legible and mixed case does not need the help. */
-.wordmark {
-  font-family: var(--font-legend);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: var(--legend);
-}
-
 /* --- controls -------------------------------------------------------------
    One control family. Rank between them is weight and lettering, never a
    container: the primary action is filled because it is the only filled thing
@@ -189,15 +178,19 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 6px 10px;
   border: 1px solid var(--hair);
+  border-radius: 4px;
   background: transparent;
-  color: var(--legend-dim);
-  font-family: var(--font-legend);
-  font-size: 11.5px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
+  color: var(--legend);
+  /* Sentence case in the UI face, not condensed caps with wide tracking. The
+     lettering was drawing-office notation and went with the board it was drawn
+     on; a workshop labels its controls in the words they are. */
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
   text-decoration: none;
   cursor: pointer;
   transition: border-color 120ms ease-out, color 120ms ease-out,
@@ -206,43 +199,69 @@ textarea {
 
 .ctl:hover:not(:disabled) {
   border-color: var(--legend-faint);
-  color: var(--legend);
+  background: var(--board-lift);
 }
 
 .ctl:disabled {
-  /* Not opacity. A translucent control on a patterned ground reads as a render
-     bug; a control that has visibly lost its ink reads as unavailable. */
+  /* Not opacity. A translucent control reads as a render bug; one that has
+     visibly lost its ink reads as unavailable. */
   border-color: var(--hair-soft);
   color: var(--legend-off);
   cursor: default;
 }
 
+/* The one filled control on the sheet. Rank is the fill, not a second colour:
+   ink on paper, reversed. */
 .ctl--primary {
-  border-color: var(--legend-dim);
+  border-color: var(--legend);
   background: var(--legend);
-  color: var(--board-deep);
+  color: #ffffff;
+  font-weight: 500;
+  font-size: 12.5px;
+  padding: 8px 14px;
 }
 
 .ctl--primary:hover:not(:disabled) {
-  background: #ffffff;
-  border-color: #ffffff;
-  color: var(--board-deep);
+  background: #000000;
+  border-color: #000000;
 }
 
 .ctl--primary:disabled {
-  background: var(--board-raised);
-  border-color: var(--hair);
-  color: var(--legend-off);
+  background: var(--legend-off);
+  border-color: var(--legend-off);
+  color: #ffffff;
 }
 
 .ctl--danger:hover:not(:disabled) {
   border-color: var(--rev-text);
   color: var(--rev-text);
+  background: transparent;
 }
 
 .ctl--small {
-  padding: 3px 8px;
-  font-size: 10.5px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+/* An action with no chrome at all: the icon alone. Undo and redo are these in
+   D10 -- they are used constantly and framing each one puts two more boxes on
+   a bar that is mostly hairlines. */
+.ctl--bare {
+  padding: 4px;
+  border-color: transparent;
+  border-radius: 3px;
+  color: var(--legend-dim);
+}
+
+.ctl--bare:hover:not(:disabled) {
+  border-color: transparent;
+  background: var(--board-lift);
+  color: var(--legend);
+}
+
+.ctl--bare:disabled {
+  border-color: transparent;
+  background: transparent;
 }
 
 /* A text control. Underlined on hover rather than always, so a row of them
@@ -324,14 +343,28 @@ textarea {
    bottom rail went below the fold with the title block on it. */
 .deck {
   display: grid;
-  grid-template-columns: minmax(320px, 400px) 1fr;
+  /* The document's bar, then the two panes under it. The bar is about the
+     whole window -- which résumé is open, and what you can do to it -- so it
+     runs the full width rather than sitting over one column and letting the
+     conversation start above the name of the thing being discussed. */
+  grid-template-rows: auto 1fr;
   height: 100vh;
   overflow: hidden;
-  background: var(--hair-soft);
+  background: var(--board);
+}
+
+.deck__panes {
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) 1fr;
+  min-height: 0;
+  /* The gap is the hairline between the two columns -- one rule drawn by the
+     grid rather than a border on either side, so neither column has to know
+     which of them is against the other. */
+  background: var(--hair);
   gap: 1px;
 }
 
-.deck > aside {
+.deck__panes > aside {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -359,19 +392,219 @@ textarea {
   align-items: center;
   gap: 10px;
   flex: none;
-  padding: 8px 16px;
-  background: var(--board-deep);
+  padding: 0 20px;
+  min-height: 44px;
+  /* Chrome, not board: in D10 the bars are the white surface and the canvas
+     between them is the grey one, which is what makes the paper sit on
+     something rather than float on the same value as the frame. */
+  background: var(--board-raised);
 }
 
+/* The document's own bar: name, then what you can do to it. Taller than the
+   tool strip below it because it carries the one editable thing up here. */
 .rail--top {
-  border-bottom: 1px solid var(--hair-soft);
+  /* The same two columns as the panes below, so the rule between the halves of
+     this bar is the rule between the conversation and the sheet, continued
+     upward. That is what lets the document's name sit over the document rather
+     than over the column discussing it. */
+  display: grid;
+  grid-template-columns: minmax(320px, 380px) 1fr;
+  align-items: stretch;
+  gap: 1px;
+  padding: 0;
+  border-bottom: 1px solid var(--hair);
+  min-height: 52px;
+  /* The gap, showing through as the rule -- drawn by the grid rather than
+     bordered onto either half, exactly as `.deck__panes` draws its own. */
+  background: var(--hair);
+}
+
+.rail__brand,
+.rail__actions {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 20px;
+  background: var(--board-raised);
+}
+
+/* 16 between groups on the actions half, not the rail's default 10. Every gap
+   there is the same width, so the hairline is what separates the groups --
+   space alone never has to do that job. */
+.rail__actions {
+  gap: 16px;
+}
+
+/* The insert strip: what you can put on the page, under the bar that says what
+   the page is. Lower than the document's own bar and quieter, because adding a
+   box is a smaller act than renaming or exporting the résumé. */
+.rail--tools {
+  border-bottom: 1px solid var(--hair);
+  gap: 8px;
   flex-wrap: wrap;
 }
 
+/* Sentence case, not the drawing-office legend: it is a word introducing a row
+   of controls, and the controls beside it are set the same way. */
+.rail--tools .legend {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--legend-faint);
+}
+
 .rail--bottom {
-  border-top: 1px solid var(--hair-soft);
-  padding: 0 16px;
-  min-height: 54px;
+  border-top: 1px solid var(--hair);
+  min-height: 32px;
+  padding: 0 20px;
+}
+
+/* Dragging the canvas to move around it.
+   The cursor is the whole affordance: nothing on screen says "you can drag
+   here", so the hand appearing the moment space goes down is what tells you.
+   `grabbing` while it happens, because a hand that does not close mid-drag
+   reads as a drag that is not being tracked. */
+.sheet-scroll--pannable {
+  cursor: grab;
+}
+
+.sheet-scroll--panning {
+  cursor: grabbing;
+  /* No text selection while dragging the ground. Without this a pan that
+     crosses a sheet leaves a trail of highlighted résumé behind it. */
+  user-select: none;
+}
+
+/* How long the résumé is, at the right of the insert strip.
+   Quiet by default: on one page it is a reassurance, and a reassurance that
+   shouts is a warning. Past two pages it takes the flag colour, because that
+   is the point at which it has stopped being a fact and started being a
+   problem somebody should look at. */
+.length {
+  flex: none;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--legend-faint);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.length--long {
+  color: var(--rev-text);
+}
+
+/* --- the canvas ------------------------------------------------------------
+   Every version of a résumé on one surface, one of them live. Laid out in a
+   row that scrolls: pan is the pane's own scrolling and zoom is the control on
+   the bottom rail, which is what those words already meant here. */
+.plane {
+  display: flex;
+  align-items: flex-start;
+  gap: 28px;
+  padding: 4px;
+  margin: 0 auto;
+}
+
+.board {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+
+.board__name {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The name is the selector. Not the whole board: the live one is an editor,
+   and a click anywhere inside it has to land in the text rather than on a
+   control wrapped around it. */
+.board__pick {
+  max-width: 34ch;
+  padding: 2px 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  color: var(--legend-faint);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.board__pick:hover {
+  color: var(--legend);
+}
+
+.board--on .board__pick {
+  color: var(--legend);
+  font-weight: 500;
+  border-bottom-color: var(--legend);
+}
+
+.board__pick:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A version you are not working on. Rendered for real rather than as a
+   picture, so what you are choosing between is the documents themselves --
+   but never interactive: a second live editor would be a second document open
+   at once, which is the one thing this shape depends on not happening. */
+.board__still {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.board__still .canvas-page {
+  transition: opacity 120ms ease-out;
+  opacity: 0.72;
+}
+
+.board__still:hover .canvas-page {
+  opacity: 1;
+}
+
+.board__still:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 4px;
+}
+
+.plane__empty {
+  margin: 48px auto;
+  max-width: 40ch;
+  color: var(--legend-faint);
+  font-size: 13.5px;
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* Which résumé, when that is not the same as which version of it. */
+.rail__canvas {
+  flex: none;
+  color: var(--legend-faint);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 22ch;
+}
+
+.rail__slash {
+  flex: none;
+  color: var(--legend-off);
+  font-size: 13px;
 }
 
 /* The document's name, leading the top rail.
@@ -386,12 +619,12 @@ textarea {
   cursor: text;
   border-radius: 2px;
   outline-offset: 2px;
-  padding-right: 14px;
-  border-right: 1px solid var(--hair-soft);
-  margin-right: 4px;
   color: var(--legend);
   font-size: 13px;
-  font-weight: 600;
+  /* Medium, not bold. It is the largest type on the bar already; making it
+     the heaviest as well left the wordmark and the name competing to be read
+     first, and the name should win that on size alone. */
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -413,6 +646,48 @@ textarea {
   text-overflow: clip;
 }
 
+/* Name and template, one group: two facts about which document this is, so
+   they sit closer to each other than either sits to anything else. */
+.rail__doc {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+/* Which template the résumé is set in. Stated, not offered: the template is
+   chosen when the document is created and there is no op that changes it
+   afterwards, so a caret here would open nothing. Faint rather than the
+   disabled grey the design used -- this is live text somebody reads, and that
+   grey is 2.8:1 on white. */
+.rail__template {
+  flex: none;
+  color: var(--legend-faint);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+/* Undo and redo, closer to each other than to their neighbours. The negative
+   margin cancels the buttons' own padding, so the glyphs land exactly where
+   the design puts them while each button keeps a 24px target rather than the
+   16px the bare icon would give it. */
+.rail__history {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 -5px;
+}
+
+/* The hairline between groups on a bar. A rule, not a gap: it says these
+   things are different kinds of thing, where space alone only says they are
+   apart. */
+.rail__divider {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--hair);
+}
+
 .rail__spacer {
   flex: 1;
 }
@@ -421,7 +696,8 @@ textarea {
   flex: 1;
   overflow: auto;
   min-height: 0;
-  padding: 28px 16px 36px;
+  padding: 20px 16px 28px;
+  background: var(--board);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -497,19 +773,16 @@ textarea {
 .schedule {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* The column it is given, not the window. It was `100vh`, which was the same
+     thing until the document's bar moved above both panes -- from then on the
+     conversation was 52px taller than the space it sat in, and `aside`'s clip
+     took that off the bottom, cutting Attach image and Send off the composer. */
+  height: 100%;
   min-width: 0;
-  background: var(--board);
-}
-
-.schedule__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex: none;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--hair-soft);
-  background: var(--board-deep);
+  /* White, like the rails: in D10 the assistant is chrome and the canvas is
+     the ground, so the two columns are told apart by value rather than by a
+     border either of them draws. */
+  background: var(--board-raised);
 }
 
 .schedule__rows {
@@ -530,24 +803,26 @@ textarea {
   line-height: 1.5;
 }
 
+/* Rules between them, not a slab behind them. The gap-plus-background trick
+   drew hairlines by letting the parent show through -- which worked when the
+   column was dark and the rows were lifted off it, and on white made a grey
+   block with white lines in it. */
 .schedule__suggestions {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  background: var(--hair-soft);
   border-top: 1px solid var(--hair-soft);
-  border-bottom: 1px solid var(--hair-soft);
 }
 
 .schedule__suggestion {
   display: block;
   width: 100%;
-  padding: 9px 10px;
+  padding: 10px 10px;
   border: 0;
-  background: var(--board);
+  border-bottom: 1px solid var(--hair-soft);
+  background: transparent;
   color: var(--legend-dim);
   font: inherit;
   font-size: 13px;
@@ -556,7 +831,7 @@ textarea {
 }
 
 .schedule__suggestion:hover {
-  background: var(--board-raised);
+  background: var(--board-lift);
   color: var(--legend);
 }
 
@@ -574,9 +849,12 @@ textarea {
 .instruction__text {
   max-width: 85%;
   margin: 0;
-  padding: 7px 11px;
-  border-radius: 12px 12px 3px 12px;
-  background: var(--board-raised);
+  padding: 10px 13px;
+  /* A quiet square, not a speech balloon. `--board-raised` is white now, which
+     is the column's own surface -- a bubble in it would be invisible -- so
+     this is the one lifted grey on the sheet. */
+  border-radius: 4px;
+  background: #edece8;
   font-size: 13.5px;
   line-height: 1.5;
   color: var(--legend);
@@ -670,6 +948,42 @@ textarea {
   max-width: 44ch;
 }
 
+/* Undoing a whole agent turn. Text with an icon, not a framed control: the
+   sidebar is a transcript, and a button with a box around it in the middle of
+   one reads as part of the résumé's chrome rather than as a footnote to what
+   just happened. Ink only on approach, so a column of turns is not a column of
+   offers. */
+.revision__undo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--legend-faint);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.revision__undo:hover:not(:disabled) {
+  color: var(--legend);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.revision__undo:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.revision__undo:disabled {
+  color: var(--legend-off);
+  cursor: default;
+}
+
 /* --- schedule items -------------------------------------------------------
    One row per tool call. The mark carries the state; the row is otherwise
    uncoloured, so a burst of edits reads as a column of marks you can scan
@@ -699,16 +1013,6 @@ textarea {
   border-top: 0;
 }
 
-/* Only a row that names nodes can point at anything, so only that row is a
-   button. The rest are plain rows and must not offer a hover they cannot
-   honour. */
-.item--leadered {
-  cursor: pointer;
-}
-
-.item--leadered:hover {
-  background: var(--board-raised);
-}
 
 .item__mark {
   flex: none;
@@ -794,94 +1098,23 @@ textarea {
   color: var(--legend-faint);
 }
 
-/* The cross-reference. A drawing does not trace a line from its revision block
-   to the sheet -- it puts the same number in both places, and you find the
-   change by matching it. The first version drew a stub of a leader that, at
-   rest, pointed into empty rail; this is readable without hovering anything. */
-.item__delta {
-  flex: none;
-  align-self: center;
-  min-width: 17px;
-  height: 17px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-  border: 1px solid var(--hair);
-  color: var(--legend-faint);
-  font-family: var(--font-legend);
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
 
-.item--leadered:hover .item__delta,
-.item--leadered:focus-visible .item__delta {
-  border-color: var(--rev);
-  color: var(--rev-text);
-}
+/* --- folds ----------------------------------------------------------------
+   A turn's working, closed until asked for. Two things are shown this way and
+   they are the same kind of thing: how the answer was arrived at, as opposed
+   to the answer. The reasoning is one, the calls it made are the other.
 
-/* --- the two readings -----------------------------------------------------
-   What a row changed, opened in the row. Both readings in full, in the column
-   that has the space for them, so nothing on the document is covered to
-   explain it. The one authored moment on the board. */
+   One primitive, two modifiers, rather than the reasoning's own class doing
+   double duty -- `.thinking` naming a list of tool calls would be a lie in the
+   markup, and the class is what a reader greps. */
 
-.compare {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 0 16px 9px 42px;
-  background: var(--hair-soft);
-  animation: rise 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-
-.compare__line {
-  display: flex;
-  gap: 9px;
-  padding: 7px 9px;
-  background: var(--board);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-.compare__side {
-  flex: none;
-  width: 3.5ch;
-  padding-top: 1px;
-  font-family: var(--font-legend);
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--legend-faint);
-}
-
-/* Struck through and kept: a drawing office marks a revision, it does not
-   erase the thing it replaced. */
-.compare__was {
-  color: var(--legend-faint);
-  text-decoration: line-through;
-  text-decoration-color: var(--rev);
-  text-decoration-thickness: 1px;
-}
-
-.compare__now {
-  color: var(--legend);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .compare {
-    animation: none;
-  }
-}
-
-.thinking {
+.fold {
   margin-bottom: 6px;
   color: var(--legend-faint);
   font-size: 11.5px;
 }
 
-.thinking summary {
+.fold summary {
   cursor: pointer;
   font-family: var(--font-legend);
   font-weight: 600;
@@ -889,7 +1122,7 @@ textarea {
   text-transform: uppercase;
 }
 
-.thinking pre {
+.fold pre {
   margin: 6px 0 0;
   padding-left: 10px;
   border-left: 1px solid var(--hair-soft);
@@ -899,214 +1132,90 @@ textarea {
   line-height: 1.5;
 }
 
+/* The finished turn's steps, in the same disclosure as the reasoning above it
+   and hung off the same rule -- one indent for "this is the working", whether
+   the working is prose or a list of calls. */
+.fold--steps .items--log {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--hair-soft);
+}
+
+/* Quieter than a live row. These have already happened and are being read
+   back; the list below the fold is a record, not a thing to act on. */
+.fold--steps .item {
+  color: var(--legend-faint);
+}
+
+/* Except the ones that still need an answer. A refusal that goes the same grey
+   as a successful edit is a refusal nobody reads. */
+.fold--steps .item--rejected,
+.fold--steps .item--confirm,
+.fold--steps .item--note {
+  color: var(--legend-dim);
+}
+
 /* --- the composer -------------------------------------------------------- */
 
 .composer {
   flex: none;
+  /* A column now, not a wrapping row. The field owns the first line whole and
+     the controls sit under it, which is what lets the box be a box -- the
+     order tricks that used to keep a full-width textarea above two siblings on
+     the same wrapping line are gone with them. */
   display: flex;
-  gap: 10px;
-  align-items: flex-end;
-  padding: 12px 14px;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px 16px;
   border-top: 1px solid var(--hair-soft);
-  background: var(--board-deep);
+  background: var(--board-raised);
 }
 
-.composer textarea {
-  flex: 1;
+/* The model, then the button it governs. Right, under the right-hand end of
+   the field, so the eye finishes the sentence and lands on Send. */
+.composer__row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* A direct child, not any descendant. The composer contains the control for
+   the job this résumé is aimed at, and that control opens a dialog with a
+   textarea of its own -- which a descendant selector reached into, capping a
+   field meant to hold a whole job posting at the composer's 64px. */
+.composer > textarea {
+  /* Bounded on all four sides. An underline said where the typing sat but not
+     how far the field went or where it could be clicked, and on a white panel
+     against a white page there was nothing else to tell you. Same 1px hairline
+     and 4px radius as every other control on the board, so the field reads as
+     one of them rather than as a new kind of thing. */
+  width: 100%;
   min-width: 0;
-  min-height: 46px;
-  padding: 7px 2px;
-  border: 0;
-  border-bottom: 1px solid var(--hair);
-  background: transparent;
+  min-height: 64px;
+  padding: 9px 10px;
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  background: var(--board-raised);
   color: var(--legend);
   font-family: var(--font-ui);
   font-size: 13.5px;
   line-height: 1.5;
-  border-radius: 0;
   resize: vertical;
+  transition: border-color 120ms ease-out;
 }
 
-.composer textarea::placeholder {
-  color: #70707a;
+.composer > textarea::placeholder {
+  /* Faint, not the disabled grey. --legend-off is 2.8:1 on white and means
+     "you cannot use this"; the field is the most usable thing in the column. */
+  color: var(--legend-faint);
 }
 
-.composer textarea:focus {
+.composer > textarea:focus {
   outline: 0;
-  border-bottom-color: var(--focus);
-}
-
-/* --- unchecked claims -----------------------------------------------------
-   Stated once, above the sheet. Revision red because it is the same thing that
-   colour always means here: something is waiting on a decision from you. */
-
-.unchecked {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 9px 16px;
-  border-bottom: 1px solid var(--hair-soft);
-  background: var(--rev-wash);
-}
-
-.unchecked__count {
-  flex: none;
-  min-width: 22px;
-  height: 22px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 5px;
-  border: 1px solid var(--rev);
-  color: var(--rev-text);
-  font-family: var(--font-legend);
-  font-size: 11.5px;
-  font-weight: 700;
-}
-
-.unchecked__text {
-  flex: 1;
-  margin: 0;
-  max-width: 78ch;
-  color: var(--legend-dim);
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-
-@media print {
-  .unchecked {
-    display: none;
-  }
-}
-
-/* --- the revision block ---------------------------------------------------
-   Above the title block, lower right of the sheet, which is where a drawing
-   has always kept it. It is the document's record of what changed; the
-   conversation about it is in the sidebar. */
-
-.revblock {
-  flex: none;
-  max-height: 34vh;
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid var(--hair-soft);
-  background: var(--board-deep);
-}
-
-.revblock__head {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 16px;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-}
-
-.revblock__head:hover .legend {
-  color: var(--legend);
-}
-
-.revblock__count {
-  min-width: 17px;
-  height: 17px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 4px;
-  border: 1px solid var(--hair);
-  color: var(--legend-faint);
-  font-family: var(--font-legend);
-  font-size: 10.5px;
-  font-weight: 700;
-}
-
-.revblock__caret {
-  color: var(--legend-faint);
-  transition: transform 140ms ease-out;
-}
-
-.revblock__caret--open {
-  transform: rotate(180deg);
-}
-
-.revblock__rows {
-  overflow-y: auto;
-  min-height: 0;
-  padding-bottom: 4px;
-}
-
-.revrow {
-  border-top: 1px solid var(--hair-soft);
-}
-
-.revrow__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  padding: 7px 16px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.revrow__head:hover {
-  background: var(--board-raised);
-}
-
-/* The delta. The same number is drawn on the sheet beside the region this row
-   changed, which is how a drawing cross-references -- by matching numbers, not
-   by tracing a line. */
-.revrow__delta {
-  flex: none;
-  min-width: 19px;
-  height: 19px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-  border: 1px solid var(--rev);
-  color: var(--rev-text);
-  font-family: var(--font-legend);
-  font-size: 10.5px;
-  font-weight: 700;
-}
-
-.revrow__what {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--legend-dim);
-  font-size: 13px;
-}
-
-.revrow__head:hover .revrow__what {
-  color: var(--legend);
-}
-
-.revrow__caret {
-  flex: none;
-  color: var(--legend-faint);
-  transition: transform 140ms ease-out;
-}
-
-.revrow__caret--open {
-  transform: rotate(180deg);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .revblock__caret,
-  .revrow__caret {
-    transition: none;
-  }
+  /* The whole edge darkens, rather than a ring outside it. The box is already
+     drawn; focus is that same box stated more firmly. */
+  border-color: var(--focus);
 }
 
 /* --- the stamp block ------------------------------------------------------
@@ -1249,6 +1358,43 @@ textarea {
   border-left-color: var(--legend-faint);
 }
 
+/* A claim nobody has vouched for.
+   `add_skill(evidence="jd")` is allowed and has to be -- a posting naming
+   Kubernetes is often naming something you have and forgot to list -- but the
+   check behind it verifies only that the word is in the *advert*. So the line
+   says so, and stops saying it the moment you edit it.
+
+   A dotted rule and nothing else. This is a résumé: the mark has to be visible
+   to the person writing it and invisible to the person reading the PDF, which
+   is why it is removed with the rest of the screen-only rules at the foot of
+   this file. */
+.node--unverified {
+  text-decoration: underline dotted var(--rev);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+/* Named, not counted. "1 line was written by the assistant" tells you nothing
+   you can act on; "Kubernetes and Terraform came from the posting" tells you
+   exactly which two claims to look at. */
+.claims {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 9px 12px;
+  border-left: 1px solid var(--rev);
+  background: var(--board-raised);
+  color: var(--legend-dim);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.claims__what {
+  color: var(--legend);
+  font-weight: 500;
+}
+
 /* --- the print, and what is marked on it ----------------------------------
    These rules draw on the document itself, so they are the only place on the
    board permitted to touch white paper. All of them are screen-only and are
@@ -1268,24 +1414,6 @@ textarea {
   background: var(--paper);
 }
 
-/* --- invented, not reported ----------------------------------------------
-   Written by the assistant while the document was still a template, so the
-   words are plausible rather than true. Marked until the person confirms them.
-
-   A dotted underline rather than a highlight: this is a résumé, and the whole
-   page has to stay readable as one while a dozen lines carry the mark. It is
-   also the notation a proofreader already uses for "check this", which is
-   exactly the instruction.
-
-   Deliberately visible in the *editor only* -- the print block at the foot of
-   this file drops it. A PDF is what gets sent to an employer, and it must show
-   the résumé rather than our annotations on it. */
-.node--unverified {
-  text-decoration: underline dotted var(--rev);
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
-}
-
 /* A node the assistant is writing to. Dimmed rather than hidden, and the
    cursor says why. */
 .node--locked {
@@ -1293,116 +1421,183 @@ textarea {
   cursor: progress;
 }
 
-/* --- the revision cloud ---------------------------------------------------
-   A changed region, ringed the way a drawing office rings one. The scallop is
-   drawn rather than approximated: each 9px tile paints the top half of a ring
-   whose centre sits on the tile's edge, and repeating it along x produces the
-   bumped line. Two strips, one above and one below, which is what a cloud
-   around a run of text actually looks like on a marked-up print.
+/* --- the pen --------------------------------------------------------------
+   The drafting head, while the agent is working. Painted by
+   `canvas/agent-cursor`, which measures the node the server named rather than
+   rendering inside it -- same two reasons as the revision layer: the nodes are
+   contentEditable, and this component is what Chromium prints.
 
-   It persists. The previous highlight cleared itself after 1.4 seconds, which
-   is fine for a flash and useless for something you are meant to be able to
-   inspect -- and inspecting it is the point, since clicking a cloud is how you
-   see what it replaced. It clears when the next instruction is given. */
+   Drawn in the PAPER's inks, not the board's. The pen only ever appears over
+   the résumé, and in board ink (`--legend`, #ededed) it was white on white and
+   could not be seen at all.
 
-.node--changed {
-  position: relative;
-  background: var(--rev-wash);
-  cursor: pointer;
-}
+   No hue. On this board a colour is a state -- red proposes, green accepts --
+   and a position is not a state, so the pen is graphite and hairlines, and its
+   rank comes from line weight, which is the only place rank comes from here.
+   It is also why the pen cannot be mistaken for a revision mark: those are the
+   only red things on the sheet, and this is never red. */
 
-.node--changed::before,
-.node--changed::after {
-  content: '';
-  position: absolute;
-  /* Tight to the run. At a 5px inset the lower scallop landed on the heading
-     of the section below, so a mark meant to ring one region drew through
-     another. */
-  left: -3px;
-  right: -3px;
-  height: 3px;
-  pointer-events: none;
-  background-size: 8px 3px;
-  background-repeat: repeat-x;
-}
-
-.node--changed::before {
-  top: -3px;
-  background-image: radial-gradient(
-    circle at 50% 100%,
-    transparent 0 2.3px,
-    var(--rev) 2.3px 3px,
-    transparent 3px
-  );
-}
-
-.node--changed::after {
-  bottom: -3px;
-  background-image: radial-gradient(
-    circle at 50% 0,
-    transparent 0 2.3px,
-    var(--rev) 2.3px 3px,
-    transparent 3px
-  );
-}
-
-/* Lit from the schedule. The other half of the leader: hovering a row that
-   names this node rings it in the same red the row's stub turns. */
-.node--spotlit {
-  background: var(--rev-wash);
-  box-shadow: 0 0 0 1px var(--rev);
-}
-
-/* --- the revision tag and the superseded reading ---------------------------
-   The signature interaction. Every clouded region that replaced something
-   carries a tag in the margin; opening it raises the previous reading directly
-   underneath -- before and after in place, on the document.
-
-   Painted by `canvas/revision-layer`, which measures the node rather than
-   rendering inside it: every changed node is contentEditable and would commit
-   anything placed within it as the user's own words, and the same component is
-   what Chromium prints. */
-
-.revision-layer {
+.pen-layer {
   position: absolute;
   inset: 0;
-  /* Inert except for its tags, exactly like `.overlay`. A layer that took
-     pointer events would cover the text it is annotating. */
   pointer-events: none;
-  z-index: 900;
+  z-index: 950;
+  /* Graphite, not black: the résumé's own text is #000, and a pen darker than
+     or equal to the words competes with them. */
+  --pen-ink: #33333a;
+  --pen-ink-soft: #6f6f7a;
 }
 
-/* The revision delta, carrying the number its schedule row also carries. */
-.revision-tag {
+/* The pen-up move: the route between two draws, with nothing written along it.
+   Dashed because that is what a toolpath preview does to say "no ink here",
+   and it is the honest reading -- the document between these two points was
+   not touched. */
+.pen-leader {
   position: absolute;
-  min-width: 19px;
-  height: 19px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 3px;
-  border: 1px solid var(--rev);
-  background: #ffffff;
-  color: var(--rev-ink);
-  font-family: var(--font-legend);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-  pointer-events: auto;
+  inset: 0;
+  overflow: visible;
 }
 
-.revision-tag:hover,
-.revision-tag--open {
-  background: var(--rev);
-  color: #ffffff;
+.pen-leader path {
+  fill: none;
+  stroke: var(--pen-ink-soft);
+  stroke-width: 1;
+  stroke-dasharray: 3 5;
+  animation-name: pen-leader-fade;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
 }
 
-/* Where a schedule row is pointing. The other end of the leader. */
-.revision-layer__lit {
+@keyframes pen-leader-fade {
+  0% { opacity: 0; }
+  18% { opacity: 0.7; }
+  100% { opacity: 0; }
+}
+
+/* The two legs of one move. Splitting the axes is what bows the path: a single
+   translate can only interpolate straight, which read as a machine sliding
+   between coordinates rather than a hand crossing a page. */
+.pen-arm,
+.pen {
   position: absolute;
-  box-shadow: 0 0 0 1px var(--rev);
-  background: var(--rev-wash);
+  top: 0;
+  left: 0;
+  transition-property: transform;
+  will-change: transform;
+}
+
+/* Horizontal: quick to leave, decelerating hard into the coordinate. */
+.pen-arm {
+  transition-timing-function: cubic-bezier(0.32, 0, 0.16, 1);
+}
+
+/* Vertical: hangs back off the mark, then decelerates smoothly into the line.
+   Together with the longer duration, the lag against the horizontal is what
+   bows the path.
+
+   No overshoot. An earlier version sprang past the target by a pixel to stand
+   for the correction a hand makes -- but a drafting head decelerates into a
+   coordinate, and measuring it showed the spring was worth 0.7px of the 19.5px
+   of curve while the axis split carried the rest. It was paying in bounce for
+   something it was not delivering. */
+.pen {
+  transition-timing-function: cubic-bezier(0.5, 0, 0.22, 1);
+}
+
+/* Never perfectly still. Two periods that do not divide into one another, so
+   the wander never settles into a visible loop -- a circle reads as machinery,
+   an irregular drift reads as a hand. */
+.pen__hand {
+  position: absolute;
+  display: block;
+  animation: pen-drift-x 5.3s ease-in-out infinite;
+}
+
+.pen__hand::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  animation: pen-drift-y 3.7s ease-in-out infinite;
+}
+
+@keyframes pen-drift-x {
+  0%, 100% { transform: translateX(0); }
+  33% { transform: translateX(2.4px); }
+  66% { transform: translateX(-1.8px); }
+}
+
+@keyframes pen-drift-y {
+  0%, 100% { transform: translateY(0); }
+  40% { transform: translateY(-2.1px); }
+  75% { transform: translateY(1.5px); }
+}
+
+/* The mark itself: `ui/marks` Pen, normalised by `Frame` to the same stroke
+   weight as every other symbol on this board. It is placed so its NIB lands on
+   the coordinate -- the artwork is drawn nib-down-left, and the barrel trails
+   up and right, out of the way of the words underneath.
+
+   The two fractions are read off the artwork: the nib tip sits at (3, 21) of a
+   24 grid, so 0.125 and 0.875 of the drawn size. Changing the path means
+   changing these, which is why `marks.tsx` says so at the path. */
+.pen__mark {
+  position: absolute;
+  left: calc(var(--pen-size, 24px) * -0.125);
+  /* Seated at four fifths of the line box, which is about where a baseline
+     falls -- a nib resting on the cap height reads as hovering. */
+  top: calc(var(--pen-line, 14px) * 0.8 - var(--pen-size, 24px) * 0.875);
+  color: var(--pen-ink);
+  display: block;
+}
+
+/* Writing: full ink, and the barrel works. A very small rotation about the
+   nib, which is the only part of a held pen that stays put. */
+.pen--writing .pen__mark {
+  animation: pen-write 0.9s ease-in-out infinite;
+  transform-origin: calc(var(--pen-size, 24px) * 0.125) calc(var(--pen-size, 24px) * 0.875);
+}
+
+@keyframes pen-write {
+  0%, 100% { transform: rotate(0deg); }
+  50% { transform: rotate(-3.2deg); }
+}
+
+/* Reading changes nothing, so the pen is lifted off the page: raised a little,
+   and lighter, because a lifted pen is not making a mark. */
+.pen--reading .pen__mark,
+.pen--waiting .pen__mark {
+  color: var(--pen-ink-soft);
+  transform: translateY(-3px) rotate(-9deg);
+  transform-origin: calc(var(--pen-size, 24px) * 0.125) calc(var(--pen-size, 24px) * 0.875);
+}
+
+/* Waiting: the turn has started and the model has not named a place yet. Pen
+   up and idling in the margin -- it says "I am here and I have not been told
+   where to go", which is exactly the truth. */
+.pen--waiting .pen__mark {
+  animation: pen-idle 2.6s ease-in-out infinite;
+}
+
+@keyframes pen-idle {
+  0%, 100% { opacity: 0.45; transform: translateY(-3px) rotate(-9deg); }
+  50% { opacity: 0.9; transform: translateY(-6px) rotate(-9deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pen-arm,
+  .pen {
+    transition: none;
+  }
+
+  .pen__hand,
+  .pen__hand::after,
+  .pen__mark {
+    animation: none;
+  }
+
+  .pen-leader {
+    display: none;
+  }
 }
 
 @keyframes rise {
@@ -1425,10 +1620,14 @@ textarea {
 
 /* A hairline, not a drop shadow. The brief's anti-goals name "no shadow
    imitating a sheet lifting" and a 14px blur under the page was exactly that.
-   White paper on a Prussian board needs no help separating; the rule is there
-   to give the sheet an edge rather than a lift. */
+   The rule gives the sheet an edge, not a lift.
+
+   A hairline in the board's own value, not the near-black it was on the dark
+   theme: white paper on warm grey is a small step, so the edge has to be drawn
+   -- but drawn at the weight of every other rule on screen, or the page reads
+   as a framed object rather than as paper lying on a surface. */
 .canvas-page {
-  box-shadow: 0 0 0 1px #3a3a40;
+  box-shadow: 0 0 0 1px var(--hair);
 }
 
 .overlay {
@@ -1591,300 +1790,504 @@ textarea {
 }
 
 /* --- the register ---------------------------------------------------------
-   The home screen. A drawing register lists the sheets a project holds, by
-   number and title and revision. That is what a list of resumes is. */
+   The home screen, built from D9 — Files, quiet.
 
-/* Full width, not a column down the middle. The gallery is the page's
-   content and it is a grid of sheets -- boxed at 780px it showed three cards
-   with the rest of a wide screen left dark, which reads as a page that failed
-   to load rather than one that chose to be narrow. */
+   Deliberately its own world, and the only light surface in the app. The
+   studio is a drafting board because that is where the work happens; this is
+   where the work is *kept*, and a place where files are kept is a file
+   manager rather than a board. Everything is scoped under `.register` so the
+   tokens below reach nothing else, and the studio is untouched.
+
+   The design's own palette: a warm grey ground, white chrome, and an ink that
+   is near-black rather than black. */
+
 .register {
-  padding: 26px 26px 72px;
+  --d9-canvas: #e8e7e3;
+  --d9-chrome: #ffffff;
+  --d9-hair: #d5d4cf;
+  --d9-ink: #191913;
+  --d9-gray: #6c6b64;
+  --d9-faint: #9b9a92;
+
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--d9-canvas);
+  color: var(--d9-ink);
+  font-family: var(--font-ui);
 }
 
-/* The wordmark and the one action beside it. Left, on its own line, with the
-   rule under it doing the separating -- the lede that used to sit here said
-   what the product is to someone already inside it. */
-.register__head {
+/* --- top bar --------------------------------------------------------------
+   White, hairline under it, everything on one line. The spring between the
+   tabs and the search is what pushes the actions right without any of them
+   being positioned. */
+
+/* --- the wordmark ---------------------------------------------------------
+   Text and nothing else. Lowercase, because uppercase is what broke it --
+   RESUMEWESUME is twelve letters with the join lost. Every letter in
+   `resumewesume` sits at x-height, no ascender and no descender, so the word
+   is one unbroken bar and can be set tight without coming apart.
+
+   The R in its tile lives in `app/icon.svg` and stays there: it is the name
+   compressed to the one letter that changes, which is what a favicon needs and
+   what a bar with the name already on it does not.
+
+   `currentColor`, so the same component reads on the white bar and on the
+   near-black board without either knowing about the other. */
+
+.wm {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.reg-bar .wm {
+  color: var(--d9-ink);
+}
+
+.reg-bar {
+  flex: none;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--hair-soft);
+  gap: 18px;
+  height: 52px;
+  padding: 0 20px;
+  background: var(--d9-chrome);
+  border-bottom: 1px solid var(--d9-hair);
 }
 
-.register__title {
-  margin: 0;
-  font-family: var(--font-legend);
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  line-height: 1;
-  color: var(--legend);
+.reg-bar__spring {
+  flex: 1;
 }
 
-.register__note {
-  margin: 0;
-  max-width: 60ch;
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--legend-faint);
-}
-
-.register__section {
-  margin-top: 26px;
-  padding-top: 0;
-}
-
-/* The rule belongs *under* a section's content, between it and the next --
-   above, the first one doubled the header's own border. */
-.register__section + .register__section {
-  margin-top: 30px;
-  padding-top: 26px;
-  border-top: 1px solid var(--hair-soft);
-}
-
-/* Recent sheets along one line, scrolling sideways when there are more than
-   fit. A vertical list of every document pushed the gallery off the fold, and
-   the gallery is what a first visit is for. */
-.recents {
-  list-style: none;
+.reg-search {
   display: flex;
-  gap: 10px;
-  margin: 10px 0 0;
-  padding: 0 0 4px;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  align-items: center;
+  gap: 7px;
+  width: 180px;
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--d9-hair);
+  background: var(--d9-chrome);
+  color: var(--d9-faint);
 }
 
-.recents > li {
-  flex: none;
+.reg-search:focus-within {
+  border-color: var(--d9-gray);
 }
 
-.recent {
-  /* The discard mark's footprint, named once: the title reserves room from the
-     same numbers that place it, so moving one cannot silently uncover the
-     other. `--discard-icon` is the `size` the component passes to `<Cross>`. */
-  --discard-inset: 4px;
-  --discard-pad: 4px;
-  --discard-icon: 12px;
-  /* Air between the clipped title and the mark. Without it the ellipsis stops
-     exactly at the mark's edge, which reads as a collision rather than a gap. */
-  --discard-gap: 6px;
-
-  position: relative;
-  display: flex;
-  width: 190px;
-  border: 1px solid var(--hair-soft);
-  transition: border-color 120ms ease-out;
-}
-
-.recent:hover {
-  border-color: var(--legend-faint);
-}
-
-/* The link fills the card, so the whole thing opens the résumé -- the discard
-   button sits above it rather than beside it, and only where it is. */
-.recent__open {
-  display: flex;
+.reg-search input {
   flex: 1;
   min-width: 0;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 12px;
-  text-decoration: none;
-}
-
-/* Quiet until wanted. Rendered always rather than on hover, so it is reachable
-   by keyboard and on a touch screen, where there is no hover to have. */
-.recent__discard {
-  position: absolute;
-  top: 4px;
-  right: var(--discard-inset);
-  display: flex;
-  padding: var(--discard-pad);
   border: 0;
   background: transparent;
-  color: transparent;
+  color: var(--d9-ink);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.reg-search input::placeholder {
+  color: var(--d9-faint);
+}
+
+/* The caret, and what a selection looks like in it.
+   ------------------------------------------------------------------
+   Both are set globally for the board, where every input sits on near-black:
+   `caret-color: var(--legend)` is #ededed and `::selection` is a white wash.
+   This box is the one input in the app on a white ground, so it inherited a
+   near-white caret on white paper and a selection that could not be seen
+   either. Scoped here rather than changed globally -- the board's own inputs
+   are still right. */
+.reg-search input {
+  caret-color: var(--d9-ink);
+}
+
+.reg-search input::selection {
+  background: rgba(25, 25, 19, 0.18);
+  color: var(--d9-ink);
+}
+
+.reg-search input:focus {
+  outline: 0;
+}
+
+/* A quiet action is a word, not a button. Only one thing on this bar is a
+   button, and it is the one that makes something. */
+.reg-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: var(--d9-gray);
+  font-family: inherit;
+  font-size: 12.5px;
   cursor: pointer;
 }
 
-.recent:hover .recent__discard,
-.recent__discard:focus-visible {
-  color: var(--legend-faint);
+.reg-link:hover:not(:disabled) {
+  color: var(--d9-ink);
 }
 
-.recent__discard:hover {
-  color: var(--rev-text);
+.reg-link:disabled {
+  color: var(--d9-faint);
+  cursor: default;
 }
 
-/* Asking is a state of the card, not a dialog over it: the row keeps its size
-   so the strip does not jump while you decide. */
-.recent--asking {
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
-  border-color: var(--rev);
+.reg-new {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  background: var(--d9-ink);
+  color: #ffffff;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
 }
 
-.recent__confirm {
+.reg-new:hover:not(:disabled) {
+  background: #000000;
+}
+
+.reg-new:disabled {
+  background: var(--d9-faint);
+  cursor: default;
+}
+
+/* --- body ----------------------------------------------------------------- */
+
+.reg-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 32px 0;
   display: flex;
-  gap: 12px;
+  flex-direction: column;
 }
 
-.link--rev {
-  color: var(--rev-text);
+.reg-meta {
+  display: flex;
+  align-items: center;
+  padding-bottom: 14px;
+  color: var(--d9-gray);
+  font-size: 12.5px;
 }
 
-.recent__title {
-  color: var(--legend-dim);
-  font-size: 13px;
-  /* Room for the discard mark, which is absolutely positioned and so takes no
-     space of its own -- a long title ran its ellipsis straight under it. The
-     mark's own footprint, less the padding the title already has, rather than
-     a number that happens to look right today.
+.reg-meta__sort {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--d9-faint);
+}
 
-     Only the title: the mark sits on the first line, and the timestamp below
-     it has the full width. */
-  padding-right: calc(
-    var(--discard-inset) + var(--discard-pad) * 2 + var(--discard-icon) +
-      var(--discard-gap) - 12px
-  );
-  /* One line: a title is a label here, and a wrapped one would make the strip
-     ragged for no gain. */
+/* --- the documents -------------------------------------------------------
+   A row of sheets, each one a real render of the résumé it names rather than
+   a picture of one. */
+
+.reg-docs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
+  gap: 24px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.reg-doc {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* One sheet, not two. The design stacks a second page behind the first; a
+   résumé is usually one page, and a card that always draws two is saying
+   something about the document that is not true of most of them. */
+.reg-doc__stack {
+  display: block;
+}
+
+/* The versions on a canvas: one sheet, and the rest behind it edge-on.
+   Not three small renders side by side. Three résumés at a third of this width
+   are a texture rather than documents anybody can read, and the count under the
+   card already says how many there are -- so the others are drawn as the edges
+   of paper in a stack, which is what they are. */
+.reg-doc__boards {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  /* The page proportions live here rather than on each sheet. Left on the
+     sheets, a stretched flex row overrode them and the card with three
+     versions grew four times as tall as the cards beside it. */
+  aspect-ratio: 250 / 325;
+}
+
+.reg-doc__boards .reg-doc__paper {
+  aspect-ratio: auto;
+  height: 100%;
+}
+
+.reg-doc__boards .reg-doc__paper:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.reg-doc__boards .reg-doc__paper + .reg-doc__paper {
+  /* Narrow, and inset top and bottom so the stack has a top edge as well as a
+     side one. */
+  flex: 0 0 9px;
+  height: calc(100% - 18px);
+  align-self: center;
+  margin-left: 3px;
+}
+
+.reg-doc__more {
+  align-self: center;
+  margin-left: 8px;
+  font-family: var(--font-legend);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--d9-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A canvas made but not yet filled. Real, not broken: one exists before its
+   first résumé arrives from an import or a template. */
+.reg-doc__stack--bare {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 250 / 325;
+  border: 1px dashed var(--d9-hair);
+  background: var(--d9-chrome);
+}
+
+.reg-doc__empty {
+  color: var(--d9-faint);
+  font-size: 12.5px;
+}
+
+/* How many ways this résumé is being sent. Sits with the timestamp because it
+   is the same kind of fact: something true about the canvas rather than an
+   action you can take on it. */
+.reg-doc__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.reg-doc__paper {
+  display: block;
+  aspect-ratio: 250 / 325;
+  overflow: hidden;
+  background: var(--d9-chrome);
+  border: 1px solid var(--d9-hair);
+}
+
+.reg-doc:hover .reg-doc__paper {
+  border-color: var(--d9-gray);
+}
+
+/* The résumé, laid out at full width and scaled down, so what is shown is a
+   real page rather than a crop of one. */
+.reg-doc__sheet {
+  display: block;
+  width: 210mm;
+  padding: var(--page-margin);
+  transform: scale(0.28);
+  transform-origin: top left;
+  pointer-events: none;
+}
+
+.reg-doc__name {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--d9-ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.recent:hover .recent__title {
-  color: var(--legend);
+.reg-doc__sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--d9-faint);
 }
 
-.recent__rev {
-  font-family: var(--font-legend);
-  font-size: 10.5px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--legend-faint);
-}
-
-/* --- the template gallery -------------------------------------------------
-   Eight real résumés, each rendered by the same `DocumentFlow` the studio and
-   the PDF use, differing only in template. Nothing here is a picture: a
-   screenshot of a template would start lying the first time the template
-   changed, and would need an asset pipeline to ship.
-
-   The sheet is drawn at its true A4 width and scaled down, rather than being
-   re-laid-out small. Scaling is what makes the card honest -- line breaks,
-   leading and the size of a heading relative to body text are all exactly what
-   the person will get, which is the entire question a template card answers. */
-
-/* A section's label sits on its own line above the section. `.legend` is
-   inline -- it is used mid-rail elsewhere -- so it needs saying here rather
-   than changing it for every caller. */
-.section-legend {
-  display: block;
-}
-
-.gallery {
-  list-style: none;
-  margin: 12px 0 0;
+/* Only on hover, and only on the card it belongs to: a delete on every row at
+   rest turns a list of your own work into a list of things to be careful of. */
+.reg-doc__drop {
+  display: inline-flex;
+  border: 0;
+  background: transparent;
   padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-  gap: 18px;
+  color: var(--d9-faint);
+  cursor: pointer;
+  opacity: 0;
 }
 
-.card {
+.reg-doc:hover .reg-doc__drop,
+.reg-doc__drop:focus-visible,
+.reg-doc__drop--asking {
+  opacity: 1;
+}
+
+.reg-doc__drop:hover,
+.reg-doc__drop--asking {
+  color: #a8322a;
+}
+
+/* The empty slot at the end of the row. Dashed, because it is where a sheet is
+   going to be rather than one that is there. */
+.reg-slot {
   display: flex;
   flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  /* A button shrinks to its contents, so without this the slot came out 84px
+     wide and the aspect ratio gave it a stub of a height beside full sheets. */
   width: 100%;
-  /* Fill the row. Grid stretches the `li`; without this the button inside
-     sits at its own content height, so a card whose note wrapped to two lines
-     stood taller than its neighbours and the row read as ragged. */
-  height: 100%;
-  padding: 0;
-  border: 1px solid var(--hair-soft);
+  aspect-ratio: 250 / 325;
+  border: 1px dashed #c9c8c1;
   background: transparent;
-  color: inherit;
-  font: inherit;
+  color: var(--d9-gray);
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.reg-slot:hover {
+  border-color: var(--d9-gray);
+  color: var(--d9-ink);
+}
+
+.reg-empty {
+  margin: 0;
+  color: var(--d9-gray);
+  font-size: 13px;
+}
+
+/* --- the template strip ---------------------------------------------------
+   Below the documents, under a rule, and smaller. Starting a new résumé is the
+   rarer visit; the sheets you already have come first. */
+
+.reg-strip {
+  margin-top: auto;
+  padding: 18px 0 24px;
+  border-top: 1px solid #cfcec8;
+}
+
+.reg-strip__head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-bottom: 14px;
+}
+
+.reg-strip__label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--d9-ink);
+}
+
+.reg-strip__count {
+  font-size: 12.5px;
+  color: var(--d9-faint);
+}
+
+.reg-strip__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 16px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.reg-tpl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0;
   text-align: left;
   cursor: pointer;
-  transition: border-color 120ms ease-out;
+  font-family: inherit;
 }
 
-.card:hover:not(:disabled),
-.card:focus-visible {
-  border-color: var(--legend-faint);
+.reg-tpl__paper {
+  display: block;
+  aspect-ratio: 250 / 325;
+  overflow: hidden;
+  background: var(--d9-chrome);
+  border: 1px solid var(--d9-hair);
 }
 
-.card:disabled {
+.reg-tpl:hover .reg-tpl__paper {
+  border-color: var(--d9-gray);
+}
+
+.reg-tpl:disabled {
+  opacity: 0.5;
   cursor: default;
 }
 
-.card__paper {
-  display: block;
-  /* A4's ratio, so the card shows a page rather than a crop of one. */
-  aspect-ratio: 210 / 297;
-  overflow: hidden;
-  background: var(--paper);
-  border-bottom: 1px solid var(--hair-soft);
-}
-
-/* The sheet is laid out at full width and then scaled, so what is measured is
-   a real page. `transform` rather than `zoom`: nothing here is interactive and
-   nothing is measured from it, so the cheaper of the two is right, and it
-   leaves the parent's box alone. */
-.card__sheet {
+.reg-tpl__sheet {
   display: block;
   width: 210mm;
   padding: var(--page-margin);
-  transform: scale(0.235);
+  transform: scale(0.145);
   transform-origin: top left;
   pointer-events: none;
 }
 
-.card__name {
-  display: block;
-  padding: 9px 11px 0;
-  color: var(--legend);
-  font-size: 13.5px;
-  font-weight: 600;
+.reg-tpl__name {
+  font-size: 12px;
+  color: var(--d9-gray);
 }
 
-.card:hover:not(:disabled) .card__name {
-  color: #ffffff;
+.reg-tpl:hover .reg-tpl__name {
+  color: var(--d9-ink);
 }
 
-/* Two lines of room whether the note needs them or not. The notes run from
-   three words to eight, so reserving the taller case is what keeps every card
-   the same height -- rather than letting whichever note happens to wrap decide
-   for its row, which changes as the grid reflows.
-
-   Spaced with margin rather than padding so that reservation is legible:
-   `box-sizing` is `border-box` here, and under it a min-height is spent on the
-   element's own padding before it reserves a single line of text. */
-.card__note {
-  display: block;
-  margin: 3px 11px 11px;
-  min-height: calc(2 * 1.45em);
-  color: var(--legend-faint);
-  font-size: 11.5px;
-  line-height: 1.45;
+.reg-notice {
+  margin: 0 0 14px;
+  padding: 8px 11px;
+  border-left: 2px solid #a8322a;
+  background: #f6efee;
+  color: #7d2b24;
+  font-size: 12.5px;
 }
 
-@media (max-width: 900px) {
-  .gallery {
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+@media (max-width: 760px) {
+  .reg-bar {
     gap: 12px;
+    padding: 0 12px;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .card {
-    transition: none;
+  .reg-search {
+    display: none;
+  }
+
+  .reg-body {
+    padding: 16px 14px 0;
   }
 }
 
@@ -2229,6 +2632,128 @@ textarea {
   background: rgba(0, 0, 0, 0.78);
 }
 
+/* --- the job a résumé is aimed at -------------------------------------------
+   A line above the composer, not a control beside Send: it is a standing fact
+   about the document rather than something set per message. Named when it is
+   set, because "which job is this" is the question, and a generic label
+   answers it for nobody with two applications open. */
+.aim {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12.5px;
+}
+
+.aim__label {
+  flex: none;
+  font-family: var(--font-legend);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+.aim__name {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--legend);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.aim__name:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.aim__drop {
+  flex: none;
+  display: inline-flex;
+  align-self: center;
+  padding: 2px;
+  border: 0;
+  background: transparent;
+  color: var(--legend-faint);
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.aim__drop:hover {
+  color: var(--legend);
+}
+
+.aim__add {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--legend-faint);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.aim__add:hover {
+  color: var(--legend);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.aim__name:focus-visible,
+.aim__drop:focus-visible,
+.aim__add:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Room to read a posting in. A job ad runs long and the requirements are as
+   often at the foot as the head, so this is sized to scroll rather than to
+   peep. */
+.aim__field {
+  /* Inset to the dialog's own gutter rather than running edge to edge: the
+     heading and the paragraph above it are set to that line, and a field that
+     ignores it reads as a different panel that happens to be here. */
+  width: auto;
+  min-height: 40vh;
+  margin: 14px 16px 0;
+  padding: 11px 12px;
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  background: var(--board-raised);
+  color: var(--legend);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.55;
+  resize: vertical;
+}
+
+.aim__field::placeholder {
+  color: var(--legend-faint);
+}
+
+.aim__field:focus {
+  outline: 0;
+  border-color: var(--focus);
+}
+
+.aim__foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+}
+
 /* --- the model picker -----------------------------------------------------
    The panel is `fixed`, not `absolute`, and positioned from the button's rect
    in JS. The schedule is an `overflow-y: auto` pane, and an element with a
@@ -2241,12 +2766,16 @@ textarea {
   align-items: center;
   gap: 6px;
   max-width: 200px;
-  padding: 3px 8px;
+  /* Sized to stand next to Send rather than inside a header strip: the same
+     4px radius and the same 32px as the button it sits against, because two
+     adjacent controls at different heights read as a mistake. */
+  padding: 8px 10px;
   border: 1px solid var(--hair);
+  border-radius: 4px;
   background: transparent;
   color: var(--legend-dim);
   font-family: var(--font-ui);
-  font-size: 12px;
+  font-size: 12.5px;
   cursor: pointer;
 }
 
@@ -2556,12 +3085,41 @@ textarea {
     overflow: visible;
   }
 
-  .deck__board {
-    order: 1;
-    min-height: 100vh;
+  .deck__panes {
+    display: flex;
+    flex-direction: column;
   }
 
-  .deck > aside {
+  /* One flow, not two columns. The split exists to line the bar up with the
+     panes beneath it, and beneath it the panes are stacked -- so the rule
+     would be pointing at nothing. */
+  .rail--top {
+    display: flex;
+    gap: 12px;
+    padding: 8px 12px;
+    background: var(--board-raised);
+  }
+
+  .rail__brand,
+  .rail__actions {
+    padding: 0;
+  }
+
+  .rail__actions {
+    flex: 1;
+    min-width: 0;
+    gap: 12px;
+  }
+
+  .deck__board {
+    order: 1;
+    /* One screen, bar included. It was a bare 100vh, which was a screen's
+       worth when the bar lived inside this column; now that the bar sits above
+       both panes, that pushed the drawing 52px past the fold. */
+    min-height: calc(100vh - 52px);
+  }
+
+  .deck__panes > aside {
     order: 2;
     overflow: visible;
   }
@@ -2578,9 +3136,6 @@ textarea {
 
   /* The foot stacks: instruction line above, title block below it. Side by
      side they would each get about 170px, which is not a sentence. */
-  .revblock {
-    max-height: 40vh;
-  }
 
   .rail {
     padding: 8px 12px;
@@ -2629,7 +3184,7 @@ textarea {
   .notice,
   .scrim,
   .picker__panel,
-  .revision-layer {
+  .pen-layer {
     display: none;
   }
 
@@ -2663,7 +3218,10 @@ textarea {
     box-shadow: none;
   }
 
-  /* Our annotation, not the person's résumé. */
+  /* Same rule for the unverified mark: it exists to be seen by the person
+     writing the résumé and never by the person reading the PDF. A dotted red
+     underline printed onto a skill would be the one thing on this page that
+     told an employer the assistant had been guessing. */
   .node--unverified {
     text-decoration: none;
   }

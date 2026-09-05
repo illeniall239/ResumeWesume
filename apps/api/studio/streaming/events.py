@@ -167,6 +167,22 @@ class ErrorEvent(Event):
     fatal: bool = True
 
 
+class BoardForked(Event):
+    """A new version of the résumé was started, and the turn moved onto it.
+
+    The client has to follow: everything after this lands on the new board, and
+    a page still showing the original would draw patches against a document
+    that never received them.
+    """
+
+    type: Literal["board_forked"] = "board_forked"
+    call_id: str
+    board_id: str
+    title: str
+    #: The version it was copied from, which is left exactly as it was.
+    from_board: str
+
+
 class Done(Event):
     type: Literal["done"] = "done"
     doc_version: int

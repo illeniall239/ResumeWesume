@@ -8,8 +8,10 @@
 
 import type {
   ApplyResponse,
+  CanvasResponse,
   DocOp,
   DocumentResponse,
+  Layout,
   StudioDoc,
   Template,
 } from '@/contracts/doc';
@@ -49,6 +51,17 @@ export interface VersionConflict {
   code: 'version_conflict';
   current_version: number;
   ops_since: DocOp[];
+}
+
+/**
+ * A 404 from the API, as opposed to a network failure or anything else.
+ *
+ * Used where "there is nothing here" is a real answer to act on rather than a
+ * fault to report: opening a link that names a board rather than the canvas it
+ * sits on, for one.
+ */
+export function isNotFound(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
 }
 
 export function isVersionConflict(error: unknown): error is ApiError & {
@@ -113,18 +126,40 @@ export interface StoredMessage {
   role: 'user' | 'assistant';
   text: string;
   status: 'ok' | 'partial' | 'failed' | 'cancelled' | null;
+  /**
+   * The snapshot this turn can be put back to, where that means anything.
+   *
+   * Joined server-side on `turn_id`, so "undo this turn" survives a refresh —
+   * which is exactly what somebody does when they are unsure whether an edit
+   * landed. Null on a turn that changed nothing, and on every user message.
+   */
+  checkpoint?: string | null;
+  /** Which version this turn acted on, and what it is called. */
+  board_id?: string | null;
+  board?: string | null;
 }
 
 /**
- * The conversation for a document, oldest first.
+ * Everything said about a résumé, oldest first, across its versions.
  *
  * Server-side rather than in the browser because the next turn is built from
  * it: a chat held only in memory meant a page reload silently emptied the
  * history sent to the model, and the assistant would ask again for facts it had
  * already been given.
+ *
+ * Canvas-wide rather than per board, because a conversation is: you ask for a
+ * version aimed at one job, read it back, then ask for another. Held per board
+ * it split into as many transcripts as there were versions, and switching
+ * versions silently changed the subject.
  */
-export function fetchMessages(id: string): Promise<{ messages: StoredMessage[] }> {
-  return request<{ messages: StoredMessage[] }>(`/documents/${id}/messages`);
+export function fetchCanvasMessages(
+  canvasId: string
+): Promise<{ messages: StoredMessage[] }> {
+  return request<{ messages: StoredMessage[] }>(`/canvases/${canvasId}/messages`);
+}
+
+export function clearCanvasMessages(canvasId: string): Promise<void> {
+  return request<void>(`/canvases/${canvasId}/messages`, { method: 'DELETE' });
 }
 
 /**
@@ -133,6 +168,46 @@ export function fetchMessages(id: string): Promise<{ messages: StoredMessage[] }
  * There is no undo for this one. Undo reverses a batch *within* a document; a
  * deleted document has no op log left to reverse, so the caller asks first.
  */
+/**
+ * Every canvas, newest activity first, each with its boards in full.
+ *
+ * In full because the register renders boards for real — the same
+ * `DocumentFlow` the studio and the PDF use — so a card cannot go stale
+ * against the thing it opens.
+ */
+export function fetchCanvases(): Promise<CanvasResponse[]> {
+  return request<CanvasResponse[]>('/canvases');
+}
+
+export function fetchCanvas(id: string): Promise<CanvasResponse> {
+  return request<CanvasResponse>(`/canvases/${id}`);
+}
+
+export function createCanvas(title = 'Untitled'): Promise<CanvasResponse> {
+  return request<CanvasResponse>('/canvases', {
+    method: 'POST',
+    body: JSON.stringify({ title }),
+  });
+}
+
+export function renameCanvas(id: string, title: string): Promise<CanvasResponse> {
+  return request<CanvasResponse>(`/canvases/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+}
+
+/**
+ * Delete a canvas and every board on it.
+ *
+ * The boards go with it: they are versions of one résumé, and keeping them
+ * would leave a set of sheets with nothing in common and no way back to each
+ * other.
+ */
+export function deleteCanvas(id: string): Promise<void> {
+  return request<void>(`/canvases/${id}`, { method: 'DELETE' });
+}
+
 /**
  * Give a document a different name.
  *
@@ -151,10 +226,6 @@ export function deleteDocument(id: string): Promise<void> {
   return request<void>(`/documents/${id}`, { method: 'DELETE' });
 }
 
-export function clearMessages(id: string): Promise<void> {
-  return request<void>(`/documents/${id}/messages`, { method: 'DELETE' });
-}
-
 export function listDocuments(): Promise<DocumentResponse[]> {
   return request<DocumentResponse[]>('/documents');
 }
@@ -167,8 +238,13 @@ export function createDocument(body: {
   source_markdown?: string;
   /** How the résumé is set. Omitted leaves the server's default. */
   template?: Template;
+  /** How the page is arranged. A different layer from `template`: this places
+   *  the frames, that styles what is inside one. */
+  layout?: Layout;
   /** Start from a skeleton -- headings and one empty entry per section. */
   starter?: boolean;
+  /** Put this board on an existing canvas. Omitted, it gets one of its own. */
+  canvas_id?: string;
 }): Promise<DocumentResponse> {
   return request<DocumentResponse>('/documents', {
     method: 'POST',
@@ -193,10 +269,13 @@ export function applyOps(
 /**
  * Reverse the last committed batch, or put it back.
  *
- * One `POST /ops` is one version is one undo unit, so this works identically
- * for a direct edit and for an agent turn. Resolves to `null` when there is
- * nothing to reverse — the server answers 409 for an empty stack, which is an
- * ordinary state and not worth throwing over.
+ * One `POST /ops` is one version is one undo unit. That is a batch, *not* a
+ * turn: the agent loop calls `apply` once per tool call, so a turn that made
+ * fourteen edits is fourteen versions and fourteen presses of this. Undoing a
+ * whole turn is `revertToCheckpoint` below.
+ *
+ * Resolves to `null` when there is nothing to reverse — the server answers 409
+ * for an empty stack, which is an ordinary state and not worth throwing over.
  */
 export async function reverseHistory(
   id: string,
@@ -211,6 +290,77 @@ export async function reverseHistory(
     if ((error as Error).message.startsWith('409')) return null;
     throw error;
   }
+}
+
+/**
+ * Put the document back to how it was before an agent turn.
+ *
+ * The loop takes a snapshot before its first mutation and streams the id on
+ * `done`, which is the only thing in this app that knows where a turn began:
+ * ops are recorded per tool call, so by the time a turn ends nothing else can
+ * say which of the last fourteen versions was the one you asked for.
+ *
+ * Restores as a *new* version rather than rewinding, so a client holding an
+ * old ETag still gets a conflict instead of silently appearing current.
+ */
+export function revertToCheckpoint(
+  id: string,
+  checkpointId: string
+): Promise<DocumentResponse> {
+  return request<DocumentResponse>(`/documents/${id}/revert`, {
+    method: 'POST',
+    body: JSON.stringify({ checkpoint_id: checkpointId }),
+  });
+}
+
+/**
+ * Aim this résumé at a job posting, or stop aiming it at one.
+ *
+ * `PUT`, carrying no version and taking no `If-Match`, for the same reason a
+ * rename does: the posting is *about* the document rather than in it. It moves
+ * neither the version nor the content hash, so pasting one hands no conflict
+ * to an open editor and leaves nothing in the undo stack between two real
+ * edits.
+ *
+ * An empty string clears it. There is no separate remove call, because "aimed
+ * at nothing" is not a different kind of state.
+ */
+export function setJobDescription(id: string, text: string): Promise<DocumentResponse> {
+  return request<DocumentResponse>(`/documents/${id}/job-description`, {
+    method: 'PUT',
+    body: JSON.stringify({ text }),
+  });
+}
+
+/**
+ * The same, from a PDF downloaded off a job board.
+ *
+ * Its own `fetch` rather than `request()`, which sets a JSON content type the
+ * browser must be left to fill in with the multipart boundary.
+ */
+export async function setJobDescriptionFromPdf(
+  id: string,
+  file: File
+): Promise<DocumentResponse> {
+  const body = new FormData();
+  body.append('file', file);
+
+  const response = await fetch(url(`/documents/${id}/job-description/pdf`), {
+    method: 'POST',
+    body,
+    cache: 'no-store',
+  });
+  if (!response.ok) {
+    let detail: unknown = response.statusText;
+    try {
+      detail = (await response.json()).detail ?? response.statusText;
+    } catch {
+      /* keep the status text */
+    }
+    const text = typeof detail === 'string' ? detail : JSON.stringify(detail);
+    throw new ApiError(response.status, detail, text);
+  }
+  return (await response.json()) as DocumentResponse;
 }
 
 /**

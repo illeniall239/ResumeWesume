@@ -340,3 +340,121 @@ class TestTwoColumn:
             "Tamil",
             "German",
         }
+
+
+class TestUnknownSections:
+    """A résumé is not made only of the six sections we happen to model.
+
+    Every heading in this fixture appears on real résumés and none of them is
+    in the alias table. Before this they were recognised as sections, reported
+    as skipped, and left out of the document -- so importing somebody's résumé
+    quietly returned less than they uploaded.
+    """
+
+    async def test_sections_we_have_no_schema_for_are_still_imported(
+        self, client
+    ) -> None:
+        scripted(EXPERIENCE, EDUCATION)
+        stream = events(
+            (
+                await upload(
+                    client,
+                    pdf_bytes("resume_novel_sections.pdf"),
+                    filename="anna.pdf",
+                )
+            ).text
+        )
+        ready = stream[-1]
+        assert ready["type"] == "import_ready"
+
+        custom = ready["resume_data"]["customSections"]
+        # Named by the résumé, not by us -- which is what covers a heading
+        # nobody has thought of, including one in another language.
+        assert "PUBLICATIONS" in custom
+        assert "LEADERSHIP" in custom
+        assert "INTERESTS" in custom
+        assert "FORMATION CONTINUE" in custom
+
+    async def test_volunteer_experience_is_not_filed_as_paid_work(
+        self, client
+    ) -> None:
+        """The one case that stated something false about the person.
+
+        "Volunteer Experience" matched the word "experience" inside it and was
+        merged into the work history. Unpaid work in somebody's paid history is
+        worse than a section we did not import: it is a section we got wrong.
+        """
+        scripted(EXPERIENCE, EDUCATION)
+        stream = events(
+            (
+                await upload(
+                    client,
+                    pdf_bytes("resume_novel_sections.pdf"),
+                    filename="anna.pdf",
+                )
+            ).text
+        )
+        ready = stream[-1]
+
+        assert "VOLUNTEER EXPERIENCE" in ready["resume_data"]["customSections"]
+        # And the paid history is only what the Experience heading covered.
+        companies = {
+            entry["company"] for entry in ready["resume_data"]["workExperience"]
+        }
+        assert "Pilsen community centre" not in " ".join(companies)
+
+    async def test_nothing_from_the_source_goes_missing(self, client) -> None:
+        """The promise, stated as one assertion.
+
+        Every non-heading line of the fixture has to appear somewhere in the
+        document that comes back -- in a section we model, or in one named by
+        the résumé's own heading.
+        """
+        scripted(EXPERIENCE, EDUCATION)
+        stream = events(
+            (
+                await upload(
+                    client,
+                    pdf_bytes("resume_novel_sections.pdf"),
+                    filename="anna.pdf",
+                )
+            ).text
+        )
+        imported = json.dumps(stream[-1]["resume_data"])
+
+        for phrase in (
+            "Scaling laws for sparse models",
+            "On gradient noise under heavy tails",
+            "Pilsen community centre",
+            "Graduate Student Association",
+            "annual symposium",
+            "history of cartography",
+            "apprentissage automatique",
+        ):
+            assert phrase in imported, f"lost from the résumé: {phrase}"
+
+    async def test_a_custom_section_keeps_its_place_in_the_order(
+        self, client
+    ) -> None:
+        """Publications sits between Experience and Education in the source.
+
+        Appending custom sections after the modelled ones would reshuffle
+        somebody's résumé on the way in, which reads as the importer having
+        rewritten their document.
+        """
+        scripted(EXPERIENCE, EDUCATION)
+        stream = events(
+            (
+                await upload(
+                    client,
+                    pdf_bytes("resume_novel_sections.pdf"),
+                    filename="anna.pdf",
+                )
+            ).text
+        )
+        order = [
+            meta["key"] for meta in stream[-1]["resume_data"]["sectionMeta"]
+        ]
+
+        assert order.index("experience") < order.index("PUBLICATIONS")
+        assert order.index("PUBLICATIONS") < order.index("education")

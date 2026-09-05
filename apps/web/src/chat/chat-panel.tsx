@@ -25,10 +25,12 @@ import { useEffect, useRef, useState } from 'react';
 
 import { Markdown } from '@/chat/markdown';
 import { ModelPicker } from '@/chat/model-picker';
+import { TargetJob } from '@/chat/target-job';
 import { stripNodeIds } from '@/chat/prose';
 import { readTarget, textOf } from '@/doc/read';
-import { Caution, Check, Cross, Query, Running } from '@/ui/marks';
+import { Caution, Check, Cross, Query, Running, Undo } from '@/ui/marks';
 import { useChat, type ChatMessage, type PendingConfirm, type ToolActivity } from '@/store/chat';
+import { useCanvas } from '@/store/canvas';
 import { useStudio } from '@/store/studio';
 
 const SUGGESTIONS = [
@@ -47,14 +49,9 @@ const SUGGESTIONS = [
  * in two places that can disagree.
  */
 function Item({ item }: { item: ToolActivity }) {
-  const setSpotlight = useStudio((state) => state.setSpotlight);
-  const marks = useStudio((state) => state.marks);
 
   const touched = item.touched ?? [];
   const nid = touched[0];
-  // The cross-reference. The same number is drawn on the document and in the
-  // revision block, so all three are matched by reading rather than by hover.
-  const mark = nid ? marks.get(nid) : undefined;
 
   const Mark =
     item.status === 'applied'
@@ -78,29 +75,14 @@ function Item({ item }: { item: ToolActivity }) {
         <span className="item__label">{item.label || item.name.replace(/_/g, ' ')}</span>
         {item.detail && <span className="item__detail">{item.detail}</span>}
       </span>
-      {mark !== undefined && <span className="item__delta">{mark}</span>}
     </>
   );
 
-  // Only a row that names a node can point at anything. The rest stay plain,
-  // so there is never a hover promising a connection that does not exist.
-  if (!touched.length) {
-    return <div className={`item item--${item.status}`}>{body}</div>;
-  }
-
-  return (
-    <button
-      type="button"
-      className={`item item--${item.status} item--leadered`}
-      onPointerEnter={() => setSpotlight(nid)}
-      onPointerLeave={() => setSpotlight(null)}
-      onFocus={() => setSpotlight(nid)}
-      onBlur={() => setSpotlight(null)}
-      title="Show where this landed"
-    >
-      {body}
-    </button>
-  );
+  // A plain row. It used to be a button that lit the region it named on the
+  // document -- which needed the revision layer to do the lighting, and that
+  // is gone. A control offering to show you something and then showing you
+  // nothing is worse than no control, which is what its own rule said.
+  return <div className={`item item--${item.status}`}>{body}</div>;
 }
 
 function Instruction({ message }: { message: ChatMessage }) {
@@ -119,6 +101,13 @@ function Instruction({ message }: { message: ChatMessage }) {
  * is a judgement about what the sidebar is for, and worth pinning.
  */
 export function Revision({ message }: { message: ChatMessage }) {
+  const undoTurn = useChat((state) => state.undoTurn);
+  // Not while the document is mid-write: a revert lands as a whole new
+  // version, and racing it against a save in flight is how two clients end up
+  // disagreeing about which one won.
+  const busy = useStudio((state) => state.saving);
+  const versions = useCanvas((state) => state.boards.length);
+
   const idle = message.status === 'streaming' && !message.text && !message.activity.length;
   /**
    * The turn finished and brought back nothing at all.
@@ -175,9 +164,35 @@ export function Revision({ message }: { message: ChatMessage }) {
             asked for. A header toggle made it a setting to find and remember;
             a closed disclosure says it is there and costs one line. */}
         {message.thinking && (
-          <details className="thinking">
+          <details className="fold fold--reasoning">
             <summary>Reasoning</summary>
             <pre>{message.thinking}</pre>
+          </details>
+        )}
+
+        {/* The steps, once the turn is over: the complete record, closed.
+            Directly under Reasoning and built the same way, because they answer
+            the same kind of question -- how the answer was arrived at -- and a
+            reader who wants one usually wants the other.
+
+            Only after the turn. While it runs the live list below is open and
+            unfolding, which is most of what makes an agent legible; folding the
+            work away as it happens would leave a bubble that sits blank for
+            thirty seconds and reads as a hang.
+
+            Everything is in here, successful edits included. The few rows that
+            still appear below are the ones that need an answer -- a refusal, a
+            confirmation, an advisory note -- and burying those behind a
+            disclosure is how a turn ends up looking like it worked when it did
+            not. This is the log; those are the alerts. */}
+        {finished && message.activity.length > 0 && (
+          <details className="fold fold--steps">
+            <summary>Tool calls</summary>
+            <div className="items items--log">
+              {message.activity.map((item) => (
+                <Item key={item.callId} item={item} />
+              ))}
+            </div>
           </details>
         )}
 
@@ -207,11 +222,41 @@ export function Revision({ message }: { message: ChatMessage }) {
           <p className="revision__status">Some changes could not be applied.</p>
         )}
 
+        {/* The whole turn back, in one press.
+            Ctrl+Z reverses one committed batch and the agent commits one per
+            tool call, so undoing a fourteen-edit turn by hand is fourteen
+            presses -- long enough that people stop halfway and are left with a
+            document nobody asked for. This is offered only on a turn that
+            actually moved the sheet; see `ChatMessage.checkpoint`. */}
+        {message.checkpoint && !message.reverted && (
+          <button
+            type="button"
+            className="revision__undo"
+            onClick={() => void undoTurn(message.id)}
+            disabled={busy}
+            title="Put the résumé back to how it was before this turn"
+          >
+            <Undo size={12} />
+            Undo this turn
+          </button>
+        )}
+        {message.reverted && (
+          <p className="revision__status">Reverted. The sheet is as it was before this.</p>
+        )}
+
         {/* Which model answered. A caption rather than a row in the activity
             list: it says nothing about the resume, and listed there it wore the
             same cross as a rejected edit. Worth showing at all because the plan
             default is not fixed -- the same document answered on Opus one turn
             and Sonnet the next. */}
+        {/* Which version this turn landed on. Only where there is more than
+            one: the conversation is about the résumé, and naming the version
+            on a résumé that has exactly one would be answering a question
+            nobody could be asking. */}
+        {versions > 1 && message.board && (
+          <p className="revision__model">on {message.board}</p>
+        )}
+
         {message.model && <p className="revision__model">{message.model}</p>}
       </div>
     </div>
@@ -338,18 +383,12 @@ export function ChatPanel({ documentId }: { documentId: string }) {
 
   return (
     <div className="schedule">
-      <div className="schedule__head">
-        <span className="wordmark">ResumeWesume</span>
-        <span className="rail__spacer" />
-        <ModelPicker />
-      </div>
-
       <div className="schedule__rows">
         {messages.length === 0 && (
           <div className="schedule__empty">
             <p>
-              Ask for a change and watch it land. Every edit is numbered on the
-              document, recorded in the revision block, and reversible.
+              Ask for a change and watch it land. Every edit is marked on the
+              document, and every one of them is reversible.
             </p>
             <ul className="schedule__suggestions">
               {SUGGESTIONS.map((suggestion) => (
@@ -390,7 +429,15 @@ export function ChatPanel({ documentId }: { documentId: string }) {
         <div ref={endRef} />
       </div>
 
+      {/* A bordered box, not a ruled line. The field is where everything in
+          this column starts, and an underline alone left it ambiguous how far
+          it went and where to click. */}
       <div className="composer">
+        {/* Which job this résumé is aimed at. Above the field rather than
+            beside Send, because it is a standing fact about the document and
+            not a thing you set per message. */}
+        <TargetJob />
+
         <textarea
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
@@ -406,20 +453,27 @@ export function ChatPanel({ documentId }: { documentId: string }) {
           rows={2}
           disabled={streaming}
         />
-        {streaming ? (
-          <button className="ctl" type="button" onClick={cancel}>
-            Stop
-          </button>
-        ) : (
-          <button
-            className="ctl ctl--primary"
-            type="button"
-            onClick={submit}
-            disabled={!draft.trim()}
-          >
-            Send
-          </button>
-        )}
+        {/* Under the field and pushed right, the model beside the button it
+            governs. It used to sit in a header strip of its own above the
+            transcript -- a bar carrying one control, and the one control that
+            only matters at the moment you send. */}
+        <div className="composer__row">
+          <ModelPicker />
+          {streaming ? (
+            <button className="ctl" type="button" onClick={cancel}>
+              Stop
+            </button>
+          ) : (
+            <button
+              className="ctl ctl--primary"
+              type="button"
+              onClick={submit}
+              disabled={!draft.trim()}
+            >
+              Send
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

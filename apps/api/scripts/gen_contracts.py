@@ -44,6 +44,17 @@ ENUMS = {
         "banner",
         "bold",
         "quiet",
+        "portrait",
+        "profile",
+        "badge",
+    ],
+    # Mirrors ``Layout`` in studio/doc/schema.py. A layout arranges the frames
+    # and a template styles what is inside one, so the gallery has to offer
+    # them as two choices rather than one list.
+    "Layout": [
+        "stack",
+        "sidebar_left",
+        "sidebar_right",
     ],
     "RejectCode": [
         "unknown_node",
@@ -96,6 +107,13 @@ def build() -> str:
         StudioDoc,
         TextBlockNode,
     )
+    # The response models too. The gate covered the document's own schema and
+    # not the shapes the endpoints return -- and those are the ones that
+    # actually drifted: `updated_at` and then `canvas_id` were each added to
+    # the Python model, missed by the hand-written block below, and noticed
+    # only when TypeScript failed to compile somewhere else entirely.
+    from studio.routers.canvases import CanvasResponse
+    from studio.routers.documents import DocumentResponse
 
     lines: list[str] = [HEADER]
 
@@ -120,6 +138,8 @@ export interface PersonalInfo {
   website: string | null;
   linkedin: string | null;
   github: string | null;
+  /** Id of an uploaded image, or null. */
+  photo: string | null;
 }
 
 export interface ExperienceNode {
@@ -270,6 +290,7 @@ export interface StudioDoc {
   schema_version: 1 | 2;
   /** Presentation only, and never touched by an op. */
   template: Template;
+  layout: Layout;
   /** True while nothing in the document is yet the user's own. */
   scaffold: boolean;
   /** Nodes the assistant invented while scaffolding, pending confirmation. */
@@ -406,11 +427,37 @@ export interface DocumentResponse {
   version: number;
   hash: string;
   doc: StudioDoc;
+  /** When it last changed, ISO-8601 and UTC. Null on older servers. */
+  updated_at?: string | null;
+  /**
+   * The posting this résumé is aimed at, verbatim, or null.
+   *
+   * Held on the document rather than sent with a message: tailoring is not one
+   * instruction, and carried on the turn it survived exactly one exchange.
+   */
+  job_description?: string | null;
+  /** The canvas this board sits on. */
+  canvas_id?: string | null;
 }
 
 export interface ApplyResponse extends DocumentResponse {
   applied: AppliedOp[];
   rejected: RejectedOp[];
+}
+
+/**
+ * A résumé and the versions of it aimed at particular jobs.
+ *
+ * The thing the register lists. Its boards are ordinary documents, which is
+ * what keeps ops, undo, export and the agent working on a board exactly as
+ * they worked on a document — a board *is* a document.
+ */
+export interface CanvasResponse {
+  id: string;
+  title: string;
+  /** Every board on it, in full, so a card cannot go stale against what it opens. */
+  boards: DocumentResponse[];
+  updated_at?: string | null;
 }
 """
     )
@@ -435,6 +482,8 @@ export interface ApplyResponse extends DocumentResponse {
         ShapeElement,
         PageNode,
         TextBlockNode,
+        DocumentResponse,
+        CanvasResponse,
     ):
         missing = set(model.model_fields) - _fields_in_block(rendered, model.__name__)
         if missing:

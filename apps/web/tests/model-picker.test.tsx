@@ -150,6 +150,41 @@ describe('the panel', () => {
     expect(panel.style.left).not.toBe('');
   });
 
+  it('opens upward when it is pinned to the foot of the column', () => {
+    // The regression this guards: the picker used to sit in a header at the
+    // top of the sidebar, where downward was always right. It now sits beside
+    // Send at the bottom of the composer, and a panel that only ever hung
+    // downward opened 413px below the bottom of the screen -- on screen in
+    // the DOM, unreachable with a mouse.
+    render(<ModelPicker />);
+    openPanel();
+
+    const trigger = screen.getByRole('button', { expanded: true });
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({
+      top: window.innerHeight - 45,
+      bottom: window.innerHeight - 13,
+      left: 165,
+      right: 296,
+      width: 131,
+      height: 32,
+      x: 165,
+      y: window.innerHeight - 45,
+      toJSON: () => ({}),
+    } as DOMRect);
+
+    fireEvent.scroll(document);
+
+    const panel = screen.getByRole('listbox');
+    // Anchored by its bottom, so a short list grows out of the button rather
+    // than floating a fixed distance above it.
+    expect(panel.style.bottom).not.toBe('');
+    expect(panel.style.top).toBe('');
+    // And never taller than the room it has.
+    expect(parseFloat(panel.style.maxHeight)).toBeLessThanOrEqual(
+      window.innerHeight - 45
+    );
+  });
+
   it('is narrow enough for the 320px sidebar minimum', () => {
     render(<ModelPicker />);
     openPanel();

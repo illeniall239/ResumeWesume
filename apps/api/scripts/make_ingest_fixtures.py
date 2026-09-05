@@ -223,10 +223,52 @@ WONKY = """
 </body>
 """
 
+# A resume made mostly of sections the importer has no schema for. Every
+# heading below appears on real resumes and none of them is in the alias table:
+# the point of the fixture is that content survives a heading nobody has
+# thought of, without anybody adding a word to a list.
+#
+# It also carries the two shapes an unknown section comes in -- a list of
+# separate entries (Publications) and a wrapped paragraph (Interests) -- and a
+# heading in a language the table does not speak.
+NOVEL_SECTIONS = f"""<!doctype html><meta charset="utf-8"><style>{_STYLE}</style>
+<h1>Anna Kowalski</h1>
+<div class="contact">Chicago, IL &middot; anna.kowalski@example.com &middot;
+  (312) 555-0142</div>
+
+<h2>Experience</h2>
+<div class="role"><span>Research Scientist</span><span>2021 &ndash; Present</span></div>
+<div class="sub"><span>Argonne Labs</span></div>
+<ul><li>&bull; Led a team of six on distributed training infrastructure.</li></ul>
+
+<h2>Publications</h2>
+<p>Kowalski, A. (2024). Scaling laws for sparse models. NeurIPS.</p>
+<p>Kowalski, A. (2023). On gradient noise under heavy tails. ICML.</p>
+
+<h2>Volunteer Experience</h2>
+<p>Taught weekend mathematics at the Pilsen community centre, 2019&ndash;2023.</p>
+
+<h2>Leadership</h2>
+<p>President, Graduate Student Association</p>
+<ul><li>&bull; Ran the annual symposium for four hundred attendees.</li></ul>
+
+<h2>Interests</h2>
+<p>Long-distance running, classical guitar, and the history of cartography,
+about which she will talk for considerably longer than anybody wants her to.</p>
+
+<h2>Formation Continue</h2>
+<p>Certificat en apprentissage automatique, Universit&eacute; de Paris.</p>
+
+<h2>Education</h2>
+<div class="role"><span>Ph.D. Computer Science</span><span>2016 &ndash; 2021</span></div>
+<div class="sub"><span>University of Chicago</span></div>
+"""
+
 PAGES = {
     "resume_single_column.pdf": SINGLE_COLUMN,
     "resume_two_column.pdf": TWO_COLUMN,
     "resume_wonky.pdf": WONKY,
+    "resume_novel_sections.pdf": NOVEL_SECTIONS,
 }
 
 

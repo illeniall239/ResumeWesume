@@ -23,6 +23,7 @@ from typing import Any, NamedTuple
 from studio.doc.nodes import NodeKind
 from studio.doc.schema import (
     DEFAULT_SECTIONS,
+    Layout,
     FrameElement,
     PageNode,
     Rect,
@@ -115,36 +116,115 @@ def _has_content(doc: StudioDoc, key: str) -> bool:
     return bool(getattr(doc, key, None))
 
 
-def layout(doc: StudioDoc, *, page: PageSpec = A4) -> list[PageNode]:
+#: Which sections go in the rail of a sidebar layout.
+#:
+#: The short, scannable ones. A rail is a narrow column: a list of skills or a
+#: degree sits in it comfortably, and a job with four bullets does not -- set
+#: at half width it runs to twice the lines and the layout stops saving any
+#: space at all. Experience and projects stay in the wide column for the same
+#: reason a newspaper puts its long copy there.
+_RAIL_SECTIONS: frozenset[str] = frozenset({"skills", "education"})
+
+#: Fraction of the content width the rail takes.
+_RAIL_FRACTION = 0.32
+
+#: Space between the two columns.
+_COLUMN_GAP = 18.0
+
+
+def _columns(arrangement: Layout, page: PageSpec) -> tuple[float, float, float, float]:
+    """Left edge and width of the rail and of the main column, in points."""
+    rail_w = page.content_width * _RAIL_FRACTION - _COLUMN_GAP / 2
+    main_w = page.content_width - rail_w - _COLUMN_GAP
+    if arrangement == "sidebar_right":
+        return page.margin + main_w + _COLUMN_GAP, rail_w, page.margin, main_w
+    return page.margin, rail_w, page.margin + rail_w + _COLUMN_GAP, main_w
+
+
+def layout(
+    doc: StudioDoc, *, page: PageSpec = A4, arrangement: Layout | None = None
+) -> list[PageNode]:
     """One page, one frame per section with something in it.
 
-    Frames are full content width and stacked, which is what makes the result
-    identical to the flowing render it replaces -- and means a migrated
+    In ``stack`` -- what every document has been until now, and still the
+    default -- frames are full content width and stacked, which is what makes
+    the result identical to the flowing render it replaces and means a migrated
     document cannot come out overlapping or reordered.
-    """
-    elements: list[FrameElement] = []
-    y = page.margin
 
-    def place(ref: str, height: float) -> None:
-        nonlocal y
+    A sidebar puts the short sections in a narrow column beside the long ones.
+    That is expressed here, in geometry, and not in the template CSS: the
+    canvas gives a section heading and each of its entries a separate frame, so
+    a grid inside one frame has nothing to span -- which is exactly why the
+    two-column *template* that used to exist was removed. Frames are the only
+    thing on this page wide enough to hold a column.
+
+    The heights are advisory here as everywhere else; the client measures and
+    corrects them, and it keeps each column on its own cursor while it does.
+    """
+    arrangement = arrangement or doc.layout
+    rail_x, rail_w, main_x, main_w = _columns(arrangement, page)
+    stacked = arrangement == "stack"
+
+    elements: list[FrameElement] = []
+    # One cursor per column. In a stack the two are the same cursor, which is
+    # what keeps that path byte-identical to what it was.
+    cursors = {"rail": page.margin, "main": page.margin}
+
+    def place(ref: str, height: float, column: str = "main") -> None:
+        if stacked:
+            column, x, w = "main", page.margin, page.content_width
+        elif column == "rail":
+            x, w = rail_x, rail_w
+        else:
+            x, w = main_x, main_w
+
         elements.append(
             FrameElement(
                 nid=derived_id(NodeKind.FRAME, ref),
                 ref=ref,
-                rect=Rect(x=page.margin, y=y, w=page.content_width, h=height),
+                rect=Rect(x=x, y=cursors[column], w=w, h=height),
                 autogrow="height",
             )
         )
-        y += height + _GAP
+        cursors[column] += height + _GAP
+
+    def span(ref: str, height: float) -> None:
+        """Full width, with both columns resuming below it."""
+        below = max(cursors.values())
+        cursors["rail"] = cursors["main"] = below
+        elements.append(
+            FrameElement(
+                nid=derived_id(NodeKind.FRAME, ref),
+                ref=ref,
+                rect=Rect(x=page.margin, y=below, w=page.content_width, h=height),
+                autogrow="height",
+            )
+        )
+        cursors["rail"] = cursors["main"] = below + height + _GAP
 
     # The header is not a section and has no SectionMeta, but it is content and
-    # the coverage gate counts it, so it gets a frame like everything else.
-    place("personal", _ESTIMATED_HEADER_HEIGHT)
+    # the coverage gate counts it, so it gets a frame like everything else. It
+    # spans in every arrangement: a name is the one thing on a résumé that is
+    # never in a column.
+    span("personal", _ESTIMATED_HEADER_HEIGHT)
 
     for meta in ordered_sections(doc):
+        # A custom section is keyed by its own heading, so it is not an
+        # attribute of the document: `_has_content` cannot find it and
+        # `place(meta.key, ...)` would bind a frame to a ref that resolves to
+        # nothing. It is placed by nid instead -- which is what the renderer
+        # looks it up by, and what the coverage gate counts, so the section is
+        # covered by construction rather than by a second rule that agrees.
+        own = next((s for s in doc.custom if s.key == meta.key), None)
+        if own is not None:
+            # A section we have no schema for goes in the main column: its
+            # shape is unknown, and the rail is only safe for short things.
+            place(own.nid, _ESTIMATED_SECTION_HEIGHT)
+            continue
         if not _has_content(doc, meta.key):
             continue
-        place(meta.key, _ESTIMATED_HEADING_HEIGHT)
+        column = "rail" if meta.key in _RAIL_SECTIONS else "main"
+        place(meta.key, _ESTIMATED_HEADING_HEIGHT, column)
         # One frame per entry, not one per section. A frame moves whole, so a
         # section frame holding five jobs is a single 700pt box that cannot
         # share a page with anything -- which turned a two-page resume into
@@ -153,7 +233,8 @@ def layout(doc: StudioDoc, *, page: PageSpec = A4) -> list[PageNode]:
         # matching that keeps pagination identical. It is also what makes
         # "drag this job onto page two" a thing the document can express.
         for entry in _entries(doc, meta.key):
-            place(entry.nid, _ESTIMATED_ENTRY_HEIGHT)
+            # An entry sits under its own heading, so it takes the same column.
+            place(entry.nid, _ESTIMATED_ENTRY_HEIGHT, column)
 
     # Free text blocks are content too. On a migrated document there are none;
     # this is here so a re-layout of a canvas document does not strand them.

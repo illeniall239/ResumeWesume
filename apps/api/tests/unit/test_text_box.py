@@ -15,7 +15,7 @@ import pytest
 
 from studio.agent.tools import REGISTRY, ToolError
 from studio.doc.apply import OpContext, apply_ops
-from studio.doc.schema import PageNode, StudioDoc
+from studio.doc.schema import ImageElement, PageNode, Rect, StudioDoc
 
 
 def spec():
@@ -619,3 +619,250 @@ class TestNoBlankLinesFromTheAssistant:
         assert REGISTRY.get("add_bullet").Args(
             parent="exp_11111", value="Rebuilt the ledger."
         ).value == "Rebuilt the ledger."
+
+
+class TestColour:
+    """Colour, which the schema has always had and nothing could reach.
+
+    ``ElementStyle`` has carried ``color`` and ``background`` since it was
+    written, and ``SetElementStyle`` has always been able to patch them -- but
+    the tool exposed neither, so an assistant asked to make something red had
+    no way to say so and the request came back as a refusal about alignment.
+
+    Whether a coloured résumé is a good idea is not this layer's call. It is
+    the person's document.
+    """
+
+    def test_a_box_can_be_given_a_colour(self) -> None:
+        tool = REGISTRY.get("set_element_style")
+        ops = tool.compile(tool.Args(nid="frm_x", color="#b91c1c"), doc())
+
+        assert ops[0].patch == {"color": "#b91c1c"}
+
+    def test_a_box_can_be_given_a_background(self) -> None:
+        tool = REGISTRY.get("set_element_style")
+        ops = tool.compile(tool.Args(nid="frm_x", background="beige"), doc())
+
+        assert ops[0].patch == {"background": "beige"}
+
+    @pytest.mark.parametrize(
+        ("written", "read"),
+        [
+            ("red", "red"),
+            ("CRIMSON", "crimson"),
+            ("  navy  ", "navy"),
+            ("#b91c1c", "#b91c1c"),
+            ("#B91C1C", "#b91c1c"),
+            ("#fff", "#fff"),
+            # What someone pastes out of a palette, hash and all missing.
+            ("b91c1c", "#b91c1c"),
+            ("rgb(185, 28, 28)", "rgb(185, 28, 28)"),
+        ],
+    )
+    def test_a_colour_is_read_the_way_a_person_writes_one(
+        self, written: str, read: str
+    ) -> None:
+        """A model asked for red reaches for a name or a hex about equally
+        often. Understanding only one of them makes the feature look broken for
+        a reason that has nothing to do with the résumé."""
+        tool = REGISTRY.get("set_element_style")
+        ops = tool.compile(tool.Args(nid="frm_x", color=written), doc())
+
+        assert ops[0].patch["color"] == read
+
+    def test_something_that_is_not_a_colour_says_so(self) -> None:
+        """Rather than passing through. CSS drops a keyword it does not know
+        without a word, so the alternative is a tool that reports success while
+        nothing on the page changes -- the worse of the two failures."""
+        tool = REGISTRY.get("set_element_style")
+        with pytest.raises(ToolError, match="not a colour"):
+            tool.compile(tool.Args(nid="frm_x", color="reddish"), doc())
+
+    def test_a_shape_reads_a_colour_the_same_way(self) -> None:
+        """One reader for both, so "crimson" works everywhere "#dc2626" does.
+        `add_shape` used to pass its argument straight through to `fill`."""
+        tool = REGISTRY.get("add_shape")
+        ops = tool.compile(
+            tool.Args(shape="ellipse", where="right_edge", colour="crimson"), doc()
+        )
+
+        assert ops[0].node["fill"] == "crimson"
+
+    def test_asking_for_nothing_still_names_colour(self) -> None:
+        """The message lists what the tool takes, and listing four of its six
+        arguments is how the assistant concluded colour was impossible."""
+        tool = REGISTRY.get("set_element_style")
+        with pytest.raises(ToolError, match="color"):
+            tool.compile(tool.Args(nid="frm_x"), doc())
+
+    def test_a_colour_survives_being_applied(self) -> None:
+        """Through the op and onto the document, not just out of the tool."""
+        base = doc()
+        box = REGISTRY.get("add_text_box")
+        base, _, _ = apply_ops(
+            base,
+            box.compile(box.Args(value="Hello", corner="top_left"), base),
+            OpContext(),
+        )
+        nid = base.pages[0].elements[0].nid
+
+        tool = REGISTRY.get("set_element_style")
+        out, _, rejected = apply_ops(
+            base, tool.compile(tool.Args(nid=nid, color="navy"), base), OpContext()
+        )
+
+        assert rejected == []
+        assert out.pages[0].elements[0].style.color == "navy"
+
+
+class TestPhoto:
+    """Getting a photograph into the résumé's holder.
+
+    The holder was added before any way of filling it: `personal.photo` existed
+    and nothing on the server or in the interface could write to it. An agent
+    told "put this picture in the holder" had no tool to call, and the file had
+    no route from a disk into the document at all.
+    """
+
+    def test_a_photo_can_be_placed(self) -> None:
+        tool = REGISTRY.get("set_photo")
+        ops = tool.compile(tool.Args(asset="ast_9f21"), doc())
+
+        assert ops[0].target == "personal.photo"
+        assert ops[0].value == "ast_9f21"
+
+    def test_a_photo_can_be_taken_off(self) -> None:
+        """Empty rather than absent: `set_field` writes a value, and the
+        renderer treats the empty string as no photo."""
+        tool = REGISTRY.get("set_photo")
+        ops = tool.compile(tool.Args(asset=None), doc())
+
+        assert ops[0].target == "personal.photo"
+        assert ops[0].value == ""
+
+    def test_it_says_which_it_did(self) -> None:
+        tool = REGISTRY.get("set_photo")
+
+        # "set", not "added": the same call may have moved a placed picture
+        # into the holder, and `label` sees the arguments alone.
+        assert tool.label(tool.Args(asset="ast_1")) == "set the photo"
+        assert tool.label(tool.Args(asset=None)) == "removed the photo"
+
+    def test_a_photo_is_identity(self) -> None:
+        """Tier C, like every other `personal` field. A picture is the most
+        identifying thing on the page, and the tier is what puts the change in
+        the identity list the turn reports afterwards."""
+        assert REGISTRY.get("set_photo").tier == "C"
+
+    def test_a_photo_survives_being_applied(self) -> None:
+        # Tier C granted, which is what the agent loop does for every tool call
+        # -- the gate that matters for identity is the one in the loop, which
+        # records the change and reports it after the turn.
+        tool = REGISTRY.get("set_photo")
+        base = doc()
+
+        out, _, rejected = apply_ops(
+            base,
+            tool.compile(tool.Args(asset="ast_77"), base),
+            OpContext(granted_tiers={"A", "B", "C"}),
+        )
+
+        assert rejected == []
+        assert out.personal.photo == "ast_77"
+
+    def test_a_photo_is_refused_without_the_tier(self) -> None:
+        """The other half of the same fact, and worth pinning: a picture is
+        identity, so it does not slip in under a tier-A grant."""
+        tool = REGISTRY.get("set_photo")
+        base = doc()
+
+        _, _, rejected = apply_ops(
+            base, tool.compile(tool.Args(asset="ast_77"), base), OpContext()
+        )
+
+        assert [entry.code for entry in rejected] == ["tier_denied"]
+
+    def test_placing_it_in_the_holder_moves_it_there(self) -> None:
+        """The route this exists for: a headshot added with the toolbar, which
+        drops it on the page as a positioned box, then asked for in the holder.
+        Setting the field alone left the box where it was and the same face
+        appeared on the résumé twice."""
+        base = doc()
+        base.pages[0].elements.append(
+            ImageElement(nid="img_a8312", asset="ast_x", rect=Rect(x=1, y=1, w=10, h=10))
+        )
+
+        tool = REGISTRY.get("set_photo")
+        out, _, rejected = apply_ops(
+            base,
+            tool.compile(tool.Args(asset="ast_x"), base),
+            OpContext(granted_tiers={"A", "B", "C"}),
+        )
+
+        assert rejected == []
+        assert out.personal.photo == "ast_x"
+        assert [e.nid for e in out.pages[0].elements if getattr(e, "asset", None)] == []
+
+    def test_it_leaves_a_different_picture_alone(self) -> None:
+        """Only copies of the picture being placed. A second image on the page
+        is somebody's diagram, not a duplicate."""
+        base = doc()
+        base.pages[0].elements.append(
+            ImageElement(nid="img_keep", asset="ast_other", rect=Rect(x=1, y=1, w=10, h=10))
+        )
+
+        tool = REGISTRY.get("set_photo")
+        out, _, _ = apply_ops(
+            base,
+            tool.compile(tool.Args(asset="ast_x"), base),
+            OpContext(granted_tiers={"A", "B", "C"}),
+        )
+
+        assert [e.nid for e in out.pages[0].elements if getattr(e, "asset", None)] == [
+            "img_keep"
+        ]
+
+    def test_taking_the_photo_out_deletes_nothing(self) -> None:
+        """Clearing the holder is not a reason to delete a picture somebody
+        placed on the page deliberately."""
+        base = doc()
+        base.pages[0].elements.append(
+            ImageElement(nid="img_a8312", asset="ast_x", rect=Rect(x=1, y=1, w=10, h=10))
+        )
+
+        tool = REGISTRY.get("set_photo")
+        ops = tool.compile(tool.Args(asset=None), base)
+
+        assert [op.op for op in ops] == ["set_field"]
+
+    def test_the_agent_can_tell_a_placed_image_from_its_asset(self) -> None:
+        """Without the id in the outline there is no way to know that a box on
+        the page and an entry in UPLOADS are the same picture, so "put that
+        photo in the holder" could not be answered about one already placed."""
+        from studio.agent.context import _layout_preamble
+
+        base = doc()
+        base.pages[0].elements.append(
+            ImageElement(nid="img_a8312", asset="ast_x", rect=Rect(x=1, y=1, w=10, h=10))
+        )
+
+        assert any("ast_x" in line for line in _layout_preamble(base))
+
+    def test_the_agent_is_told_where_ids_come_from(self) -> None:
+        """It cannot upload anything, so an id it did not read off the UPLOADS
+        list is one it invented."""
+        from studio.agent.context import uploads
+
+        class Asset:
+            id, mime, width, height = "ast_1", "image/png", 400, 400
+
+        listing = uploads([Asset()])
+        assert "set_photo" in listing
+        assert "ast_1" in listing
+
+    def test_nothing_is_listed_when_nothing_was_uploaded(self) -> None:
+        """A résumé with no pictures pays nothing for the capability, and the
+        model is never shown an empty list to hallucinate into."""
+        from studio.agent.context import uploads
+
+        assert uploads([]) == ""

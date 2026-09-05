@@ -58,6 +58,35 @@ Template = Literal[
     "banner",
     "bold",
     "quiet",
+    # With a photograph. The picture sits in the header, which is one frame, so
+    # its placement is ordinary CSS like every other template here -- what each
+    # of these adds beyond that is the arrangement it implies, which is carried
+    # by ``Layout`` rather than by the class.
+    "portrait",
+    "profile",
+    "badge",
+]
+
+#: How the page is arranged, as opposed to how it is set.
+#:
+#: Separate from ``Template`` because the two live in different layers and only
+#: one of them is CSS. A template restyles the flow inside a frame; a layout
+#: decides where the frames themselves go, which is geometry and belongs to
+#: ``autolayout``.
+#:
+#: That split is not a preference, it is the constraint. The canvas gives a
+#: section heading and each of its entries a separate frame, so a two-column
+#: rule inside ``.flow`` has nothing to span -- a two-column *template* was
+#: tried here and removed for exactly that reason, after the gallery advertised
+#: an arrangement the editor could not hold. Frames are the only thing on the
+#: page wide enough to be a column.
+#:
+#: ``stack`` is what every document has always been and remains the default, so
+#: nothing that exists changes shape by being read.
+Layout = Literal[
+    "stack",
+    "sidebar_left",
+    "sidebar_right",
 ]
 
 
@@ -106,6 +135,12 @@ class PersonalInfo(BaseModel):
     website: str | None = None
     linkedin: str | None = None
     github: str | None = None
+    #: Id of an uploaded image, or None. A headshot is part of the résumé the
+    #: way a phone number is -- present or absent regardless of how the page is
+    #: set -- so it lives here rather than in a template. That is also what
+    #: keeps the ATS guarantee intact: an ``<img>`` contributes no extractable
+    #: text, so the words a parser reads are the same with or without it.
+    photo: str | None = None
 
     @field_validator("name", "title", "email", "phone", "location", mode="before")
     @classmethod
@@ -369,6 +404,10 @@ class StudioDoc(BaseModel):
     schema_version: Literal[1, 2] = 2
     #: Presentation only, and never touched by an op. See ``Template``.
     template: Template = "plain"
+    #: How the frames are arranged. See ``Layout``. Applied by ``autolayout``
+    #: when a document is laid out; the geometry it produces is ordinary ops
+    #: from then on, so moving a box by hand is never overruled by this.
+    layout: Layout = "stack"
     #: Whether nothing in this document is yet the user's own.
     #:
     #: A document started from a template is scaffolding: "Alex Morgan" is not

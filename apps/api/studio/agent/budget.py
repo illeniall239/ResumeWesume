@@ -104,7 +104,7 @@ class TurnBudget:
                 limit="wall_clock",
             )
 
-    def end_iteration(self, applied_this_round: int) -> None:
+    def end_iteration(self, applied_this_round: int, *, progressed: bool = False) -> None:
         """Close a round, and stop only if nothing is happening.
 
         A round that changed something resets the counter however long the turn
@@ -112,8 +112,13 @@ class TurnBudget:
         was asked, and cutting it off mid-way is the failure this whole module
         was rewritten to stop causing. Rounds that change nothing are the
         read-tool loop, and three in a row is not a slow turn, it is a stuck one.
+
+        ``progressed`` is for work that is real but applies no ops -- starting a
+        new version of the resume is the only one. Counted as a stall it would
+        read as the read-tool loop, and "give me three versions" would trip the
+        limit on the third before a word had been written into it.
         """
-        if applied_this_round > 0:
+        if applied_this_round > 0 or progressed:
             self.stalled = 0
             return
         self.stalled += 1

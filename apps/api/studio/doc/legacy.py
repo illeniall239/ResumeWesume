@@ -266,6 +266,34 @@ def to_resume_data(doc: StudioDoc) -> dict[str, Any]:
         "awards": by_key.get("awards", []),
     }
 
+    # The way back out for a section we have no schema for. Without this the
+    # legacy shape was write-only for custom sections: `from_resume_data` read
+    # them and nothing ever wrote them, so any caller round-tripping a document
+    # through this payload dropped somebody's Publications on the floor.
+    custom_sections = {
+        section.key: {
+            "sectionType": section.kind,
+            "text": section.text.text if section.text else "",
+            "items": [
+                {
+                    "title": item.title,
+                    "subtitle": item.subtitle,
+                    "location": item.location,
+                    "years": item.years,
+                    **dict(
+                        zip(
+                            ("description", "descriptionStyles"),
+                            _split_bullets(item.bullets),
+                        )
+                    ),
+                }
+                for item in section.items
+            ],
+            "strings": [entry.text for entry in section.strings],
+        }
+        for section in doc.custom
+    }
+
     return {
         "personalInfo": doc.personal.model_dump(),
         "summary": doc.summary.text if doc.summary else "",
@@ -273,6 +301,7 @@ def to_resume_data(doc: StudioDoc) -> dict[str, Any]:
         "education": education,
         "personalProjects": projects,
         "additional": additional,
+        "customSections": custom_sections,
         "sectionMeta": [
             {
                 "id": meta.key,

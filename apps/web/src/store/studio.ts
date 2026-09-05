@@ -22,12 +22,39 @@ import {
   applyOps as pushOps,
   confirmInvented,
   fetchDocument,
-  fetchRevisions,
   isVersionConflict,
   renameDocument,
   reverseHistory,
+  revertToCheckpoint,
+  setJobDescription,
+  setJobDescriptionFromPdf,
 } from '@/lib/api';
+import { useCanvas } from '@/store/canvas';
 import { coalesce, rebase } from '@/store/pending';
+
+/**
+ * Somewhere on the sheet the agent is currently working, and in what way.
+ *
+ * `target` is whatever the protocol named: a node id, an `nid.field` path, or
+ * a section key from a read. Resolving it to an element is the overlay's job,
+ * because only the overlay knows what is actually on screen.
+ */
+export interface Attention {
+  /**
+   * Where on the sheet, or `null` while the agent has not named a place yet.
+   *
+   * A null target is the honest shape of waiting: the turn has started, the
+   * model is thinking, and nothing has been said about the document. The pen
+   * is on the sheet and visibly idle -- which is true -- rather than touring
+   * sections to imply it is reading them, which is not.
+   */
+  target: string | null;
+  /**
+   * `waiting` is a turn in flight with no target yet; `reading` is a tier-R
+   * call, which changes nothing; `writing` is a call that will land.
+   */
+  kind: 'waiting' | 'reading' | 'writing';
+}
 
 interface StudioState {
   documentId: string | null;
@@ -54,25 +81,13 @@ interface StudioState {
   local: DocOp[];
 
   /**
-   * Nodes the last accepted batch changed. Each one is drawn with a revision
-   * cloud around it.
+   * Nodes the last accepted batch changed, so the renderer can flash them.
    *
-   * These used to clear themselves after 1.4 seconds, which is right for a
-   * flash and wrong for a mark you are meant to be able to inspect -- and
-   * inspecting it is now the point, since clicking a cloud reveals the reading
-   * it replaced. A drawing office leaves a cloud on the sheet until the next
-   * issue; so does this. `clearRevisions` is that next issue.
+   * Held until the next instruction rather than cleared on a timer: a flash
+   * that expires while you are still reading the reply tells you nothing.
+   * `clearChanged` is what ends it.
    */
   changed: Set<string>;
-  /**
-   * What each clouded node said before the batch landed.
-   *
-   * Captured on the client, from the document it already holds, because the
-   * op contract sent to the browser carries no `before` -- the server records
-   * one for its own inverse, and does not ship it. Reading the outgoing value
-   * a moment before it is overwritten costs nothing and needs no round trip.
-   */
-  superseded: Map<string, string>;
   /**
    * Text a tool call is still writing, keyed by the node or field it targets.
    *
@@ -83,8 +98,6 @@ interface StudioState {
    * later is what actually edits anything, and clears the draft as it lands.
    */
   drafts: Map<string, string>;
-  /** Accepted batches this session. The revision number in the schedule. */
-  revisions: number;
   /**
    * Nodes the assistant invented while the document was still a template.
    *
@@ -94,23 +107,29 @@ interface StudioState {
    */
   unverified: Set<string>;
   /**
-   * The mark number carried by each changed node.
+   * The posting this résumé is aimed at, verbatim.
    *
-   * A drawing cross-references a revision by putting the same numbered delta
-   * on the sheet and in the schedule; you find the change by matching the
-   * number, not by tracing a line. That is what this is for -- one counter,
-   * read by both the tag on the document and the row in the schedule, so the
-   * connection is legible at rest instead of only under the pointer.
+   * Held here rather than sent with each message. Tailoring is a conversation
+   * -- you ask, you read it back, you ask again -- and a posting carried on the
+   * turn survived exactly one exchange, after which every follow-up worked with
+   * no idea what the sheet was being aimed at.
    */
-  marks: Map<string, number>;
+  jobDescription: string | null;
   /**
-   * The node a schedule row is pointing at, while the pointer is on that row.
+   * Where the agent is working, right now.
    *
-   * Confirmation, not the connection itself. `marks` is what makes a row and
-   * its region findable at rest; this is the pointer landing on one and the
-   * other lighting up, which is cheap and answers "that one?" instantly.
+   * Not a guess and not an idle animation: the protocol reports a target
+   * before the edit is attempted -- `tool_args` carries validated arguments
+   * ahead of execution, and `drafting` names the node whose text is arriving.
+   * So a pointer drawn here is always somewhere the agent genuinely is, which
+   * is the only reason it earns a place on a sheet whose whole claim is that
+   * every mark on it is evidence.
+   *
+   * `reading` is a tier-R call, which changes nothing; `writing` is a call
+   * that will land. The distinction is the server's own, taken from the tier
+   * it declares, never inferred from a tool name here.
    */
-  spotlight: string | null;
+  attention: Attention | null;
   /** Nodes the agent is writing to; direct editing is blocked on these. */
   locked: Set<string>;
   /** Node the user has focus in. The agent is refused here. */
@@ -134,15 +153,29 @@ interface StudioState {
   setFocus: (nid: string | null) => void;
   /** Reverse the last committed batch, or put it back. */
   history: (direction: 'undo' | 'redo') => Promise<void>;
+  /** Aim the résumé at a posting; empty text stops aiming it at one. */
+  aimAt: (text: string) => Promise<void>;
+  /** The same, read out of a PDF from a job board. */
+  aimAtPdf: (file: File) => Promise<void>;
+  /** Put the document back to how it was before one agent turn. */
+  revertTo: (checkpointId: string) => Promise<void>;
   clearError: () => void;
-  /** Light the region a schedule row names, or nothing. */
-  setSpotlight: (nid: string | null) => void;
-  /** Wipe the clouds. Called when a new instruction is given. */
+  /** Point at where the agent is working. `null` puts the pen up. */
+  attend: (attention: Attention | null) => void;
+  /**
+   * Follow the turn onto a version it has just started.
+   *
+   * Lives here rather than in the canvas store because the chat reducer is the
+   * one place that interprets the wire protocol, and it already reaches for
+   * `useStudio`. This loads the new board and puts it on the plane; the canvas
+   * store's `adopt` is what makes it visible and selected.
+   */
+  adoptBoard: (boardId: string, title: string) => void;
   rename: (title: string) => Promise<void>;
-  loadRevisions: (documentId: string) => Promise<void>;
   draft: (target: string, text: string) => void;
   clearDrafts: () => void;
-  clearRevisions: () => void;
+  /** Drop the change flash. Called when a new instruction is given. */
+  clearChanged: () => void;
   /** Accept the assistant's invented lines. Empty means all of them. */
   confirmInvented: (nids?: string[]) => Promise<void>;
 }
@@ -172,8 +205,8 @@ async function send(set: Setter, get: Getter, batch: DocOp[]): Promise<void> {
       rejected: response.rejected,
       pending: [],
       saving: false,
-      // Typing into the document ends its scaffolding server-side and clears
-      // the marks it covered, so this follows the server rather than guessing.
+      // Typing into the document ends its scaffolding server-side, so this
+      // follows the server rather than guessing.
       unverified: new Set(response.doc.unverified ?? []),
     });
     // Anything staged while this was in flight is replayed on the new base.
@@ -224,12 +257,10 @@ export const useStudio = create<StudioState>((set, get) => ({
   pending: [],
   local: [],
   changed: new Set(),
-  superseded: new Map(),
   drafts: new Map(),
-  revisions: 0,
   unverified: new Set(),
-  marks: new Map(),
-  spotlight: null,
+  jobDescription: null,
+  attention: null,
   locked: new Set(),
   focused: null,
   rejected: [],
@@ -249,17 +280,12 @@ export const useStudio = create<StudioState>((set, get) => ({
         title: response.title,
         loading: false,
         unverified: new Set(response.doc.unverified ?? []),
-        // A fresh sheet: marks from a document you were looking at a moment
-        // ago must not appear on this one. The ones belonging to *this*
-        // document are restored just below, from the server.
+        jobDescription: response.job_description ?? null,
+        // A fresh sheet: the change flash from a document you were looking at
+        // a moment ago must not appear on this one.
         changed: new Set(),
-        superseded: new Map(),
-        revisions: 0,
-        marks: new Map(),
-        spotlight: null,
       });
 
-      await get().loadRevisions(documentId);
     } catch (error) {
       set({ loading: false, error: (error as Error).message });
     }
@@ -333,23 +359,6 @@ export const useStudio = create<StudioState>((set, get) => ({
     // one on top of it means an in-progress drag is replayed over the patch
     // rather than being wiped by it -- the failure where a bullet the assistant
     // rewrote mid-gesture would snap the box back under the pointer.
-    // Read the outgoing text *before* the ops are applied. A moment later the
-    // only copy of it is in the server's inverse, which the browser never sees.
-    const outgoing = get().doc;
-    const superseded = new Map(get().superseded);
-    const marks = new Map(get().marks);
-    for (const nid of touched) {
-      // One number per node, minted the first time it changes and kept if a
-      // later batch touches it again -- a region carries one mark, however
-      // many times it was worked on.
-      if (!marks.has(nid)) marks.set(nid, marks.size + 1);
-      const was = textOf(outgoing, nid);
-      // Only a genuine replacement is worth keeping. An inserted node had no
-      // previous reading, and offering an empty one invites the user to open a
-      // cloud that has nothing under it.
-      if (was) superseded.set(nid, was);
-    }
-
     const base = serverDoc && ops?.length ? applyOps(serverDoc, ops) : serverDoc;
     const changed = new Set(touched);
 
@@ -364,19 +373,46 @@ export const useStudio = create<StudioState>((set, get) => ({
       version,
       hash,
       changed,
-      superseded,
-      marks,
       drafts,
       // The assistant may have invented these; the server decides, because it
       // is the only side that knows whether the document is still scaffolding.
       unverified: new Set(base?.unverified ?? get().doc?.unverified ?? []),
-      revisions: get().revisions + 1,
       locked: new Set([...get().locked].filter((nid) => !changed.has(nid))),
     });
   },
 
-  setSpotlight(nid) {
-    set({ spotlight: nid });
+
+  adoptBoard(boardId, title) {
+    // Read in full rather than assembled from what the event carried: the copy
+    // has its own version, hash and unverified marks, and the next patch is
+    // compare-and-set against exactly those.
+    void fetchDocument(boardId)
+      .then((board) => {
+        useCanvas.getState().adopt(board);
+        set({
+          documentId: board.id,
+          doc: board.doc,
+          serverDoc: board.doc,
+          pending: [],
+          local: [],
+          version: board.version,
+          hash: board.hash,
+          title: board.title,
+          jobDescription: board.job_description ?? null,
+          unverified: new Set(board.doc.unverified ?? []),
+          changed: new Set(),
+        });
+      })
+      .catch(() => {
+        // The turn goes on regardless; the version exists on the server and
+        // will be there on the next load. Failing loudly here would put an
+        // error over a résumé that is fine.
+        set({ error: `Could not open ${title}. Reload to see it.` });
+      });
+  },
+
+  attend(attention) {
+    set({ attention });
   },
 
   async confirmInvented(nids = []) {
@@ -424,40 +460,6 @@ export const useStudio = create<StudioState>((set, get) => ({
     }
   },
 
-  /**
-   * Put back the marks this document was left with.
-   *
-   * The clouds and their readings used to live only in the browser, so a
-   * reload cleared them while the conversation came back -- the record of what
-   * changed on weaker footing than the dialogue about it. The op log has kept
-   * both all along; this is the read.
-   */
-  async loadRevisions(documentId) {
-    try {
-      const stored = await fetchRevisions(documentId);
-      // Nothing to redraw is a normal answer, and it must not undo the reset
-      // above by leaving a previous document's marks in place.
-      if (get().documentId !== documentId) return;
-
-      const marks = new Map<string, number>();
-      const superseded = new Map<string, string>();
-      for (const entry of stored.marks) {
-        marks.set(entry.nid, entry.mark);
-        if (entry.before) superseded.set(entry.nid, entry.before);
-      }
-
-      set({
-        revisions: stored.revision,
-        marks,
-        superseded,
-        changed: new Set(marks.keys()),
-      });
-    } catch {
-      // A document that will not report its history is still editable. The
-      // marks are an annotation, not the artifact.
-    }
-  },
-
   draft(target, text) {
     const drafts = new Map(get().drafts);
     drafts.set(target, text);
@@ -469,13 +471,8 @@ export const useStudio = create<StudioState>((set, get) => ({
     set({ drafts: new Map() });
   },
 
-  clearRevisions() {
-    set({
-      changed: new Set(),
-      superseded: new Map(),
-      marks: new Map(),
-      spotlight: null,
-    });
+  clearChanged() {
+    set({ changed: new Set() });
   },
 
   setLocked(nids, locked) {
@@ -496,9 +493,12 @@ export const useStudio = create<StudioState>((set, get) => ({
    *
    * Server-side, because the inverse of every op is already recorded there and
    * a second implementation of inversion in TypeScript is exactly what
-   * `doc/apply.ts` forbids itself from becoming. One `POST /ops` is one
-   * version is one undo unit, so this reverses a direct edit and an agent turn
-   * through the same path.
+   * `doc/apply.ts` forbids itself from becoming.
+   *
+   * One `POST /ops` is one version is one undo unit -- a *batch*, which is not
+   * the same as a turn. The agent loop applies once per tool call, so a turn
+   * that made fourteen edits is fourteen of these. `revertTo` is what undoes a
+   * turn whole.
    */
   async history(direction) {
     const { documentId } = get();
@@ -522,14 +522,86 @@ export const useStudio = create<StudioState>((set, get) => ({
         version: result.version,
         hash: result.hash,
         saving: false,
-        // Every cloud goes. A reversal can touch any part of the document and
-        // the server does not say which, so the marks left on screen would be
-        // describing a state that no longer exists -- and the readings under
-        // them would be offering to restore text that is already back.
+        // The flash goes. A reversal can touch any part of the document and
+        // the server does not say which, so marks left on screen would be
+        // describing a state that no longer exists.
         changed: new Set(),
-        superseded: new Map(),
-        marks: new Map(),
-        spotlight: null,
+      });
+    } catch (cause) {
+      set({ error: (cause as Error).message, saving: false });
+    }
+  },
+
+  /**
+   * Aim the résumé at a posting.
+   *
+   * Not an op, and so not part of the document's version: the posting changes
+   * no word on the page, and routing it through `/ops` would put it in the
+   * undo stack between two real edits and hand a conflict to every open
+   * editor. Same reasoning, same path, as renaming.
+   */
+  async aimAt(text) {
+    const { documentId } = get();
+    if (!documentId) return;
+    set({ error: null });
+    try {
+      const result = await setJobDescription(documentId, text);
+      set({ jobDescription: result.job_description ?? null });
+    } catch (cause) {
+      set({ error: (cause as Error).message });
+    }
+  },
+
+  async aimAtPdf(file) {
+    const { documentId } = get();
+    if (!documentId) return;
+    set({ error: null });
+    try {
+      const result = await setJobDescriptionFromPdf(documentId, file);
+      set({ jobDescription: result.job_description ?? null });
+    } catch (cause) {
+      // The server names the real problem -- a scan with no text layer, a file
+      // that is not a PDF -- so it is shown rather than replaced with
+      // something generic.
+      set({ error: (cause as Error).message });
+    }
+  },
+
+  /**
+   * Put the document back to how it was before one agent turn.
+   *
+   * The one thing here that knows where a turn began. Ops are recorded per
+   * tool call, so once a turn has ended nothing on this side can say which of
+   * the last fourteen versions was the one the instruction started from -- but
+   * the loop takes a snapshot before its first mutation and streams its id, so
+   * the answer is carried rather than reconstructed.
+   *
+   * Everything in flight is dropped. Local edits made *during* the turn would
+   * otherwise be replayed on top of a document that no longer has the nodes
+   * they name, which is a rejection at best and a mangled sheet at worst.
+   */
+  async revertTo(checkpointId) {
+    const { documentId } = get();
+    if (!documentId) return;
+    set({ saving: true, error: null });
+    try {
+      const result = await revertToCheckpoint(documentId, checkpointId);
+      set({
+        doc: result.doc,
+        // As with `history`: the server document has to move too, or the next
+        // render rebuilds `doc` from a stale base and the reversal looks like
+        // it never happened.
+        serverDoc: result.doc,
+        pending: [],
+        local: [],
+        version: result.version,
+        hash: result.hash,
+        saving: false,
+        // A turn can touch any part of the sheet, so marks left behind would
+        // be describing a state that has just stopped existing.
+        changed: new Set(),
+        drafts: new Map(),
+        unverified: new Set(result.doc.unverified ?? []),
       });
     } catch (cause) {
       set({ error: (cause as Error).message, saving: false });

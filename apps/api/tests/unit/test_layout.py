@@ -450,3 +450,110 @@ class TestLayoutUndo:
         twice, _, rejected = apply_ops(once, [undo], all_tiers())
         assert rejected == []
         assert twice.model_dump() == doc.model_dump()
+
+
+class TestArrangements:
+    """Layouts, which are geometry rather than CSS.
+
+    A two-column *template* was tried here and removed, and `globals.css` still
+    records why: "the canvas gives a section heading and its entries separate
+    frames, so a grid spanning both had nothing to span." A layout that is a
+    class on `.flow` can only reach inside one frame, and a column is wider
+    than any one frame. So an arrangement has to be expressed where the frames
+    are placed, which is here.
+    """
+
+    def _by_ref(self, pages: list[PageNode]) -> dict[str, Rect]:
+        return {e.ref: e.rect for e in pages[0].elements}
+
+    def test_stack_is_unchanged(self) -> None:
+        """Every document that exists is a stack, so this path has to stay
+        exactly what it was -- a regression here moves somebody's résumé
+        rather than offering them a new arrangement."""
+        rects = self._by_ref(layout(flowing(), arrangement="stack"))
+
+        assert {r.x for r in rects.values()} == {A4.margin}
+        assert {r.w for r in rects.values()} == {A4.content_width}
+
+    def test_stack_is_still_the_default(self) -> None:
+        doc = flowing()
+
+        assert doc.layout == "stack"
+        assert self._by_ref(layout(doc)) == self._by_ref(
+            layout(doc, arrangement="stack")
+        )
+
+    def test_a_sidebar_puts_the_short_sections_in_the_rail(self) -> None:
+        rects = self._by_ref(layout(flowing(), arrangement="sidebar_left"))
+
+        assert rects["skills"].x == rects["education"].x
+        assert rects["skills"].w == rects["education"].w
+        # The rail is genuinely narrow, not a slightly thinner column.
+        assert rects["skills"].w < rects["experience"].w
+        assert rects["experience"].x > rects["skills"].x
+
+    def test_a_right_sidebar_is_the_mirror(self) -> None:
+        left = self._by_ref(layout(flowing(), arrangement="sidebar_left"))
+        right = self._by_ref(layout(flowing(), arrangement="sidebar_right"))
+
+        assert right["skills"].w == left["skills"].w
+        assert right["experience"].w == left["experience"].w
+        # The rail moved to the far side; the main column to the margin.
+        assert right["skills"].x > right["experience"].x
+        assert right["experience"].x == A4.margin
+
+    def test_the_header_spans_whichever_arrangement(self) -> None:
+        """A name is the one thing on a résumé that is never in a column."""
+        for arrangement in ("stack", "sidebar_left", "sidebar_right"):
+            rects = self._by_ref(layout(flowing(), arrangement=arrangement))
+
+            assert rects["personal"].x == A4.margin
+            assert rects["personal"].w == A4.content_width
+
+    def test_both_columns_start_below_the_header(self) -> None:
+        """Not at the top of the page. A column that ignores the spanning frame
+        above it is drawn over the person's name."""
+        rects = self._by_ref(layout(flowing(), arrangement="sidebar_left"))
+        header_bottom = rects["personal"].y + rects["personal"].h
+
+        assert rects["skills"].y >= header_bottom
+        assert rects["summary"].y >= header_bottom
+
+    def test_the_columns_do_not_overlap(self) -> None:
+        rects = self._by_ref(layout(flowing(), arrangement="sidebar_left"))
+        rail_right = rects["skills"].x + rects["skills"].w
+
+        assert rail_right <= rects["experience"].x
+
+    def test_nothing_runs_off_the_paper(self) -> None:
+        for arrangement in ("sidebar_left", "sidebar_right"):
+            for rect in self._by_ref(layout(flowing(), arrangement=arrangement)).values():
+                assert rect.x >= A4.margin
+                assert rect.x + rect.w <= A4.width - A4.margin + 0.01
+
+    def test_an_entry_sits_in_its_own_section_column(self) -> None:
+        """A job under a heading in the wide column cannot be in the rail."""
+        pages = layout(flowing(), arrangement="sidebar_left")
+        rects = {e.ref: e.rect for e in pages[0].elements}
+
+        assert rects[EXP].x == rects["experience"].x
+        assert rects[EXP].w == rects["experience"].w
+
+    def test_an_arrangement_still_covers_every_node(self) -> None:
+        """The coverage gate is the invariant the whole canvas rests on: every
+        content node rendered by exactly one frame. A layout that drops a
+        section is a way to lose a job without being told."""
+        stacked = {e.ref for e in layout(flowing(), arrangement="stack")[0].elements}
+
+        for arrangement in ("sidebar_left", "sidebar_right"):
+            placed = {e.ref for e in layout(flowing(), arrangement=arrangement)[0].elements}
+            assert placed == stacked
+
+    def test_ids_do_not_depend_on_the_arrangement(self) -> None:
+        """Ids are derived from the ref, not minted, because migration runs on
+        read -- so the same document laid out two ways is still addressable by
+        the same names."""
+        stacked = {e.nid for e in layout(flowing(), arrangement="stack")[0].elements}
+        sidebar = {e.nid for e in layout(flowing(), arrangement="sidebar_left")[0].elements}
+
+        assert stacked == sidebar

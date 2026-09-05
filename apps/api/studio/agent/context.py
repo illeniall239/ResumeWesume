@@ -28,6 +28,33 @@ def _clip(text: str, limit: int = _SNIPPET) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def roster(boards: list[Any], working_on: str) -> str:
+    """The other versions of this résumé, by name.
+
+    Appended only when there is more than one, so the résumé almost everybody
+    has pays nothing for it. Names rather than ids: a version is referred to
+    the way a person refers to it, and an id in the prompt is one more thing
+    for a model to confuse with a node.
+
+    It is read-only context. The assistant edits one version per turn — the one
+    it is working on — and telling it the others exist is what stops it
+    proposing a change that already lives on another version, and lets it say
+    which one to open instead of guessing.
+    """
+    if len(boards) < 2:
+        return ""
+
+    lines = [
+        "VERSIONS: this résumé is kept in several versions, aimed at different "
+        "jobs. You are editing one of them and cannot reach the others in this "
+        "turn; name one if the user should open it instead."
+    ]
+    for board in boards:
+        here = "  <- you are editing this one" if board.id == working_on else ""
+        lines.append(f"  {board.title or 'Untitled'}{here}")
+    return "\n".join(lines)
+
+
 def uploads(assets: list[Any]) -> str:
     """The images this document holds, so the assistant can name one.
 
@@ -38,7 +65,10 @@ def uploads(assets: list[Any]) -> str:
     if not assets:
         return ""
 
-    lines = ["UPLOADS: images already on this resume, for `add_image`."]
+    lines = [
+        "UPLOADS: images the user has attached, for `set_photo` (the "
+        "résumé's photo holder) or `add_image` (a picture placed on the page)."
+    ]
     for asset in assets:
         lines.append(
             f"  {asset.id} ({asset.mime.split('/')[-1]}, "
@@ -144,8 +174,13 @@ def _describes(element: Any) -> str:
     """What an element is, in the words the user would use for it."""
     ref = getattr(element, "ref", None)
     if ref is None:
-        if getattr(element, "asset", None) is not None:
-            return "image"
+        asset = getattr(element, "asset", None)
+        if asset is not None:
+            # Named, not just called "image". Without the id there is no way to
+            # tell that a box on the page and an entry in UPLOADS are the same
+            # picture, so "put that photo in the holder" could not be answered
+            # about a picture already on the sheet.
+            return f"image {asset}"
         return f"{getattr(element, 'shape', 'shape')} shape"
     if ref.startswith("txb_"):
         return "text box"

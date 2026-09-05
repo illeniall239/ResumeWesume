@@ -30,10 +30,23 @@ import type { ProviderInfo } from '@/lib/api';
 /** Panel width in px. Narrow enough for the 320px sidebar minimum. */
 const PANEL_WIDTH = 288;
 const GUTTER = 8;
+/** Between the button and the panel. */
+const GAP = 6;
+/** The tallest the list ever wants to be; `.picker__panel` caps it too. */
+const PANEL_MAX = 420;
 
+/**
+ * Where the panel hangs.
+ *
+ * One of `top` or `bottom`, never both: opening downward is anchored by its
+ * top, opening upward by its bottom, so a short list grows from the button in
+ * either direction instead of floating a gap away from it.
+ */
 interface Anchor {
-  top: number;
+  top?: number;
+  bottom?: number;
   left: number;
+  maxHeight: number;
 }
 
 /**
@@ -128,7 +141,13 @@ export function ModelPicker() {
   const close = useCallback(() => setOpen(false), []);
 
   /**
-   * Put the panel under the button, wherever the button currently is.
+   * Put the panel against the button, wherever the button currently is.
+   *
+   * Below it by preference, above it when below is the tighter side. The
+   * picker used to live in a header at the top of the column, where downward
+   * was always right; it now sits at the foot of the composer, and a panel
+   * that only ever opened downward hung 413px below the bottom of the screen
+   * with no way to reach it.
    *
    * Returns false when there is nothing to attach to — the anchor has been
    * scrolled out of the viewport — which is the only case where the panel
@@ -139,13 +158,24 @@ export function ModelPicker() {
     if (!rect) return false;
     if (rect.bottom < 0 || rect.top > window.innerHeight) return false;
 
+    const below = window.innerHeight - rect.bottom - GAP - GUTTER;
+    const above = rect.top - GAP - GUTTER;
+    const budget = Math.min(PANEL_MAX, window.innerHeight * 0.7);
+    // Downward unless upward is genuinely roomier -- so a button with plenty
+    // beneath it keeps the ordinary behaviour, and only one pinned near the
+    // bottom flips.
+    const up = below < Math.min(budget, above);
+
     setAnchor({
-      top: rect.bottom + 6,
+      ...(up
+        ? { bottom: window.innerHeight - rect.top + GAP }
+        : { top: rect.bottom + GAP }),
       // Clamped so a panel opened near the right edge stays on screen.
       left: Math.max(
         GUTTER,
         Math.min(rect.left, window.innerWidth - PANEL_WIDTH - GUTTER)
       ),
+      maxHeight: Math.max(0, Math.min(budget, up ? above : below)),
     });
     return true;
   }, []);
@@ -262,7 +292,13 @@ export function ModelPicker() {
           className="picker__panel"
           role="listbox"
           aria-label="Choose a model"
-          style={{ top: anchor.top, left: anchor.left, width: PANEL_WIDTH }}
+          style={{
+            top: anchor.top,
+            bottom: anchor.bottom,
+            left: anchor.left,
+            width: PANEL_WIDTH,
+            maxHeight: anchor.maxHeight,
+          }}
         >
           <div className="picker__scroll">
             {providers.map((provider) => (

@@ -106,7 +106,11 @@ export function useReflow(
       const pageOrder = doc.pages.map((page) => page.nid);
       const result = reflow(
         frames,
-        { contentHeight: spec.height - spec.margin * 2, top: spec.margin },
+        {
+          contentHeight: spec.height - spec.margin * 2,
+          contentWidth: spec.width - spec.margin * 2,
+          top: spec.margin,
+        },
         pageOrder
       );
 

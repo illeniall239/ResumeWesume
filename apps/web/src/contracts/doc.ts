@@ -8,7 +8,9 @@ export type SkillSource = 'original' | 'jd' | 'resume' | 'user';
 
 export type Tier = 'A' | 'B' | 'C';
 
-export type Template = 'plain' | 'ruled' | 'compact' | 'book' | 'centered' | 'banner' | 'bold' | 'quiet';
+export type Template = 'plain' | 'ruled' | 'compact' | 'book' | 'centered' | 'banner' | 'bold' | 'quiet' | 'portrait' | 'profile' | 'badge';
+
+export type Layout = 'stack' | 'sidebar_left' | 'sidebar_right';
 
 export type RejectCode = 'unknown_node' | 'kind_mismatch' | 'stale_expect' | 'not_grounded' | 'tier_denied' | 'invalid_args' | 'duplicate' | 'node_busy' | 'invariant_violation' | 'budget_exceeded';
 
@@ -31,6 +33,8 @@ export interface PersonalInfo {
   website: string | null;
   linkedin: string | null;
   github: string | null;
+  /** Id of an uploaded image, or null. */
+  photo: string | null;
 }
 
 export interface ExperienceNode {
@@ -181,6 +185,7 @@ export interface StudioDoc {
   schema_version: 1 | 2;
   /** Presentation only, and never touched by an op. */
   template: Template;
+  layout: Layout;
   /** True while nothing in the document is yet the user's own. */
   scaffold: boolean;
   /** Nodes the assistant invented while scaffolding, pending confirmation. */
@@ -316,9 +321,33 @@ export interface DocumentResponse {
   doc: StudioDoc;
   /** When it last changed, ISO-8601 and UTC. Null on older servers. */
   updated_at?: string | null;
+  /**
+   * The posting this résumé is aimed at, verbatim, or null.
+   *
+   * Held on the document rather than sent with a message: tailoring is not one
+   * instruction, and carried on the turn it survived exactly one exchange.
+   */
+  job_description?: string | null;
+  /** The canvas this board sits on. */
+  canvas_id?: string | null;
 }
 
 export interface ApplyResponse extends DocumentResponse {
   applied: AppliedOp[];
   rejected: RejectedOp[];
+}
+
+/**
+ * A résumé and the versions of it aimed at particular jobs.
+ *
+ * The thing the register lists. Its boards are ordinary documents, which is
+ * what keeps ops, undo, export and the agent working on a board exactly as
+ * they worked on a document — a board *is* a document.
+ */
+export interface CanvasResponse {
+  id: string;
+  title: string;
+  /** Every board on it, in full, so a card cannot go stale against what it opens. */
+  boards: DocumentResponse[];
+  updated_at?: string | null;
 }

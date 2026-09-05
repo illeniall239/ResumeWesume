@@ -23,6 +23,7 @@ import type { StudioDoc } from '@/contracts/doc';
 export const PREVIEW_DOC: StudioDoc = {
   schema_version: 2,
   template: 'plain',
+  layout: 'stack',
   // The card is a rendering, not a document; the copy the gallery creates is
   // the one marked as scaffolding.
   scaffold: false,
@@ -35,7 +36,7 @@ export const PREVIEW_DOC: StudioDoc = {
     location: 'Austin, TX',
     website: null,
     linkedin: null,
-    github: null,
+    github: null, photo: null,
   },
   summary: {
     nid: 'sum_4k2wp',

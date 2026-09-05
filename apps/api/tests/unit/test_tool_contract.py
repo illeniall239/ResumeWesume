@@ -64,6 +64,9 @@ def doc() -> StudioDoc:
 CALLS: dict[str, dict] = {
     "read_document": {},
     "find_text": {"query": "ledger"},
+    # Compiles to nothing on purpose: it acts on the repository rather than on
+    # the document, so the loop executes it directly the way it does a read.
+    "fork_board": {"name": "Stripe - Payments"},
     "rewrite_text": {"nid": BULLET, "value": "Cut latency 96%."},
     "add_bullet": {"parent": EXP, "value": "Shipped the thing."},
     "remove_bullet": {"nid": BULLET},
@@ -88,6 +91,7 @@ CALLS: dict[str, dict] = {
     "add_section": {"label": "Certifications", "items": ["AWS SA"]},
     "add_shape": {"shape": "line", "where": "under_the_name"},
     "add_image": {"asset": "a" * 64, "where": "top_right"},
+    "set_photo": {"asset": "a" * 64},
     "add_text_box": {"value": "Made with ResumeWesume"},
     "set_element_style": {"nid": "frm_a", "align": "right"},
 }

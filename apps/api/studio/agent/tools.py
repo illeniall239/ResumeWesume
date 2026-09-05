@@ -117,6 +117,55 @@ class ReadDocument(ToolSpec):
         return []
 
 
+class ForkBoardArgs(BaseModel):
+    name: str = Field(
+        description=(
+            "What to call the new version, from what the user asked for: "
+            "'Stripe - Payments', 'Teaching roles'. Short and specific."
+        )
+    )
+    reason: str = ""
+
+
+class ForkBoard(ToolSpec):
+    """Start a new version of this résumé, and work on that instead.
+
+    Tier A, which looks wrong for something that creates a document and is not.
+    Tier is blast radius, and this has none: it copies the current version and
+    leaves it untouched, so the worst outcome is a version nobody wanted, sitting
+    beside the one they had. Every editing tool that follows is gated on its own
+    terms, exactly as before -- they simply land on the copy.
+
+    Its whole reason for existing is that tailoring destroys. A résumé cut down
+    for one job is thin material for the next, and doing it in place means the
+    general version is gone. So the assistant makes a copy first and narrows
+    that, which is what a person does with a file.
+    """
+
+    name = "fork_board"
+    tier = "A"
+    description = """
+    Start a new version of this resume and continue working on that one instead
+    of the original. Call this FIRST, before any edits, when the user asks you
+    to tailor or adapt the resume to a particular job, or asks for a separate
+    version. Never tailor in place: the original is the general resume every
+    other version is cut from.
+
+    For several alternatives at once ("give me three versions"), call this once
+    per version, editing each before starting the next. Every one is cut from
+    the original resume, not from the version before it.
+    """
+    Args = ForkBoardArgs
+
+    def compile(self, args: BaseModel, doc: StudioDoc) -> list[DocOp]:
+        # No ops. This acts on the repository rather than on the document, so
+        # the loop executes it directly -- the same shape as a read.
+        return []
+
+    def label(self, args: ForkBoardArgs) -> str:
+        return f"started {args.name}"
+
+
 class FindTextArgs(BaseModel):
     query: str = Field(description="Words to look for, e.g. 'the AWS bullet'.")
     limit: int = Field(default=5, ge=1, le=20)
@@ -917,7 +966,7 @@ class AddShape(ToolSpec):
 
         page = doc.pages[args.page - 1]
         rect = _shape_rect(args.where, args.shape, paper_of(page), page)
-        ink = args.colour or _DEFAULT_INK
+        ink = _colour(args.colour) or _DEFAULT_INK
 
         return [
             InsertNode(
@@ -947,6 +996,71 @@ class AddShape(ToolSpec):
 #: The ink a shape takes when nobody named a colour. A mid slate, dark enough
 #: to read on white and quiet enough not to compete with the words.
 _DEFAULT_INK = "#334155"
+
+
+#: Colour names worth understanding without being told a hex code.
+#:
+#: Not the full CSS list. These are the words somebody actually says when they
+#: ask for a colour on a résumé, plus the greys, and every one of them is a
+#: real CSS keyword -- so the value passes through to the browser unchanged and
+#: renders identically in the PDF.
+_COLOUR_WORDS: frozenset[str] = frozenset(
+    {
+        "black", "white", "grey", "gray", "silver", "lightgrey", "lightgray",
+        "darkgrey", "darkgray", "dimgrey", "dimgray", "slategrey", "slategray",
+        "red", "crimson", "firebrick", "darkred", "maroon", "tomato", "salmon",
+        "orange", "darkorange", "orangered", "coral", "gold", "goldenrod",
+        "yellow", "olive", "khaki",
+        "green", "darkgreen", "forestgreen", "seagreen", "olivedrab", "teal",
+        "lime", "limegreen",
+        "blue", "navy", "midnightblue", "royalblue", "steelblue", "dodgerblue",
+        "cornflowerblue", "skyblue", "lightblue", "cadetblue", "turquoise",
+        "cyan", "aqua",
+        "purple", "indigo", "violet", "orchid", "plum", "magenta", "fuchsia",
+        "pink", "hotpink", "brown", "sienna", "chocolate", "tan", "beige",
+        "ivory", "linen",
+    }
+)
+
+_HEX = re.compile(r"^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$")
+_RGB = re.compile(
+    r"^rgba?\(\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*"
+    r"(?:,\s*(?:0|1|0?\.\d+)\s*)?\)$"
+)
+
+
+def _colour(value: str | None) -> str | None:
+    """Read a colour the way a person writes one.
+
+    Deliberately generous. Somebody asking for a red heading says "red", and a
+    model asked to colour something reaches for "#dc2626" or "crimson" about
+    equally often -- refusing two of those three would make the feature look
+    broken for a reason that is nothing to do with the résumé.
+
+    A value that is understood is returned ready for CSS, so it renders the
+    same on the board and in the exported PDF. One that is not raises rather
+    than passing through: an unknown keyword is silently dropped by CSS, and a
+    tool that reports success while nothing changes colour is the worse
+    failure of the two.
+    """
+    if value is None:
+        return None
+
+    text = value.strip().lower()
+    if not text:
+        return None
+    if text in _COLOUR_WORDS:
+        return text
+    if _HEX.match(text) or _RGB.match(text):
+        return text
+    # A bare hex code is what someone pasting from a palette produces.
+    if _HEX.match(f"#{text}"):
+        return f"#{text}"
+
+    raise ToolError(
+        f"{value!r} is not a colour I can read. Use a hex code like '#b91c1c', "
+        "an rgb() value, or a plain name like 'red' or 'navy'."
+    )
 
 #: Fallback for where the name ends, when the page has no header frame to
 #: measure. A constant is a guess; the frame's own height is not, and the
@@ -1094,6 +1208,88 @@ class AddImage(ToolSpec):
 #: asset's business and `fit: contain` honours it; a guess here would letterbox
 #: every portrait photo.
 _IMAGE_SIDE = 96.0
+
+
+class SetPhotoArgs(BaseModel):
+    asset: str | None = Field(
+        default=None,
+        description=(
+            "Id of an image from the UPLOADS list, or null to take the photo "
+            "off. You cannot upload one yourself."
+        ),
+    )
+    reason: str = ""
+
+
+class SetPhoto(ToolSpec):
+    name = "set_photo"
+    tier = "C"
+    description = """
+    Put a photograph the user has uploaded into the résumé's photo holder, or
+    take it out again. Only ids from the UPLOADS list work.
+
+    The holder is drawn by the templates that have one -- Portrait, Profile and
+    Badge. Setting a photo on any other template stores it and shows nothing
+    until they switch, so say that rather than letting them wonder.
+
+    If that picture is already placed on the page as a box, this moves it: the
+    box goes and the holder gets it. You do not need to remove it yourself.
+    """
+    Args = SetPhotoArgs
+
+    def compile(self, args: SetPhotoArgs, doc: StudioDoc) -> list[DocOp]:
+        # The id is not checked here and cannot be: assets belong to the repo,
+        # and `compile` is handed the document alone -- the same reason
+        # `add_image` does not check its own. An id the model invented instead
+        # of reading off UPLOADS therefore reaches the page, where the renderer
+        # drops the image rather than drawing a broken one.
+        ops: list[DocOp] = [
+            SetField(
+                target="personal.photo",
+                value=args.asset or "",
+                reason=args.reason,
+            )
+        ]
+
+        # Placing it in the holder *moves* it there.
+        #
+        # The route this exists for: somebody adds a headshot with the toolbar,
+        # which drops it on the page as a positioned box, and then asks for it
+        # in the holder. Setting the field alone left the box where it was, so
+        # the same face appeared on the résumé twice -- once floating and once
+        # in the header -- and nothing in the reply said so.
+        #
+        # Only the copies of *this* asset, and only when a photo is being set:
+        # taking one out of the holder is not a reason to delete a picture
+        # somebody placed deliberately.
+        if args.asset:
+            ops.extend(
+                RemoveNode(nid=element.nid, reason=args.reason)
+                for page in doc.pages
+                for element in page.elements
+                if getattr(element, "asset", None) == args.asset
+            )
+
+        return ops
+
+    def _placed(self, args: SetPhotoArgs, doc: StudioDoc) -> int:
+        if not args.asset:
+            return 0
+        return sum(
+            1
+            for page in doc.pages
+            for element in page.elements
+            if getattr(element, "asset", None) == args.asset
+        )
+
+    def grants(self, args: SetPhotoArgs, doc: StudioDoc) -> list[IntentGrant]:
+        return [IntentGrant(GrantScope.PERSONAL_FIELD, "photo", origin="consent")]
+
+    def label(self, args: SetPhotoArgs) -> str:
+        # `label` is given the arguments alone, so it cannot say whether a
+        # placed copy was taken with it -- the wording covers both readings
+        # rather than claiming the narrower one.
+        return "set the photo" if args.asset else "removed the photo"
 
 
 class AddEducationArgs(BaseModel):
@@ -1724,6 +1920,16 @@ class StyleElementArgs(BaseModel):
     )
     opacity: float | None = Field(default=None, ge=0.0, le=1.0)
     padding: float | None = Field(default=None, ge=0.0, le=48.0)
+    color: str | None = Field(
+        default=None,
+        description=(
+            "Colour of the text in the box. A hex code like '#b91c1c', or a "
+            "plain name like 'red' or 'navy'."
+        ),
+    )
+    background: str | None = Field(
+        default=None, description="Colour behind the box. Same forms as color."
+    )
     reason: str = ""
 
 
@@ -1749,17 +1955,24 @@ class StyleElement(ToolSpec):
                 ("font_scale", args.font_scale),
                 ("opacity", args.opacity),
                 ("padding", args.padding),
+                ("color", _colour(args.color)),
+                ("background", _colour(args.background)),
             )
             if value is not None
         }
         if not patch:
             raise ToolError(
-                "Say what to change: align, font_scale, opacity or padding."
+                "Say what to change: align, font_scale, opacity, padding, "
+                "color or background."
             )
 
         return [SetElementStyle(nid=args.nid, patch=patch, reason=args.reason)]
 
     def label(self, args: StyleElementArgs) -> str:
+        if args.color:
+            return "recoloured a box"
+        if args.background:
+            return "filled a box"
         if args.align:
             return f"aligned a box {args.align}"
         return "restyled a box"
@@ -1798,6 +2011,7 @@ def _default_specs() -> list[ToolSpec]:
     return [
         ReadDocument(),
         FindText(),
+        ForkBoard(),
         RewriteText(),
         AddBullet(),
         RemoveBullet(),
@@ -1820,6 +2034,7 @@ def _default_specs() -> list[ToolSpec]:
         AddSection(),
         AddShape(),
         AddImage(),
+        SetPhoto(),
         RemoveEntry(),
         SetEntryIdentity(),
         AddTextBox(),

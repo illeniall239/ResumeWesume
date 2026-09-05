@@ -75,3 +75,39 @@ if (typeof window !== 'undefined' && typeof window.PointerEvent === 'undefined')
   window.PointerEvent = PointerEventPolyfill as unknown as typeof window.PointerEvent;
   globalThis.PointerEvent = window.PointerEvent;
 }
+
+/**
+ * jsdom has no `ResizeObserver`.
+ *
+ * Both overlays -- the revision layer and the pen -- observe the sheet so a
+ * mark stays on its node while the document reflows under it: a frame growing
+ * as the agent adds a bullet, a font finishing loading, the window resizing.
+ *
+ * A stub that never fires is the honest one here. jsdom performs no layout, so
+ * nothing can ever resize; the callback firing would be the lie. Tests that
+ * care about placement measure explicitly instead.
+ */
+if (typeof globalThis !== 'undefined' && typeof globalThis.ResizeObserver === 'undefined') {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = ResizeObserverStub as unknown as typeof ResizeObserver;
+}
+
+/**
+ * jsdom implements `Range` but not `Range.prototype.getClientRects`.
+ *
+ * The pen measures the *text* inside a node rather than the node's box, because
+ * those differ by the whole empty remainder of the column -- so it ranges over
+ * the contents and takes the last line box. jsdom has no layout to range over.
+ *
+ * An empty list is the honest stub, and it is a case the caller already has to
+ * handle: a node with no rendered text returns nothing in a real browser too,
+ * and the pen falls back to the element's own box.
+ */
+if (typeof Range !== 'undefined' && !Range.prototype.getClientRects) {
+  Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+  Range.prototype.getBoundingClientRect = () => new DOMRect(0, 0, 0, 0);
+}

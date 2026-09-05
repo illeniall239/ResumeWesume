@@ -12,7 +12,10 @@ import { describe, expect, it } from 'vitest';
 import { reflow, type MeasuredFrame } from '@/canvas/reflow';
 
 /** A page 1000pt tall with 100pt margins: 800pt of usable height. */
-const GEOMETRY = { contentHeight: 800, top: 100 };
+// `contentWidth` matches the 400pt frames below, so every one of them spans the
+// sheet -- which is what a single-column document is, and what these tests are
+// about. The column cases live in reflow-columns.test.ts.
+const GEOMETRY = { contentHeight: 800, top: 100, contentWidth: 400 };
 const PAGES = ['pag_1', 'pag_2', 'pag_3'];
 
 function frames(...specs: [string, number, number][]): MeasuredFrame[] {

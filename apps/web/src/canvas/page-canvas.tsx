@@ -85,6 +85,26 @@ function ElementView({
     // "it was not all the way to the right" meant, and no amount of moving the
     // box could fix.
     textAlign: 'style' in element ? element.style.align : undefined,
+    // Colour, the same way and for the same reason: both fields have been in
+    // `ElementStyle` since it was written and neither was ever drawn, so a box
+    // the assistant was asked to make red came back unchanged and said it had
+    // worked.
+    //
+    // Set as the document's own ink token, not only as `color`. `.flow` in
+    // globals.css declares `color: var(--ink)` outright, so a colour merely
+    // inherited from this box is overridden the moment DocumentFlow renders
+    // inside it -- the box would go red and every word in it stay black.
+    //
+    // Rebinding the token instead means the section rules and heading
+    // underlines that also read `--ink` follow the text, which is what a
+    // person asking for a red section means. It reaches no further than this
+    // element's own subtree, and it reaches the PDF, since the print route
+    // renders through PageCanvas.
+    ...('style' in element && element.style.color
+      ? { ['--ink' as string]: element.style.color, color: element.style.color }
+      : null),
+    background:
+      'style' in element ? element.style.background ?? undefined : undefined,
   };
 
   if (!element.visible) return null;
@@ -114,6 +134,15 @@ function ElementView({
           // an empty field that renders nothing leaves nothing to double-click,
           // which is how a brand-new résumé arrived as a blank sheet.
           placeholders={flow.editable}
+          // Whether they are *drawn* at rest is a different question, and
+          // `scaffold` answers it: the document saying nothing in it is the
+          // person's yet. The repo clears it on their first write, and a
+          // résumé imported from their own PDF has it false from the start --
+          // so its empty fields stay empty and the page shows what was
+          // imported and nothing else. They remain reachable: the hint comes
+          // back on hover or focus, which is when it is an offer rather than
+          // a claim.
+          prompting={flow.editable && doc.scaffold}
         />
       </div>
     );

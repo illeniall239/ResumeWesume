@@ -12,6 +12,7 @@ function doc(): StudioDoc {
   return {
     schema_version: 1,
   template: 'plain',
+  layout: 'stack',
   scaffold: false,
   unverified: [],
     personal: {
@@ -22,7 +23,7 @@ function doc(): StudioDoc {
       location: 'Austin, TX',
       website: null,
       linkedin: null,
-      github: null,
+      github: null, photo: null,
     },
     summary: { nid: 'sum_00001', text: 'Backend engineer.', style: 'plain' },
     experience: [

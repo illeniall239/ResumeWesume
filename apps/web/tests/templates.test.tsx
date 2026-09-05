@@ -26,9 +26,13 @@ function extract(container: HTMLElement): string {
 }
 
 describe('templates', () => {
-  it('offers between six and nine, which is what the gallery is sized for', () => {
+  it('offers enough to choose between without becoming a catalogue', () => {
+    // Was capped at nine. Raised when the photo templates were added: the
+    // gallery auto-fills its columns and does not care, and the cap was a
+    // judgement about choice overload rather than a layout constraint. Still
+    // bounded, because a wall of near-identical cards is its own problem.
     expect(TEMPLATES.length).toBeGreaterThanOrEqual(6);
-    expect(TEMPLATES.length).toBeLessThanOrEqual(9);
+    expect(TEMPLATES.length).toBeLessThanOrEqual(12);
   });
 
   it('names every template exactly once', () => {

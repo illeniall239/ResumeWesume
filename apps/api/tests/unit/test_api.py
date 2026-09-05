@@ -117,6 +117,77 @@ class TestCreate:
         # And it is not a content change, so the hash a client holds stays good.
         assert confirmed.json()["hash"] == created["hash"]
 
+    async def test_opening_a_template_leaves_it_a_template(
+        self, client: AsyncClient
+    ) -> None:
+        """A reflow is not the author writing.
+
+        Every open runs the reflow pass, which posts a batch of `set_geometry`
+        for the frames it has measured. Counted as an author write, that ended
+        the scaffolding of every template before its owner had typed a
+        character -- and `scaffold` is what turns on `SCAFFOLD_NOTE`, the
+        scaffold budget, the wider tier grants and the unverified marks, none
+        of which say anything when they quietly stop applying.
+        """
+        created = (
+            await client.post(
+                "/api/v1/documents",
+                json={"title": "Starter", "starter": True, "scaffold": True},
+            )
+        ).json()
+        frame = created["doc"]["pages"][0]["elements"][0]["nid"]
+
+        moved = await client.post(
+            f"/api/v1/documents/{created['id']}/ops",
+            json={"ops": [{"op": "set_geometry", "nid": frame, "y": 31.5}]},
+        )
+        assert moved.status_code == 200
+        assert len(moved.json()["applied"]) == 1
+        assert moved.json()["doc"]["scaffold"] is True
+
+    async def test_typing_in_a_template_ends_the_scaffolding(
+        self, client: AsyncClient
+    ) -> None:
+        """The other half of the rule, so the exemption cannot swallow it."""
+        created = (
+            await client.post(
+                "/api/v1/documents",
+                json={"title": "Starter", "starter": True, "scaffold": True},
+            )
+        ).json()
+        summary = created["doc"]["summary"]["nid"]
+
+        typed = await client.post(
+            f"/api/v1/documents/{created['id']}/ops",
+            json={"ops": [{"op": "set_text", "nid": summary, "value": "I plan."}]},
+        )
+        assert typed.status_code == 200
+        assert typed.json()["doc"]["scaffold"] is False
+
+    async def test_a_mixed_batch_still_ends_the_scaffolding(
+        self, client: AsyncClient
+    ) -> None:
+        """The exemption is for batches that are *only* layout."""
+        created = (
+            await client.post(
+                "/api/v1/documents",
+                json={"title": "Starter", "starter": True, "scaffold": True},
+            )
+        ).json()
+        frame = created["doc"]["pages"][0]["elements"][0]["nid"]
+        summary = created["doc"]["summary"]["nid"]
+
+        both = await client.post(
+            f"/api/v1/documents/{created['id']}/ops",
+            json={
+                "ops": [
+                    {"op": "set_geometry", "nid": frame, "y": 31.5},
+                    {"op": "set_text", "nid": summary, "value": "I plan."},
+                ]
+            },
+        )
+        assert both.json()["doc"]["scaffold"] is False
+
     async def test_create_records_the_template(self, client: AsyncClient) -> None:
         response = await client.post(
             "/api/v1/documents", json={"title": "Set", "template": "banner"}

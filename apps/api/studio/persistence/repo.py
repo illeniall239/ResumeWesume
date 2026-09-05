@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
@@ -19,6 +20,7 @@ from studio.doc.schema import StudioDoc
 from studio.persistence.models import (
     Asset,
     Base,
+    Canvas,
     ChatMessage,
     Checkpoint,
     Document,
@@ -28,7 +30,18 @@ from studio.persistence.models import (
 
 #: Long enough for "Rao Muhammad Hamza — Senior AI Engineer, Platform", short
 #: enough that the column it is stored in cannot be filled with a paste.
+log = logging.getLogger(__name__)
+
 MAX_TITLE = 300
+
+#: How much of a job posting is kept.
+#:
+#: Generous, because a real posting runs long and the interesting requirements
+#: are as often at the bottom as the top. Capped at all because this text goes
+#: into the prompt on every turn, and an unbounded field there is an unbounded
+#: bill -- and because `outline()` exists precisely to stop a large prompt from
+#: pushing the system prompt off the front of a local model's context.
+MAX_JOB_DESCRIPTION = 20_000
 
 
 class VersionConflict(Exception):
@@ -45,6 +58,16 @@ class VersionConflict(Exception):
 
 
 @dataclass
+class CanvasState:
+    """A canvas and the boards on it."""
+
+    id: str
+    title: str
+    boards: list["DocumentState"] = field(default_factory=list)
+    updated_at: datetime | None = None
+
+
+@dataclass
 class DocumentState:
     id: str
     doc: StudioDoc
@@ -52,6 +75,10 @@ class DocumentState:
     content_hash: str
     title: str
     settings: dict[str, Any] | None = None
+    #: The posting this résumé is aimed at, or None. Read on every turn.
+    job_description: str | None = None
+    #: The canvas this board sits on.
+    canvas_id: str | None = None
     #: When this document last changed. Optional because a state built from a
     #: fresh write has not been read back yet, and nothing depends on it there.
     updated_at: datetime | None = None
@@ -59,6 +86,194 @@ class DocumentState:
     @property
     def etag(self) -> str:
         return etag(self.version, self.content_hash)
+
+
+#: Ops that move something without changing a word.
+#:
+#: ``tier_of`` already states the principle for ``set_geometry``: "moving a box
+#: is not a claim about the person." The scaffolding rule is the same claim, so
+#: it has to follow the same line.
+#:
+#: It matters because the reflow pass posts a batch of these every time a
+#: document is *opened*. Counted as the author writing, that ended the
+#: scaffolding of every template before its owner had typed a character --
+#: which silently took ``SCAFFOLD_NOTE``, ``TurnBudget.for_scaffold`` and the
+#: unverified marks with it, none of which announce their absence. Opening a
+#: résumé is not writing one.
+_LAYOUT_ONLY = frozenset({"set_geometry"})
+
+
+def _add_missing_columns(connection: Any) -> None:
+    """Add columns a model has grown that an existing table does not have yet.
+
+    ``create_all`` creates missing *tables* and is silent about missing
+    *columns*, so a field added to a model reaches a fresh database and never
+    reaches anybody's existing one -- where the next query then fails with
+    "no such column" on a database that was working a minute earlier. There is
+    no migration tool in this project, and this is the smallest thing that is
+    not one.
+
+    Deliberately additive only, and only for columns that are nullable with no
+    server default: those are the ones SQLite can add instantly and safely,
+    and they are the only kind whose meaning for existing rows is obvious --
+    the row simply does not have one. Anything else (a rename, a type change,
+    a NOT NULL) is a real migration and has to be written as one; this will
+    not attempt it and will not pretend to have done it.
+    """
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(connection)
+    present = set(inspector.get_table_names())
+
+    for table in Base.metadata.sorted_tables:
+        if table.name not in present:
+            continue  # create_all has just made it, with every column
+        existing = {column["name"] for column in inspector.get_columns(table.name)}
+        for column in table.columns:
+            if column.name in existing:
+                continue
+            if not column.nullable or column.server_default is not None:
+                log.warning(
+                    "column %s.%s is missing and cannot be added automatically; "
+                    "it needs a real migration",
+                    table.name,
+                    column.name,
+                )
+                continue
+            kind = column.type.compile(connection.dialect)
+            connection.execute(
+                text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {kind}')
+            )
+            log.info("added column %s.%s", table.name, column.name)
+
+
+def _state_of(row: Document) -> DocumentState:
+    """One stored row as the state everything else reads.
+
+    Written once because three readers build it and they had drifted apart
+    before: a field added to the row reached whichever of them the change
+    happened to touch.
+    """
+    return DocumentState(
+        id=row.id,
+        doc=load_doc(row.doc),
+        version=row.version,
+        content_hash=row.content_hash,
+        title=row.title,
+        settings=row.settings,
+        job_description=row.job_description,
+        canvas_id=row.canvas_id,
+        updated_at=row.updated_at,
+    )
+
+
+def _adopt_orphan_documents(connection: Any) -> None:
+    """Give every document without a canvas one of its own.
+
+    Boards live on canvases, and every résumé written before canvases existed
+    has none -- so without this the register, which lists canvases, would open
+    empty on a database full of work. Each becomes a canvas of one board,
+    keeping its own name, which is the shape it already had.
+
+    Idempotent by construction: it acts only on rows where ``canvas_id`` is
+    null, and leaves none behind. A document created and then orphaned by a
+    hand-deleted canvas would be adopted again on the next boot, which is the
+    right answer rather than a special case.
+    """
+    from sqlalchemy import select, update
+
+    orphans = connection.execute(
+        select(Document.id, Document.title).where(Document.canvas_id.is_(None))
+    ).all()
+    if not orphans:
+        return
+
+    for document_id, title in orphans:
+        canvas_id = str(uuid.uuid4())
+        connection.execute(
+            Canvas.__table__.insert().values(
+                id=canvas_id, title=(title or "Untitled")[:MAX_TITLE]
+            )
+        )
+        connection.execute(
+            update(Document).where(Document.id == document_id).values(canvas_id=canvas_id)
+        )
+
+    log.info("adopted %d document(s) onto canvases of their own", len(orphans))
+
+
+def _link_messages_to_canvases(connection: Any) -> None:
+    """File every stored message under the canvas its board sits on.
+
+    The transcript moved from the board to the canvas, and a conversation held
+    before that move has no canvas on it -- so a résumé full of history would
+    open on an empty sidebar, and the history handed to the model would be
+    empty too. Runs after the adoption above, which is what gives every board a
+    canvas to be filed under.
+    """
+    from sqlalchemy import text as sql
+
+    changed = connection.execute(
+        sql(
+            "UPDATE chat_messages SET canvas_id = ("
+            "  SELECT documents.canvas_id FROM documents"
+            "  WHERE documents.id = chat_messages.document_id"
+            ") WHERE canvas_id IS NULL"
+        )
+    ).rowcount
+    if changed:
+        log.info("filed %d message(s) under their canvas", changed)
+
+
+def _settle_claims(
+    doc: "StudioDoc", applied: list[AppliedOp], ctx: OpContext | None
+) -> "StudioDoc":
+    """Mark what only the job posting vouches for, and unmark what you touch.
+
+    ``add_skill(evidence="jd")`` is allowed, and it has to be: a posting that
+    names Kubernetes is often naming something you have and forgot to list.
+    But the check behind it verifies only that the word is in the *advert* --
+    not that it is anywhere in your résumé, and not that you ever said you have
+    it. That is a claim nobody has vouched for, and a résumé may never be quiet
+    about one.
+
+    So it is marked rather than refused, and the mark is cleared the moment you
+    edit the line. Editing it is you saying it is yours, which is the same
+    reasoning ``_settle_scaffold`` uses for a template -- and it applies to a
+    finished résumé too, which is why this runs whether or not the document is
+    still scaffolding.
+    """
+    wrote = [op for op in applied if op.op.get("op") not in _LAYOUT_ONLY]
+    if not wrote:
+        return doc
+
+    actor = ctx.actor if ctx else "agent"
+    marked = list(doc.unverified)
+
+    if actor == "user":
+        # Anything the author has just written in is theirs, mark or no mark.
+        touched = {nid for op in wrote for nid in op.touched}
+        remaining = [nid for nid in marked if nid not in touched]
+        if remaining == marked:
+            return doc
+        return doc.model_copy(update={"unverified": remaining})
+
+    # The node dict is on the op as the agent sent it, and `source` is set by
+    # `add_skill` from the evidence it declared -- so this reads provenance
+    # that the tool already recorded rather than deriving it a second time.
+    fresh = [
+        nid
+        for op in wrote
+        if op.op.get("op") == "insert_node"
+        and isinstance(op.op.get("node"), dict)
+        and op.op["node"].get("source") == "jd"
+        for nid in op.touched
+    ]
+    if not fresh:
+        return doc
+
+    marked.extend(nid for nid in fresh if nid not in marked)
+    return doc.model_copy(update={"unverified": marked})
 
 
 def _settle_scaffold(
@@ -77,11 +292,18 @@ def _settle_scaffold(
     A write by the **author** ends the scaffolding outright and clears the marks
     it covers. Typing into the document is the moment it stops being a template
     and starts being theirs, and from then on every guarantee applies unchanged.
+
+    Layout is neither. A batch that only moves frames leaves the document
+    exactly as unwritten as it found it, whoever sent it.
     """
     if not doc.scaffold:
         return doc
 
-    touched = [nid for op in applied for nid in op.touched]
+    wrote = [op for op in applied if op.op.get("op") not in _LAYOUT_ONLY]
+    if not wrote:
+        return doc
+
+    touched = [nid for op in wrote for nid in op.touched]
     actor = ctx.actor if ctx else "agent"  # anything but the author is the agent
 
     if actor != "user":
@@ -113,6 +335,9 @@ class DocumentRepo:
     async def create_schema(self) -> None:
         async with self._engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
+            await connection.run_sync(_add_missing_columns)
+            await connection.run_sync(_adopt_orphan_documents)
+            await connection.run_sync(_link_messages_to_canvases)
 
     async def dispose(self) -> None:
         await self._engine.dispose()
@@ -151,6 +376,11 @@ class DocumentRepo:
             return
 
         async with self._session() as session:
+            # The canvas the board sits on, so the conversation is filed with
+            # the résumé rather than with one version of it.
+            board = await session.get(Document, document_id)
+            for row in rows:
+                row.canvas_id = board.canvas_id if board else None
             session.add_all(rows)
             await session.commit()
 
@@ -173,6 +403,86 @@ class DocumentRepo:
             )
             return list(reversed(result.scalars().all()))
 
+    async def turn_checkpoints(self, document_id: str) -> dict[str, tuple[str, int]]:
+        """Where each stored turn began: ``turn_id`` -> (checkpoint id, version).
+
+        A conversation read back from the database has no memory of the
+        snapshot the loop streamed while it was running, so without this
+        "undo this turn" is an offer that evaporates on refresh -- and a
+        refresh is exactly what somebody does when they are unsure whether an
+        edit landed.
+
+        Joined on ``turn_id`` rather than carried on the message: both tables
+        already record it, and a message column would be a second copy of a
+        fact that can only ever be derived from the checkpoint anyway.
+        """
+        async with self._session() as session:
+            result = await session.execute(
+                select(Checkpoint.turn_id, Checkpoint.id, Checkpoint.version)
+                .where(Checkpoint.document_id == document_id)
+                .where(Checkpoint.turn_id.is_not(None))
+            )
+            return {
+                turn_id: (checkpoint_id, version)
+                for turn_id, checkpoint_id, version in result.all()
+                if turn_id
+            }
+
+    async def canvas_conversation(
+        self, canvas_id: str, *, limit: int = 200
+    ) -> list[ChatMessage]:
+        """Everything said about this résumé, oldest first, across its versions.
+
+        Canvas-wide because a conversation is: you ask for a version aimed at
+        one job, read it back, then ask for another. Keyed to the board it
+        would split into as many transcripts as there are versions, and the
+        history handed to the model would lose everything said about the
+        résumé as a whole.
+
+        Capped for the same reason `conversation` is -- this is read on every
+        page load -- and the cap keeps the most recent, so what falls off is
+        the distant past rather than the exchange somebody is in the middle of.
+        """
+        async with self._session() as session:
+            result = await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.canvas_id == canvas_id)
+                .order_by(ChatMessage.id.desc())
+                .limit(limit)
+            )
+            return list(reversed(result.scalars().all()))
+
+    async def clear_canvas_conversation(self, canvas_id: str) -> None:
+        async with self._session() as session:
+            await session.execute(
+                delete(ChatMessage).where(ChatMessage.canvas_id == canvas_id)
+            )
+            await session.commit()
+
+    async def turn_checkpoints_for_canvas(
+        self, canvas_id: str
+    ) -> dict[str, tuple[str, int, str]]:
+        """The same as ``turn_checkpoints``, for every board on a canvas.
+
+        Returns ``turn_id`` -> (checkpoint id, version, document id). The
+        document id comes back because a canvas-wide transcript holds turns
+        against several boards, and whether a snapshot is worth offering
+        depends on how far *that* board has moved since.
+        """
+        async with self._session() as session:
+            result = await session.execute(
+                select(Checkpoint.turn_id, Checkpoint.id, Checkpoint.version,
+                       Checkpoint.document_id)
+                .join(Document, Document.id == Checkpoint.document_id)
+                .where(Document.canvas_id == canvas_id)
+                .where(Checkpoint.turn_id.is_not(None))
+            )
+            return {
+                turn_id: (checkpoint_id, version, document_id)
+                for turn_id, checkpoint_id, version, document_id in result.all()
+                if turn_id
+            }
+
     async def clear_conversation(self, document_id: str) -> None:
         async with self._session() as session:
             await session.execute(
@@ -180,86 +490,6 @@ class DocumentRepo:
             )
             await session.commit()
 
-
-    # --- revisions --------------------------------------------------------
-    #
-    # The marks drawn on the sheet and the readings under them, rebuilt from the
-    # op log so they survive a reload. They used to live only in the browser,
-    # which put the record of what changed on weaker footing than the
-    # conversation about it -- the dialogue came back and the artifact's history
-    # did not.
-
-    async def revisions(self, document_id: str) -> dict[str, Any]:
-        """The document's revision count, and the marks of its latest issue.
-
-        Counted per document rather than per session: a drawing's revision
-        number does not restart because somebody closed it. What is *drawn* is
-        still one issue -- the most recent turn -- because that is what the
-        clouds mean, and clouding every change a document ever had would cover
-        the whole sheet.
-
-        The "before" reading comes from each op's stored inverse, which is the
-        only place the outgoing text survives once the new text is in.
-        """
-        from pydantic import TypeAdapter
-
-        from studio.doc.apply import _touched
-        from studio.doc.ops import DocOp
-
-        adapter = TypeAdapter(DocOp)
-
-        async with self._session() as session:
-            result = await session.execute(
-                select(DocumentOp)
-                .where(
-                    DocumentOp.document_id == document_id,
-                    DocumentOp.turn_id.is_not(None),
-                )
-                .order_by(DocumentOp.version, DocumentOp.seq)
-            )
-            rows = list(result.scalars().all())
-
-        turns: list[str] = []
-        for row in rows:
-            if row.turn_id and (not turns or turns[-1] != row.turn_id):
-                if row.turn_id not in turns:
-                    turns.append(row.turn_id)
-
-        if not turns:
-            return {"revision": 0, "turn_id": None, "marks": []}
-
-        latest = turns[-1]
-        marks: list[dict[str, Any]] = []
-        seen: dict[str, int] = {}
-
-        for row in rows:
-            if row.turn_id != latest:
-                continue
-            try:
-                op = adapter.validate_python(row.op)
-            except Exception:  # noqa: BLE001 -- a stored op we can no longer parse
-                continue
-
-            for nid in _touched(op):
-                # One number per node, minted the first time it changes and kept
-                # if a later op in the same issue touches it again -- a region
-                # carries one mark however many times it was worked on.
-                if nid not in seen:
-                    seen[nid] = len(seen) + 1
-                    marks.append({"nid": nid, "mark": seen[nid], "before": None})
-
-                entry = next(item for item in marks if item["nid"] == nid)
-                if entry["before"] is None:
-                    entry["before"] = _outgoing_text(row.inverse)
-
-        return {"revision": len(turns), "turn_id": latest, "marks": marks}
-
-    # --- assets -----------------------------------------------------------
-    #
-    # Content-addressed, so `store` is idempotent: the same bytes uploaded
-    # twice return the same row rather than making a second copy. That falls
-    # out of using the hash as the primary key and is worth having -- the same
-    # headshot on three documents is one row.
 
     async def store_asset(
         self,
@@ -321,10 +551,21 @@ class DocumentRepo:
         *,
         title: str = "Untitled resume",
         source_markdown: str | None = None,
+        canvas_id: str | None = None,
     ) -> DocumentState:
+        """Create a board.
+
+        ``canvas_id`` puts it on an existing canvas -- a second version of a
+        résumé, aimed at another job. Without one it gets a canvas of its own,
+        so no caller has to know canvases exist to make a résumé, and no
+        document can be created orphaned.
+        """
         document_id = str(uuid.uuid4())
         digest = content_hash(doc)
         async with self._session() as session:
+            if canvas_id is None:
+                canvas_id = str(uuid.uuid4())
+                session.add(Canvas(id=canvas_id, title=title[:MAX_TITLE] or "Untitled"))
             session.add(
                 Document(
                     id=document_id,
@@ -333,11 +574,17 @@ class DocumentRepo:
                     content_hash=digest,
                     doc=doc.model_dump(mode="json"),
                     source_markdown=source_markdown,
+                    canvas_id=canvas_id,
                 )
             )
             await session.commit()
         return DocumentState(
-            id=document_id, doc=doc, version=1, content_hash=digest, title=title
+            id=document_id,
+            doc=doc,
+            version=1,
+            content_hash=digest,
+            title=title,
+            canvas_id=canvas_id,
         )
 
     async def rename(self, document_id: str, title: str) -> DocumentState | None:
@@ -363,6 +610,30 @@ class DocumentRepo:
 
         return await self.get(document_id)
 
+    async def set_job_description(
+        self, document_id: str, text: str | None
+    ) -> DocumentState | None:
+        """Aim a résumé at a posting, or stop aiming it at one.
+
+        Deliberately not an op, for the same reason a title is not: the posting
+        is *about* the document rather than in it. It renders nothing, changes
+        no word on the page, and moves neither the version nor the content hash
+        -- so pasting one does not hand a 409 to every open editor, and does not
+        sit in the undo stack between two real edits.
+
+        Empty or whitespace clears it. There is no separate "remove" call
+        because "aimed at nothing" is not a different kind of state.
+        """
+        async with self._session() as session:
+            row = await session.get(Document, document_id)
+            if row is None:
+                return None
+            clean = (text or "").strip()
+            row.job_description = clean[:MAX_JOB_DESCRIPTION] or None
+            await session.commit()
+
+        return await self.get(document_id)
+
     async def get(self, document_id: str) -> DocumentState | None:
         async with self._session() as session:
             row = await session.get(Document, document_id)
@@ -375,6 +646,8 @@ class DocumentRepo:
                 content_hash=row.content_hash,
                 title=row.title,
                 settings=row.settings,
+                job_description=row.job_description,
+                canvas_id=row.canvas_id,
                 updated_at=row.updated_at,
             )
 
@@ -391,10 +664,114 @@ class DocumentRepo:
                     content_hash=row.content_hash,
                     title=row.title,
                     settings=row.settings,
+                    job_description=row.job_description,
+                    canvas_id=row.canvas_id,
                     updated_at=row.updated_at,
                 )
                 for row in rows
             ]
+
+    # --- canvases ---------------------------------------------------------
+    #
+    # A canvas is what the register lists and what a URL names. Its boards are
+    # ordinary documents, which is what keeps ops, undo, export and the agent
+    # loop working on a board exactly as they worked on a document.
+
+    async def create_canvas(self, title: str = "Untitled") -> CanvasState:
+        canvas_id = str(uuid.uuid4())
+        async with self._session() as session:
+            session.add(
+                Canvas(id=canvas_id, title=(title.strip() or "Untitled")[:MAX_TITLE])
+            )
+            await session.commit()
+        return CanvasState(id=canvas_id, title=title.strip() or "Untitled", boards=[])
+
+    async def list_canvases(self) -> list[CanvasState]:
+        """Every canvas, newest activity first, each with its boards.
+
+        Boards come back in full because the register renders them for real --
+        the same ``DocumentFlow`` the studio and the PDF use -- so a card
+        cannot go stale against the thing it opens.
+        """
+        async with self._session() as session:
+            canvases = (
+                await session.execute(select(Canvas).order_by(Canvas.updated_at.desc()))
+            ).scalars().all()
+            documents = (
+                await session.execute(
+                    select(Document).order_by(Document.updated_at.desc())
+                )
+            ).scalars().all()
+
+        boards: dict[str, list[DocumentState]] = {}
+        for row in documents:
+            if row.canvas_id is None:
+                continue
+            boards.setdefault(row.canvas_id, []).append(_state_of(row))
+
+        return [
+            CanvasState(
+                id=canvas.id,
+                title=canvas.title,
+                updated_at=canvas.updated_at,
+                boards=boards.get(canvas.id, []),
+            )
+            for canvas in canvases
+        ]
+
+    async def get_canvas(self, canvas_id: str) -> CanvasState | None:
+        async with self._session() as session:
+            canvas = await session.get(Canvas, canvas_id)
+            if canvas is None:
+                return None
+            rows = (
+                await session.execute(
+                    select(Document)
+                    .where(Document.canvas_id == canvas_id)
+                    .order_by(Document.created_at.asc())
+                )
+            ).scalars().all()
+        return CanvasState(
+            id=canvas.id,
+            title=canvas.title,
+            updated_at=canvas.updated_at,
+            boards=[_state_of(row) for row in rows],
+        )
+
+    async def rename_canvas(self, canvas_id: str, title: str) -> CanvasState | None:
+        clean = title.strip()
+        if not clean:
+            return None
+        async with self._session() as session:
+            canvas = await session.get(Canvas, canvas_id)
+            if canvas is None:
+                return None
+            canvas.title = clean[:MAX_TITLE]
+            await session.commit()
+        return await self.get_canvas(canvas_id)
+
+    async def delete_canvas(self, canvas_id: str) -> bool:
+        """Delete a canvas and every board on it.
+
+        The boards go because a board is a version of the résumé this canvas
+        holds; keeping them would leave a set of unnamed sheets with nothing
+        in common and no way back to each other.
+
+        Deleted row by row rather than left to the foreign key, because SQLite
+        enforces ``ON DELETE CASCADE`` only when foreign keys are switched on
+        per connection -- so relying on it here would work in one deployment
+        and silently orphan every board in another.
+        """
+        async with self._session() as session:
+            canvas = await session.get(Canvas, canvas_id)
+            if canvas is None:
+                return False
+            await session.execute(
+                delete(Document).where(Document.canvas_id == canvas_id)
+            )
+            await session.delete(canvas)
+            await session.commit()
+        return True
 
     async def delete(self, document_id: str) -> bool:
         async with self._session() as session:
@@ -436,6 +813,10 @@ class DocumentRepo:
 
             if applied:
                 updated = _settle_scaffold(updated, applied, ctx)
+                # After the scaffold rule, not before: on a template the two
+                # would mark the same node twice, and this one's clearing pass
+                # must see the marks that one has just left.
+                updated = _settle_claims(updated, applied, ctx)
 
             if not applied:
                 # Nothing changed: do not burn a version, or every rejected
@@ -448,6 +829,8 @@ class DocumentRepo:
                         content_hash=row.content_hash,
                         title=row.title,
                         settings=row.settings,
+                        job_description=row.job_description,
+                        canvas_id=row.canvas_id,
                     ),
                     applied,
                     rejected,
@@ -505,6 +888,8 @@ class DocumentRepo:
                 content_hash=digest,
                 title=row.title,
                 settings=row.settings,
+                job_description=row.job_description,
+                canvas_id=row.canvas_id,
                 updated_at=row.updated_at,
             ),
             applied,
@@ -621,6 +1006,8 @@ class DocumentRepo:
                 content_hash=row.content_hash,
                 title=row.title,
                 settings=row.settings,
+                job_description=row.job_description,
+                canvas_id=row.canvas_id,
                 updated_at=row.updated_at,
             )
 
@@ -663,6 +1050,8 @@ class DocumentRepo:
                 content_hash=digest,
                 title=row.title,
                 settings=row.settings,
+                job_description=row.job_description,
+                canvas_id=row.canvas_id,
                 updated_at=row.updated_at,
             )
 
@@ -714,6 +1103,8 @@ class DocumentRepo:
                 content_hash=digest,
                 title=row.title,
                 settings=row.settings,
+                job_description=row.job_description,
+                canvas_id=row.canvas_id,
                 updated_at=row.updated_at,
             )
 

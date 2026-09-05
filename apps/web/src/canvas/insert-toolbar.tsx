@@ -13,6 +13,7 @@ import { useRef, useState } from 'react';
 
 import type { DocOp, StudioDoc } from '@/contracts/doc';
 import { uploadAsset } from '@/lib/api';
+import { Box, Ellipse, Line, PagePlus, Picture, TypeMark } from '@/ui/marks';
 
 import { insertImage, insertPage, insertShape, insertTextBlock } from './insert';
 import { useSelection } from './selection';
@@ -90,9 +91,8 @@ export function InsertToolbar({
 
   return (
     <div className="insert-bar">
-      <span className="legend">Add</span>
-
       <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertTextBlock(p))}>
+        <TypeMark size={13} />
         Text
       </button>
       <button
@@ -101,21 +101,26 @@ export function InsertToolbar({
         onClick={() => fileInput.current?.click()}
         disabled={busy}
       >
+        <Picture size={13} />
         {busy ? 'Uploading…' : 'Image'}
       </button>
       <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertShape(p, 'rect'))}>
+        <Box size={13} />
         Box
       </button>
       <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertShape(p, 'ellipse'))}>
+        <Ellipse size={13} />
         Ellipse
       </button>
       <button type="button" className="ctl ctl--small" onClick={() => place((p) => insertShape(p, 'line'))}>
+        <Line size={13} />
         Line
       </button>
 
       <span className="insert-bar__divider" />
 
       <button type="button" className="ctl ctl--small" onClick={() => commit(insertPage().ops)}>
+        <PagePlus size={13} />
         Page
       </button>
 

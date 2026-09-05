@@ -31,6 +31,31 @@ class Base(DeclarativeBase):
     pass
 
 
+class Canvas(Base):
+    """A résumé and the versions of it aimed at particular jobs.
+
+    The thing you pick from the register. Its boards are ordinary documents
+    with a ``canvas_id``, which is what keeps every existing path -- ops,
+    undo, export, the agent loop -- working on a board exactly as it worked on
+    a document, because a board *is* a document.
+
+    Deliberately its own table rather than a ``parent_id`` linking one document
+    to another: boards are peers with no master, so there is no board for the
+    others to point at. A canvas is the thing they have in common, and it needs
+    somewhere to be.
+    """
+
+    __tablename__ = "canvases"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    title: Mapped[str] = mapped_column(String(300), default="Untitled")
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=_utcnow, onupdate=_utcnow
+    )
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -57,6 +82,30 @@ class Document(Base):
     # schema creation is ``create_all`` with no migration tooling, so a rename
     # would silently no-op on existing databases and then fail at insert.
     source_markdown: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # The posting this résumé is aimed at, verbatim.
+    #
+    # A property of the document rather than of a message, because tailoring is
+    # not one instruction: you ask, you read it back, you ask again. Carried on
+    # the turn alone it survived exactly one exchange, and the follow-ups then
+    # worked with no idea what the résumé was being aimed at.
+    #
+    # Stored as the person pasted it. It reaches the model inside a
+    # `<job_description>` block that says plainly it is reference material and
+    # not an instruction, and it is also tokenised mechanically -- no model in
+    # the loop -- to check any skill the assistant claims the posting asked for.
+    job_description: Mapped[str | None] = mapped_column(Text, default=None)
+
+    # The canvas this board sits on.
+    #
+    # Nullable only so that it can be added to an existing table -- see
+    # `_add_missing_columns`, which can only add a column that rows are allowed
+    # not to have. Every document is adopted onto a canvas at startup, so a
+    # null here is a document that has existed for less than one boot.
+    canvas_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("canvases.id", ondelete="CASCADE"), index=True,
+        default=None,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -94,8 +143,14 @@ class DocumentOp(Base):
 class Checkpoint(Base):
     """A full snapshot taken before a turn's first mutation.
 
-    Undo for an AI turn restores one of these, which is why an agent turn is a
-    single undo unit rather than N separate bullet edits.
+    What makes an agent turn undoable as one act. It has to be a snapshot
+    rather than a range of ops, because the loop calls ``apply`` once per tool
+    call: by the time a turn ends there is nothing in ``document_ops`` that
+    marks where it began, only fourteen ordinary versions that look exactly
+    like fourteen hand edits.
+
+    Ordinary undo still walks those one at a time -- this is the other path,
+    reached by ``POST /{id}/revert`` with the id streamed on ``done``.
     """
 
     __tablename__ = "checkpoints"
@@ -227,8 +282,24 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    #: Which board the turn acted on. Kept because a turn edits one document at
+    #: a time and the record should say which, even once the conversation spans
+    #: several.
     document_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("documents.id", ondelete="CASCADE"), index=True
+    )
+    #: Which canvas the conversation belongs to.
+    #:
+    #: The transcript is canvas-wide because a conversation is: you ask for a
+    #: version aimed at one job, read it back, then ask for another. Keyed to
+    #: the board, switching versions switched the conversation, and the history
+    #: handed to the model lost everything said about the résumé as a whole.
+    #:
+    #: Nullable only so it can be added to an existing table -- see
+    #: `_add_missing_columns`. Every message is linked to its canvas at startup.
+    canvas_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("canvases.id", ondelete="CASCADE"), index=True,
+        default=None,
     )
 
     role: Mapped[str] = mapped_column(String(16), nullable=False)

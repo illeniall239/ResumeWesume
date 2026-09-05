@@ -44,6 +44,13 @@ Thumbs.db
 .impeccable/questions/
 .impeccable/review/
 
+# Screenshots and reference art dropped in the root to work from -- a design
+# frame to match, a logo to trace. Working material, like the resume PDFs
+# above: rooted, so real assets under apps/ are untouched.
+/*.png
+/*.jpg
+/*.svg
+
 # Notes, not the product.
 #
 # The design tool's own output, the architecture map, the product context and

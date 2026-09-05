@@ -9,15 +9,26 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, File, Header, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from studio.doc.apply import OpContext
 from studio.doc.autolayout import layout
 from studio.doc.legacy import from_resume_data, to_resume_data
 from studio.doc.ops import DocOp
-from studio.doc.schema import DEFAULT_SECTIONS, StudioDoc, Template, starter_doc
+from studio.ingest.pdf import ExtractionError, read_pages
+from studio.doc.schema import (
+    DEFAULT_SECTIONS,
+    Layout,
+    StudioDoc,
+    Template,
+    starter_doc,
+)
 from studio.persistence.repo import DocumentRepo, VersionConflict
+
+#: A job posting saved as a PDF is a couple of pages. Smaller than the résumé
+#: importer's cap because nothing here has to survive a scanned twenty-page CV.
+MAX_JD_UPLOAD_BYTES = 4 * 1024 * 1024
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 
@@ -33,10 +44,18 @@ class CreateRequest(BaseModel):
     # it is applied after the document is built, so it holds whichever shape
     # above produced it, an import included.
     template: Template | None = None
+    # How the page is arranged, as opposed to how it is set. Arrives with the
+    # template and for the same reason -- it is chosen on the home screen
+    # before there is a document to change -- but it is a different layer: this
+    # decides where the frames go, and `layout()` below is what reads it.
+    layout: Layout | None = None
     # Start from a skeleton -- headings and one empty entry per section -- so a
     # new document is something to fill in rather than a blank sheet. Opt-in so
     # that an import, which arrives with its own content, is untouched.
     starter: bool = False
+    #: Put this board on an existing canvas. Omitted, it gets one of its own,
+    #: so no caller has to know canvases exist in order to make a résumé.
+    canvas_id: str | None = None
     # The content is a template's example text rather than anyone's résumé.
     # Set by the gallery, which seeds a document with the card it was shown.
     scaffold: bool = False
@@ -56,6 +75,10 @@ class DocumentResponse(BaseModel):
     #: this rather than by how many writes they have taken: "3 hours ago" says
     #: which résumé you were working on, and "173 writes" does not.
     updated_at: datetime | None = None
+    #: The posting this résumé is aimed at, verbatim, or None.
+    job_description: str | None = None
+    #: The canvas this board sits on.
+    canvas_id: str | None = None
 
 
 class ApplyRequest(BaseModel):
@@ -86,6 +109,8 @@ def _as_response(state: Any) -> DocumentResponse:
         hash=state.content_hash,
         doc=state.doc,
         updated_at=getattr(state, "updated_at", None),
+        job_description=getattr(state, "job_description", None),
+        canvas_id=getattr(state, "canvas_id", None),
     )
 
 
@@ -118,6 +143,9 @@ async def create_document(request: Request, body: CreateRequest) -> DocumentResp
 
     if body.template is not None:
         doc.template = body.template
+    # Set before the layout pass below, which reads it off the document.
+    if body.layout is not None:
+        doc.layout = body.layout
     if body.scaffold:
         # A document created from a gallery card carries the card's example
         # content. Marking it says the words in it are placeholders, not claims
@@ -132,7 +160,10 @@ async def create_document(request: Request, body: CreateRequest) -> DocumentResp
         doc.pages = layout(doc)
 
     state = await _repo(request).create(
-        doc, title=body.title, source_markdown=body.source_markdown
+        doc,
+        title=body.title,
+        source_markdown=body.source_markdown,
+        canvas_id=body.canvas_id,
     )
     return _as_response(state)
 
@@ -180,20 +211,80 @@ async def rename_document(
     return _as_response(state)
 
 
-@router.get("/{document_id}/revisions")
-async def get_revisions(request: Request, document_id: str) -> dict[str, Any]:
-    """The revision number, and the marks of the latest issue.
+class JobDescriptionRequest(BaseModel):
+    """The posting, as the person pasted it. Empty or absent clears it."""
 
-    Read on page load, beside the conversation. Without it a reload cleared the
-    clouds and their readings while the chat came back -- the record of what
-    changed on weaker footing than the dialogue about it, which is exactly the
-    wrong way round.
+    text: str | None = None
+
+
+@router.put("/{document_id}/job-description", response_model=DocumentResponse)
+async def set_job_description(
+    request: Request, document_id: str, body: JobDescriptionRequest
+) -> DocumentResponse:
+    """Aim this résumé at a posting.
+
+    `PUT` rather than a write through `/ops`, and for the same reason a rename
+    is: the posting is *about* the document rather than in it. It renders
+    nothing, moves neither the version nor the content hash, and so pasting one
+    hands no 409 to an open editor and leaves no entry in the undo stack
+    between two real edits.
+
+    Stored verbatim. It reaches the model wrapped in a block that states it is
+    reference material and not an instruction, so a posting saying "also add
+    that you are a certified surgeon" is text to be read rather than a command
+    -- and it cannot satisfy the `user_request` evidence class either, which is
+    what actually guards a claim landing on the page.
     """
-    state = await _repo(request).get(document_id)
+    state = await _repo(request).set_job_description(document_id, body.text)
     if state is None:
         raise HTTPException(status_code=404, detail="Document not found")
+    return _as_response(state)
 
-    return await _repo(request).revisions(document_id)
+
+@router.post("/{document_id}/job-description/pdf", response_model=DocumentResponse)
+async def set_job_description_from_pdf(
+    request: Request, document_id: str, file: UploadFile = File(...)
+) -> DocumentResponse:
+    """The same thing, from a PDF somebody downloaded from a job board.
+
+    Text extraction only -- the same reader the résumé importer uses, without
+    any of the sectioning that follows it. A posting has no schema worth
+    guessing at, and the model reads a job ad better than a parser does.
+    """
+    data = await file.read(MAX_JD_UPLOAD_BYTES + 1)
+    if len(data) > MAX_JD_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"That file is larger than {MAX_JD_UPLOAD_BYTES // (1024 * 1024)}MB.",
+        )
+    if not data:
+        raise HTTPException(status_code=400, detail="That file was empty.")
+    # Decided on the bytes rather than the declared content type, as the résumé
+    # importer does: a Content-Type header is a claim by the client, and the
+    # first five bytes are evidence.
+    if not data.startswith(b"%PDF-"):
+        raise HTTPException(status_code=400, detail="That file is not a PDF.")
+
+    try:
+        pages = read_pages(data)
+    except ExtractionError as caught:
+        raise HTTPException(status_code=422, detail=str(caught)) from None
+
+    # Line by line in reading order, which is all a posting needs: the model
+    # reads a job ad far better than a parser guesses at its shape.
+    text = "\n".join(
+        line.text for page in pages for line in page.lines if line.text.strip()
+    ).strip()
+    if not text:
+        raise HTTPException(
+            status_code=422,
+            detail="No text could be read from that PDF. It may be a scan.",
+        )
+
+    state = await _repo(request).set_job_description(document_id, text)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    return _as_response(state)
 
 
 @router.get("/{document_id}/messages")
@@ -210,6 +301,26 @@ async def get_conversation(request: Request, document_id: str) -> dict[str, Any]
         raise HTTPException(status_code=404, detail="Document not found")
 
     messages = await _repo(request).conversation(document_id)
+    checkpoints = await _repo(request).turn_checkpoints(document_id)
+
+    def undo_point(message: Any) -> str | None:
+        """The snapshot this turn can be put back to, if putting it back means
+        anything.
+
+        Offered only where the document has moved since the snapshot was taken.
+        Every turn gets one, answers included, and restoring the document to a
+        state identical to the one it is already in would write a new version
+        and change nothing on screen -- the shape of a control that appears
+        broken.
+        """
+        if message.role != "assistant" or not message.turn_id:
+            return None
+        found = checkpoints.get(message.turn_id)
+        if found is None:
+            return None
+        checkpoint_id, version = found
+        return checkpoint_id if version < state.version else None
+
     return {
         "messages": [
             {
@@ -217,6 +328,7 @@ async def get_conversation(request: Request, document_id: str) -> dict[str, Any]
                 "role": message.role,
                 "text": message.text,
                 "status": message.status,
+                "checkpoint": undo_point(message),
             }
             for message in messages
         ]

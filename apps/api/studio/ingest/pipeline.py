@@ -23,10 +23,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
+from typing import Any
 
 from studio.doc.legacy import from_resume_data
 from studio.ingest import pdf
 from studio.ingest.contact import Contact, parse_contact
+from studio.ingest.custom import column_right, parse_custom
 from studio.ingest.extract import parse_section
 from studio.ingest.merge import title_for, to_resume_data
 from studio.ingest.schemas import SECTION_SCHEMAS, _Section
@@ -193,21 +195,45 @@ class ImportRunner:
                 )
             )
 
-        # Anything recognised as its own section but not importable yet. Shown,
-        # never dropped without saying so.
+        # Sections we have no schema for. They are imported under their own
+        # heading rather than skipped: the geometry found the boundary and the
+        # person wrote the label, so there is nothing left to guess. This is
+        # what carries Publications, Volunteering, Leadership and every heading
+        # in a language the alias table does not speak.
+        edge = column_right(extraction.lines)
+        custom: list[tuple[str, dict[str, Any]]] = []
+        order: list[str] = []
         for item in segments:
-            if item.key == "other":
+            if item.key != "other":
+                order.append(item.key)
+                continue
+            parsed_custom = parse_custom(item.lines, right=edge)
+            heading = item.heading.strip()
+            if parsed_custom is None or not heading:
+                # No heading to file it under, or nothing under the heading.
+                # Reported rather than invented -- the review screen keeps the
+                # source text either way.
                 channel.emit(
                     SectionSkipped(
                         key=item.key, heading=item.heading, source_text=item.text
                     )
                 )
+                continue
+            custom.append((heading, parsed_custom))
+            order.append(heading)
+            parsed_count += 1
+            channel.emit(
+                SectionParsed(
+                    key=heading, data=parsed_custom, source_text=item.text
+                )
+            )
 
         data = to_resume_data(
             contact=contact,
             parts=parts,
             skills=skills,
-            order=[item.key for item in segments],
+            order=order,
+            custom=custom,
         )
         # Ids are minted here, once, and thrown away: the preview renders from
         # this document, but confirming posts ``resume_data`` back and mints

@@ -171,11 +171,13 @@ class ClaudeCodeRunner:
             return TurnResult("failed", 0, 0, None, 0)
 
         base_doc = state.doc
+        # From the document, not the turn -- see the same line in `loop.py`.
+        job_description = request.job_description or state.job_description
         ledger = IntentLedger(turn_id=channel.turn_id)
         grounder = Grounder.build(
             base_doc,
             user_message=request.message,
-            jd_keywords=_keywords(request.job_description),
+            jd_keywords=_keywords(job_description),
         )
         scaffolding = base_doc.scaffold
         self._inner._scaffolding = scaffolding
@@ -284,7 +286,7 @@ class ClaudeCodeRunner:
                 outline(base_doc), await self._repo.list_assets(request.document_id)
             ),
             history=request.history,
-            job_description=request.job_description,
+            job_description=job_description,
         )
 
         # Emission is marshalled back to the server loop; the break rule is the

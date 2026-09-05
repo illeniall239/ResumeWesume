@@ -136,6 +136,15 @@ _ALIASES: dict[str, SectionKey] = {
     "details": "contact",
 }
 
+#: Words that join two section names without naming one: "Skills and Tools",
+#: "Awards & Honors". They are the only words a compound heading may contain
+#: that the alias table does not recognise.
+_CONNECTORS: frozenset[str] = frozenset({"and", "or", "of", "the", "with"})
+
+#: Beyond this a "heading" is a sentence, and matching word groups inside a
+#: sentence is how a line of body text becomes a section boundary.
+_MAX_COMPOUND_WORDS = 4
+
 _PUNCT = re.compile(r"[^a-z0-9 ]+")
 # A digit, a comma or an "@" is the mark of content, not of a section label.
 _CONTENT_MARKS = re.compile(r"[0-9,@]")
@@ -255,22 +264,51 @@ def normalise_heading(text: str) -> str:
 
 
 def classify_heading(text: str) -> SectionKey | None:
-    """Map a line to the section it names, if it names one."""
+    """Map a line to the section it names, if it names one.
+
+    An exact alias first, then compound headings -- but only those where every
+    word is accounted for. "Experience & Achievements" is Experience wearing a
+    second hat; "Volunteer Experience" is a different section that happens to
+    contain the word, and reading it as Experience files unpaid work in
+    somebody's paid history.
+
+    Taking the first *recognised* word group was what could not tell those
+    apart. The rule now is that a heading we cannot explain in full is a
+    heading we do not claim to have understood: an unexplained word is a
+    qualifier, and a qualifier changes what the section is. Those fall through
+    to a custom section carrying the résumé's own heading, which is the honest
+    answer and loses nothing.
+    """
     folded = normalise_heading(text)
     if not folded:
         return None
     if folded in _ALIASES:
         return _ALIASES[folded]
-    # "Experience & Achievements", "Skills / Tools": take the first recognised
-    # word group rather than giving up on a compound heading.
+
     words = folded.split()
-    if 1 < len(words) <= 4:
+    if not 1 < len(words) <= _MAX_COMPOUND_WORDS:
+        return None
+
+    first: SectionKey | None = None
+    position = 0
+    while position < len(words):
+        if words[position] in _CONNECTORS:
+            position += 1
+            continue
         for size in (3, 2, 1):
-            for start in range(len(words) - size + 1):
-                candidate = " ".join(words[start : start + size])
-                if candidate in _ALIASES:
-                    return _ALIASES[candidate]
-    return None
+            if position + size > len(words):
+                continue
+            candidate = " ".join(words[position : position + size])
+            if candidate in _ALIASES:
+                if first is None:
+                    first = _ALIASES[candidate]
+                position += size
+                break
+        else:
+            # A word the table cannot explain. Whatever this heading names, it
+            # is not simply the section whose name it borrows.
+            return None
+    return first
 
 
 def heading_score(

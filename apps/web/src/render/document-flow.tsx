@@ -75,6 +75,17 @@ export interface DocumentFlowProps {
    * PDF must never say "Your name".
    */
   placeholders?: boolean;
+  /**
+   * Draw those hints at rest, rather than only when the pointer or the caret
+   * is in the part of the document they belong to.
+   *
+   * Distinct from `placeholders`, which says a field *has* a hint at all. A
+   * document built from a template is a form: every empty field in it is a
+   * prompt, and that is the whole of what it has to show. A document that came
+   * from somebody's own résumé is not -- a field empty there was empty in the
+   * source, so a word the app supplies reads as a word the résumé contains.
+   */
+  prompting?: boolean;
   editable?: boolean;
   /**
    * Render only this subtree: a section key, or a content nid.
@@ -253,6 +264,7 @@ function Bullet({
   node: TextNode;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  unverified?: ReadonlySet<string>;
   drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
@@ -273,6 +285,7 @@ function Bullets(props: {
   bullets: TextNode[];
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  unverified?: ReadonlySet<string>;
   drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
@@ -288,9 +301,23 @@ function Bullets(props: {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/**
+ * `sectionKey` is the agent's own name for this section -- the same string
+ * `read_document` takes as an argument. It is here so an overlay can find the
+ * region a read names; it is inert in the PDF, exactly like `data-no-break`
+ * and `data-page-block` beside it, and nothing in the document reads it.
+ */
+function Section({
+  title,
+  sectionKey,
+  children,
+}: {
+  title: string;
+  sectionKey?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="section" data-no-break>
+    <section className="section" data-no-break data-section={sectionKey}>
       <h2
         className="section__title"
         data-page-block={`title:${title}`}
@@ -327,12 +354,22 @@ function ExperienceBlock({ entry, ...rest }: { entry: ExperienceNode } & Documen
       {(rest.editable || rest.placeholders || entry.company || entry.location) && (
         <div className="entry__org">
           <Editable {...field('company', entry.company, 'Company')} />
-          {/* The separator is drawn whenever both sides are showing something,
-              which includes two hints on a résumé that has not been filled in
-              yet -- otherwise a new document reads "CompanyLocation". */}
-          {(entry.company || rest.placeholders) && (entry.location || rest.placeholders)
-            ? ', '
-            : ''}
+          {/* A comma joins two values. It is drawn as a hint, not as content,
+              the moment either side is only a hint.
+
+              As real text beside an empty location it read as an employer's
+              address: an imported résumé with no location showed
+              "L'Oréal Paris, Location" -- a word nobody typed, in a place a
+              word belongs, punctuated as though it were the résumé's own. The
+              hint on its own is muted and italic and reads as a prompt; the
+              comma was what made it read as a fact. */}
+          {(entry.company || rest.placeholders) &&
+            (entry.location || rest.placeholders) &&
+            (entry.company && entry.location ? (
+              ', '
+            ) : (
+              <span className="hint">, </span>
+            ))}
           <Editable {...field('location', entry.location, 'Location')} />
         </div>
       )}
@@ -374,6 +411,7 @@ function EducationBlock({
           value={entry.detail.text}
           changed={rest.changed}
           locked={rest.locked}
+          unverified={rest.unverified}
           drafts={rest.drafts}
           editable={rest.editable}
           onEditText={rest.onEditText}
@@ -436,12 +474,25 @@ function SkillsBlock({
       value={skill.text}
       changed={rest.changed}
       locked={rest.locked}
+      unverified={rest.unverified}
       drafts={rest.drafts}
       editable={rest.editable}
       onEditText={rest.onEditText}
       onFocusNode={rest.onFocusNode}
     />
   );
+
+  // The colon after the label, on the same rule as the comma on the employer
+  // line: punctuation is content, and content that joins two things is only
+  // drawn when there are two things. A real label gets a real colon; an empty
+  // one gets the colon as part of its hint, and only where hints are drawn at
+  // all -- never in an export, which would otherwise read ": Python".
+  const colon = (group: SkillGroup) =>
+    group.label ? (
+      ':'
+    ) : rest.editable || rest.placeholders ? (
+      <span className="hint">:</span>
+    ) : null;
 
   return (
     <>
@@ -454,7 +505,8 @@ function SkillsBlock({
             data-nid={group.nid}
             data-page-block={group.nid}
           >
-            <Editable className="skills__label" {...field('label', group.label, 'Group')} />:
+            <Editable className="skills__label" {...field('label', group.label, 'Group')} />
+            {colon(group)}
             <ul className="skills__list">
               {/* The `<li>` *is* the editable, so the item keeps carrying its
                   own `data-nid` rather than handing it to a span inside. */}
@@ -470,7 +522,8 @@ function SkillsBlock({
             data-nid={group.nid}
             data-page-block={group.nid}
           >
-            <Editable className="skills__label" {...field('label', group.label, 'Group')} />:{' '}
+            <Editable className="skills__label" {...field('label', group.label, 'Group')} />
+            {colon(group)}{' '}
             {/* Each skill is its own run rather than one joined string, so a
                 single one can be corrected without retyping the row. */}
             {group.items.map((skill, index) => (
@@ -488,7 +541,7 @@ function SkillsBlock({
 
 function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & DocumentFlowProps) {
   return (
-    <Section title={section.label || section.key}>
+    <Section title={section.label || section.key} sectionKey={section.key}>
       {section.text && (
         <Editable
           as="p"
@@ -497,6 +550,7 @@ function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & Docu
           value={section.text.text}
           changed={rest.changed}
           locked={rest.locked}
+          unverified={rest.unverified}
           drafts={rest.drafts}
           editable={rest.editable}
           onEditText={rest.onEditText}
@@ -534,6 +588,7 @@ function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & Docu
                 value={entry.text}
                 changed={rest.changed}
                 locked={rest.locked}
+                unverified={rest.unverified}
                 drafts={rest.drafts}
                 editable={rest.editable}
                 onEditText={rest.onEditText}
@@ -570,7 +625,7 @@ export function DocumentFlow(props: DocumentFlowProps) {
     switch (meta.key) {
       case 'summary':
         return doc.summary ? (
-          <Section key={meta.key} title={meta.label || 'Summary'}>
+          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Summary'}>
             <Editable
               as="p"
               className="summary"
@@ -590,7 +645,7 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'experience':
         return mine(doc.experience).length ? (
-          <Section key={meta.key} title={meta.label || 'Experience'}>
+          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Experience'}>
             {mine(doc.experience).map((entry) => (
               <ExperienceBlock key={entry.nid} entry={entry} {...props} />
             ))}
@@ -598,7 +653,7 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'education':
         return mine(doc.education).length ? (
-          <Section key={meta.key} title={meta.label || 'Education'}>
+          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Education'}>
             {mine(doc.education).map((entry) => (
               <EducationBlock key={entry.nid} entry={entry} {...props} />
             ))}
@@ -606,7 +661,7 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'projects':
         return mine(doc.projects).length ? (
-          <Section key={meta.key} title={meta.label || 'Projects'}>
+          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Projects'}>
             {mine(doc.projects).map((entry) => (
               <ProjectBlock key={entry.nid} entry={entry} {...props} />
             ))}
@@ -614,14 +669,29 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'skills':
         return doc.skills.length ? (
-          <Section key={meta.key} title={meta.label || 'Skills'}>
+          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Skills'}>
             <SkillsBlock groups={doc.skills} {...props} />
           </Section>
         ) : null;
-      default:
-        return null;
+      default: {
+        // A section we have no schema for, keyed by the résumé's own heading.
+        // It is resolved here rather than appended after the loop so that
+        // Publications sitting between Experience and Education stays there:
+        // the order came from the source document, and rendering custom
+        // sections last would reshuffle somebody's résumé on the way in.
+        const own = doc.custom.find((section) => section.key === meta.key);
+        return own ? <CustomBlock key={meta.key} section={own} {...props} /> : null;
+      }
     }
   };
+
+  // Which custom sections the section order already places, so the tail below
+  // adds only the ones it does not.
+  const placed = new Set(
+    orderedSections(doc)
+      .map((meta) => meta.key)
+      .filter((key) => doc.custom.some((section) => section.key === key))
+  );
 
   // Kept as field names, not values: each part of the contact line is its own
   // editable run, so a wrong digit in a phone number is a click and a keypress
@@ -631,8 +701,48 @@ export function DocumentFlow(props: DocumentFlowProps) {
   ).filter((key) => doc.personal[key]);
 
   const personal = fieldsOf('personal', props);
+
+  /**
+   * The headshot, on the templates that have one.
+   *
+   * Where it sits is the template's business -- the header is a single frame,
+   * so `.flow--portrait` and friends place it with ordinary CSS. What is
+   * decided here is only whether it is drawn at all.
+   *
+   * The empty state is a placeholder, and it is drawn on the same terms as the
+   * text hints beside it: only while the document is being edited or previewed
+   * on a card, never in the export. An empty grey square is a template showing
+   * you where a photo goes; in a PDF sent to an employer it is a hole.
+   */
+  const photoSlot =
+    doc.personal.photo || props.editable || props.placeholders ? (
+      // `data-field` so the pen can find it: the overlay resolves whatever
+      // the protocol named, and a `set_field` on `personal.photo` reports
+      // exactly that string. Same addressing every other personal field uses.
+      <div className="flow__photo" data-page-block="photo" data-field="personal.photo">
+        {doc.personal.photo ? (
+          <img
+            src={`/api/v1/assets/${doc.personal.photo}`}
+            alt=""
+            /* An id that names no asset -- one the model invented rather than
+               read off UPLOADS -- would otherwise draw the browser's broken
+               image glyph, and draw it into the PDF. Hiding the element leaves
+               the header as it would be with no photo at all. */
+            onError={(event) => {
+              event.currentTarget.style.display = 'none';
+            }}
+          />
+        ) : (
+          <span className="flow__photo-hint" aria-hidden="true">
+            Photo
+          </span>
+        )}
+      </div>
+    ) : null;
+
   const header = (
     <header className="flow__header" data-page-block="header">
+      {photoSlot}
       {(props.editable || props.placeholders || doc.personal.name) && (
         <Editable as="h1" className="flow__name" {...personal('name', doc.personal.name, 'Your name')} />
       )}
@@ -662,7 +772,17 @@ export function DocumentFlow(props: DocumentFlowProps) {
   // The template rides on the root element rather than on `body`, so a frame
   // on a canvas page resolves the same one the print route does and neither
   // has to be told about it.
-  const flow = `flow flow--${doc.template ?? 'plain'}`;
+  // `flow--prompting` says the empty fields in this document are a form to
+  // fill in, not gaps in somebody's résumé. It rides on the root for the same
+  // reason the template does: a frame on a canvas page and the print route
+  // both resolve it without being told.
+  const flow = [
+    'flow',
+    `flow--${doc.template ?? 'plain'}`,
+    props.prompting ? 'flow--prompting' : null,
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   if (root) {
     return (
@@ -676,9 +796,14 @@ export function DocumentFlow(props: DocumentFlowProps) {
     <div className={flow} data-print-root>
       {header}
       {orderedSections(doc).map(body)}
-      {doc.custom.map((section) => (
-        <CustomBlock key={section.nid} section={section} {...props} />
-      ))}
+      {/* Anything the order did not account for. A custom section made after
+          the document was imported has no `sectionMeta` row of its own, and
+          without this it would render nowhere at all. */}
+      {doc.custom
+        .filter((section) => !placed.has(section.key))
+        .map((section) => (
+          <CustomBlock key={section.nid} section={section} {...props} />
+        ))}
       {/* Free text belongs in the ATS export too. The project's own rule is
           "if it has words, it has a nid" -- which makes a hand-placed note
           content, not decoration, and silently dropping it would lose real
@@ -724,6 +849,7 @@ function Line({
   node,
   changed,
   locked,
+  unverified,
   drafts,
   editable,
   onEditText,
@@ -732,6 +858,7 @@ function Line({
   node: TextNode;
   changed?: ReadonlySet<string>;
   locked?: ReadonlySet<string>;
+  unverified?: ReadonlySet<string>;
   drafts?: ReadonlyMap<string, string>;
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
@@ -746,6 +873,7 @@ function Line({
       placeholder="Text"
       changed={changed}
       locked={locked}
+      unverified={unverified}
       drafts={drafts}
       editable={editable}
       onEditText={onEditText}
@@ -802,7 +930,7 @@ function renderRoot(
     }[section.key as 'experience' | 'education' | 'projects'];
 
     return (
-      <Section title={section.label || section.key}>
+      <Section title={section.label || section.key} sectionKey={section.key}>
         {ctx.mine(entries as { nid: string }[]).map((entry) => (
           <Block key={entry.nid} entry={entry as never} {...props} />
         ))}

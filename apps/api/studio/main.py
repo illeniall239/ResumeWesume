@@ -22,7 +22,15 @@ from studio.config import settings
 from studio.llm.factory import BackendFactory, health
 from studio.persistence.providers import ProviderStore
 from studio.persistence.repo import DocumentRepo
-from studio.routers import assets, documents, export, ingest, providers, turns
+from studio.routers import (
+    assets,
+    canvases,
+    documents,
+    export,
+    ingest,
+    providers,
+    turns,
+)
 from studio.streaming.channel import TurnRegistry
 
 logging.basicConfig(
@@ -137,6 +145,7 @@ async def observability(request: Request, call_next):
     return response
 
 
+app.include_router(canvases.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
 app.include_router(turns.router, prefix="/api/v1")

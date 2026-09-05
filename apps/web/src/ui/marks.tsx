@@ -28,17 +28,27 @@ const STROKE = 1.5;
 function Frame({
   size = 16,
   className,
+  /**
+   * Side of the artwork's own coordinate box.
+   *
+   * Sixteen for everything drawn here. A mark taken from outside is kept on
+   * the grid it was drawn on rather than rescaled by hand -- refitting a path
+   * with arcs in it to a different box by eye is how an icon ends up a
+   * half-pixel off its own centre. The stroke below is normalised for it, so
+   * a 24-grid mark still renders at exactly the weight of a 16-grid one.
+   */
+  grid = 16,
   children,
-}: MarkProps & { children: React.ReactNode }) {
+}: MarkProps & { grid?: number; children: React.ReactNode }) {
   return (
     <svg
       className={`mark${className ? ` ${className}` : ''}`}
       width={size}
       height={size}
-      viewBox="0 0 16 16"
+      viewBox={`0 0 ${grid} ${grid}`}
       fill="none"
       stroke="currentColor"
-      strokeWidth={(STROKE * 16) / size}
+      strokeWidth={(STROKE * grid) / size}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
@@ -208,6 +218,122 @@ export function Cloud(props: MarkProps) {
   return (
     <Frame {...props}>
       <path d="M4.4 11.6a1.8 1.8 0 0 1 .1-3.3 2 2 0 0 1 1.6-3 2.1 2.1 0 0 1 3.8-.5 1.9 1.9 0 0 1 2.8 2.2 1.9 1.9 0 0 1-.5 3.6 1.9 1.9 0 0 1-3 1.6 2 2 0 0 1-3.4-.4 1.8 1.8 0 0 1-1.4-.2Z" />
+    </Frame>
+  );
+}
+
+/* --- what you can put on a page -------------------------------------------
+   The insert strip's marks. Each is the thing itself rather than a metaphor
+   for it: a box is a box, a line is a line. The one exception is Text, where
+   the thing itself is a letter -- so it is the typesetter's T-bar, which is
+   what every drawing program uses and what nobody has to learn. */
+
+/** A text block. */
+export function TypeMark(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <path d="M3.2 4.4V3h9.6v1.4M8 3v10M6 13h4" />
+    </Frame>
+  );
+}
+
+/** A placed picture. */
+export function Picture(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.2" />
+      <circle cx="6" cy="6.4" r="1" />
+      <path d="M13.6 10.4 10.4 7.6 4 12.8" />
+    </Frame>
+  );
+}
+
+/** A headshot: the picture that belongs to the résumé rather than the page. */
+export function Portrait(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <circle cx="8" cy="5.8" r="2.6" />
+      <path d="M3 13.4a5 5 0 0 1 10 0" />
+    </Frame>
+  );
+}
+
+/** A rectangle. */
+export function Box(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <rect x="2.6" y="2.6" width="10.8" height="10.8" rx="1.2" />
+    </Frame>
+  );
+}
+
+/** An ellipse. */
+export function Ellipse(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <circle cx="8" cy="8" r="5.4" />
+    </Frame>
+  );
+}
+
+/** A rule. */
+export function Line(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <path d="M2.6 8h10.8" />
+    </Frame>
+  );
+}
+
+/** Another sheet. */
+export function PagePlus(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <path d="M3.6 2.4h5.2l3.6 3.6v7.6H3.6V2.4Z" />
+      <path d="M8.6 2.6v3.2h3.4" />
+      <path d="M6.2 10.4h3.6M8 8.6v3.6" />
+    </Frame>
+  );
+}
+
+/** Something clipped to the message. */
+export function Clip(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <path d="M12.7 7.6 7.9 12.4a3 3 0 0 1-4.3-4.3l5.2-5.2a2 2 0 0 1 2.9 2.9l-5.2 5.2a1 1 0 0 1-1.4-1.4l4.5-4.5" />
+    </Frame>
+  );
+}
+
+/** Looking for something. A glass, not a question mark. */
+export function Search(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <circle cx="7.2" cy="7.2" r="4.2" />
+      <path d="M10.3 10.3 13.5 13.5" />
+    </Frame>
+  );
+}
+
+/**
+ * The pen, where the agent is working.
+ *
+ * Supplied artwork, kept on its own 24 grid rather than refitted to the 16 the
+ * rest of this file is drawn on: the outline is a single path carrying arcs
+ * and bezier joins, and rescaling that by eye is how a mark ends up a half
+ * pixel off its own centre. `Frame` normalises the stroke for the grid, so it
+ * renders at exactly the weight of every other symbol here.
+ *
+ * Drawn nib-down-left, which the overlay depends on: the nib is what lands on
+ * the coordinate, and the barrel trails up and to the right, clear of the
+ * words underneath. The nib tip sits at (3, 21) of 24 -- `agent-cursor` and
+ * `board.css` carry those fractions, so a change to this path is a change
+ * there too.
+ */
+export function Pen(props: MarkProps) {
+  return (
+    <Frame {...props} grid={24}>
+      <path d="M15.4998 5.49994L18.3282 8.32837M3 20.9997L3.04745 20.6675C3.21536 19.4922 3.29932 18.9045 3.49029 18.3558C3.65975 17.8689 3.89124 17.4059 4.17906 16.9783C4.50341 16.4963 4.92319 16.0765 5.76274 15.237L17.4107 3.58896C18.1918 2.80791 19.4581 2.80791 20.2392 3.58896C21.0202 4.37001 21.0202 5.63634 20.2392 6.41739L8.37744 18.2791C7.61579 19.0408 7.23497 19.4216 6.8012 19.7244C6.41618 19.9932 6.00093 20.2159 5.56398 20.3879C5.07171 20.5817 4.54375 20.6882 3.48793 20.9012L3 20.9997Z" />
     </Frame>
   );
 }

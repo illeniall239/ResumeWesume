@@ -29,7 +29,7 @@ const DOC = {
     location: 'Austin, TX',
     website: null,
     linkedin: null,
-    github: null,
+    github: null, photo: null,
   },
   summary: { nid: 'sum_1', text: 'Backend engineer with eight years.' },
   experience: [],
