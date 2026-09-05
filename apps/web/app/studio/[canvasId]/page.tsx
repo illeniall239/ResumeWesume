@@ -19,6 +19,7 @@ import { Minus, Plus, Redo, Undo } from '@/ui/marks';
 import { Wordmark } from '@/ui/wordmark';
 import { templateLabel } from '@/render/templates';
 import { useChat } from '@/store/chat';
+import { createDocument } from '@/lib/api';
 import { canvasLabel, useCanvas } from '@/store/canvas';
 import { useStudio } from '@/store/studio';
 
@@ -65,6 +66,7 @@ export default function StudioPage({
   const flush = useStudio((state) => state.flush);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [issuing, setIssuing] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   const zoom = useView((state) => state.zoom);
   const setZoom = useView((state) => state.setZoom);
@@ -303,6 +305,10 @@ export default function StudioPage({
   const template = templateLabel(title, doc?.template);
   // And which résumé it is a version of, unless the board's own name says that.
   const canvas = canvasLabel(canvasTitle, title);
+  // On an empty canvas there is no version, so there is no second name to say
+  // -- and saying one anyway printed "Untitled / Untitled", which is the same
+  // word twice for two different things.
+  const hasBoard = Boolean(documentId);
 
   // Lines only the job posting vouches for, in their own words. Read from the
   // document rather than tracked separately, so they survive a reload and
@@ -334,6 +340,34 @@ export default function StudioPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [doc, documentId, setZoom]);
 
+  /**
+   * Put a résumé on this canvas.
+   *
+   * A skeleton rather than a truly empty document: a sheet with no content at
+   * all renders as nothing but a header, because every section draws only when
+   * it holds something -- so it would land on a blank page with nowhere to
+   * type.
+   */
+  async function addBoard() {
+    if (!canvasIdLoaded) return;
+    setAdding(true);
+    try {
+      const created = await createDocument({
+        title: 'Untitled',
+        template: 'plain',
+        starter: true,
+        canvas_id: canvasIdLoaded,
+      });
+      // Through the canvas store, so the plane and the selection move together
+      // -- the same path the assistant's own fork takes.
+      useStudio.getState().adoptBoard(created.id, created.title);
+    } catch (cause) {
+      useStudio.setState({ error: (cause as Error).message });
+    } finally {
+      setAdding(false);
+    }
+  }
+
   return (
     <main className="deck">
       {/* Above both panes, not over the drawing alone. This bar names the
@@ -356,13 +390,15 @@ export default function StudioPage({
                 one name, so on the sheet almost everybody has this stays out of
                 the way; it earns its place once the versions have names of
                 their own. */}
-            {canvas && (
-              <>
-                <span className="rail__canvas">{canvas}</span>
-                <span className="rail__slash" aria-hidden="true">
-                  /
-                </span>
-              </>
+            {(canvas || !hasBoard) && (
+              <span className={hasBoard ? 'rail__canvas' : 'rail__name'}>
+                {canvasTitle || 'Untitled'}
+              </span>
+            )}
+            {canvas && hasBoard && (
+              <span className="rail__slash" aria-hidden="true">
+                /
+              </span>
             )}
             {/* Which version this is, where you look first, and editable in
                 place. `plaintext-only` and blur-to-commit, exactly as every
@@ -374,6 +410,7 @@ export default function StudioPage({
                 answer differs from what was typed. Without that the DOM keeps
                 whatever is in it, and a name the server trimmed or refused
                 would stay on screen looking saved. */}
+            {hasBoard && (
             <span
               key={title}
               className="rail__name"
@@ -401,6 +438,7 @@ export default function StudioPage({
             >
               {title || 'Untitled'}
             </span>
+            )}
           {/* What the résumé is set in. A fact about the document, beside the
               other one, and stated rather than offered: a template is chosen
               when the sheet is created and no op changes it afterwards, so the
@@ -543,13 +581,22 @@ export default function StudioPage({
               />
             ) : (
               !loading && (
-                // A canvas with nothing on it. Real rather than broken: one
-                // exists before its first résumé arrives, and it arrives the
-                // way résumés already do.
-                <p className="plane__empty">
-                  Nothing on this canvas yet. Import a PDF or start from a
-                  template on the home screen.
-                </p>
+                // A canvas with nothing on it. Real rather than broken:
+                // somebody building a résumé from scratch starts here, and
+                // this is where the sheet is offered -- sending them back to
+                // the home screen to choose a template would be answering a
+                // question they have already answered by coming here.
+                <div className="plane__empty">
+                  <p>Nothing on this canvas yet.</p>
+                  <button
+                    type="button"
+                    className="ctl ctl--primary"
+                    onClick={() => void addBoard()}
+                    disabled={adding}
+                  >
+                    {adding ? 'Starting…' : 'Start a résumé'}
+                  </button>
+                </div>
               )
             )}
           </div>

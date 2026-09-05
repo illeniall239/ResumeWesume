@@ -581,13 +581,24 @@ textarea {
   outline-offset: 4px;
 }
 
+/* A canvas with nothing on it, offering the thing that fills it. Centred and
+   quiet: it is a starting point rather than a warning, and the one control on
+   it is the only thing to do here. */
 .plane__empty {
-  margin: 48px auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  margin: 64px auto;
   max-width: 40ch;
   color: var(--legend-faint);
   font-size: 13.5px;
   text-align: center;
   line-height: 1.6;
+}
+
+.plane__empty p {
+  margin: 0;
 }
 
 /* Which résumé, when that is not the same as which version of it. */
