@@ -30,25 +30,48 @@ patches, with nothing else in the document drifting.
 
 ## Running it
 
-The API and the web app are two processes and both must be up, so this takes
-two terminals.
-
 ```bash
-make install
-make api     # :8000
-make web     # :3000  (separate terminal)
+uv run scripts/dev.py
 ```
 
-`make` is not present on Windows unless you install it, so the targets are a
-convenience for other platforms. What they wrap, which is all you actually need:
+That is the whole thing. It installs whatever is missing the first time,
+starts both servers, waits until they actually answer, and opens the app.
+Ctrl+C stops both.
+
+You need [uv](https://docs.astral.sh/uv/) and [Node 20+](https://nodejs.org).
+If either is missing the script says which and where to get it, rather than
+failing somewhere further in.
+
+The API and the web app are two processes because PDF export runs *backwards*
+through the stack -- the API drives headless Chromium at the web app's own
+`/print/<id>` route -- so one process cannot do it. The script runs two and
+prefixes their logs so you can tell them apart.
+
+<details>
+<summary>Running the two by hand, or on ports of your own</summary>
+
+```bash
+uv run scripts/dev.py --api-port 8100 --web-port 3100
+uv run scripts/dev.py --reinstall   # after moving or renaming the checkout
+uv run scripts/dev.py --no-open
+```
+
+Or without the script at all. Both servers need to know where the other is,
+which is what the script sets for you:
 
 ```bash
 cd apps/api && uv sync --extra dev && uv run playwright install chromium
 cd apps/web && npm install
 
-cd apps/api && uv run uvicorn studio.main:app --reload --port 8000   # terminal 1
-cd apps/web && npm run dev                                           # terminal 2
+# terminal 1
+cd apps/api && WEB_BASE_URL=http://localhost:3000 uv run uvicorn studio.main:app --reload --port 8000
+# terminal 2
+cd apps/web && API_ORIGIN=http://127.0.0.1:8000 npm run dev
 ```
+
+`make dev`, `make install` and the rest do the same, if you have `make` --
+which Windows does not, unless you installed it.
+</details>
 
 **The assistant needs a model.** If you are signed in to Claude Code on this
 machine, it uses that — no key, no configuration, drawing on your Claude plan
@@ -64,14 +87,15 @@ this app's prompt from the front, which is where the instructions are.
 ollama create mistral-nemo:12b-16k -f models/mistral-nemo-12b-16k.Modelfile
 ```
 
-An API key for any of eight providers works too — **Settings**, on the home
-page. A local model will do the job; expect it to write fewer skills and lean
-harder on the same verbs than Claude does.
+An API key works too — OpenAI, Anthropic, Gemini, OpenRouter, Groq or
+DeepSeek, under **Settings** on the home page. So does any OpenAI-compatible
+server you point it at. A local model will do the job; expect it to write fewer
+skills and lean harder on the same verbs than Claude does.
 
 **If a `uv run` command dies with "uv trampoline failed to canonicalize script
 path", the virtualenv is stale** — its console-script `.exe`s embed an absolute
 path to the interpreter, so moving or renaming the checkout invalidates every
-one of them. `uv sync --extra dev --reinstall` rewrites them.
+one of them. `uv run scripts/dev.py --reinstall` rewrites them.
 
 Open <http://localhost:3000>. Either **Import a PDF** and check the parse before
 it lands, or pick a template — the card shows the résumé you get. Then edit a
@@ -109,12 +133,11 @@ a weak model to synthesise a path DSL; ids do neither, and let the engine reject
 ## Running the tests
 
 ```bash
-cd apps/api
-uv sync --extra dev
-uv run pytest
+cd apps/api && uv run pytest      # the engine, the agent loop, the API
+cd apps/web && npm run test       # the canvas, the sidebar, the stylesheet
 ```
 
-The suite is deterministic and makes no network or LLM calls. Two parts matter
+Both suites are deterministic and make no network or LLM calls. Two parts matter
 most: the adversarial cases in `tests/unit/test_apply.py`, each one a real
 failure shape from a small local model, and the Hypothesis properties in
 `tests/property/`, which assert that *no* op sequence can corrupt a document.
@@ -125,8 +148,12 @@ That property suite found a genuine bug on its first run.
 ```
 apps/api/studio/doc/    the document engine (schema, ids, ops, gates)
 apps/api/studio/ingest/ PDF import (layout, sections, extraction, merge)
+apps/api/studio/agent/  the turn loop, the tools, the guards
 apps/api/tests/         unit + property suites
-docs/adr/               decisions worth their own record
+apps/web/src/           the canvas, the sidebar, the register
+apps/web/tests/         what the browser does that jsdom cannot show
+models/                 Ollama recipes with a context size that fits a turn
+scripts/dev.py          the one command that runs the whole thing
 ```
 
 ## Verified against a real local model
@@ -200,3 +227,32 @@ prompt is advisory and a model under pressure will ignore it, so grounding is
 checked server-side against something the model cannot fabricate. Job
 description text is never treated as the user's message, so an instruction
 hidden inside a posting cannot authorise anything.
+
+## Where your résumés live
+
+One SQLite file, on your machine, at the place your OS keeps application data:
+
+| Windows | `%LOCALAPPDATA%\ResumeWesume\studio.db` |
+| macOS   | `~/Library/Application Support/ResumeWesume/studio.db` |
+| Linux   | `$XDG_DATA_HOME/resumewesume/studio.db`, or `~/.local/share/resumewesume/` |
+
+Set `DATA_DIR` to put it somewhere else. A database left over from an older
+version — `apps/api/data/studio.db` — is moved here on the next start.
+
+Nothing is stored anywhere else, so **that file is the only copy**. Copying it
+somewhere safe is a backup. Exporting a PDF is not: a PDF is a rendering, and
+nothing can turn one back into a document.
+
+The API can also write and read a portable copy — every résumé, every version,
+the posting each is aimed at, and the images, as one JSON file:
+
+```sh
+curl -OJ http://localhost:8000/api/v1/backup
+curl -F file=@resumewesume-backup-2026-09-05.json http://localhost:8000/api/v1/restore
+```
+
+Restoring only ever *adds*. Anything already on this machine is left exactly as
+it is, so running the same file twice does nothing the second time, and a
+restore after deleting one résumé by mistake brings back that one and steps
+over the rest. History is not included: a restored résumé starts with nothing
+to undo, and its words, layout, images and target posting are whole.
