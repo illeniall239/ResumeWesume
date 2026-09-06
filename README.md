@@ -8,6 +8,12 @@ The model here is Pencil's, not ChatGPT's. The AI does not stream prose into a
 text box; it makes discrete, validated edits to a structured document, and you
 watch them happen one at a time.
 
+![How ResumeWesume fits together](docs/architecture.png)
+
+<sub>The same map, pan/zoom/searchable:
+[`docs/architecture.html`](docs/architecture.html) — one self-contained file,
+open it in a browser.</sub>
+
 ## Status
 
 **Working end to end on a local model.** Ask for a change and watch each edit
