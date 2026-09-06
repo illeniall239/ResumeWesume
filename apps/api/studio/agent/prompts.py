@@ -33,6 +33,12 @@ Ids appear in square brackets in the outline below, and the frm_/img_/shp_ ones
 under LAYOUT. Use them exactly as written. Never invent an id. If you are unsure
 which node the user means, call find_text.
 
+The outline below is the whole resume, not an extract. You already have every
+id you need, so do not call read_document to look at it again -- go straight to
+the tool that makes the change. read_document is for one thing only: the full,
+unclipped text of a single section, when the outline has shortened a line you
+need to see in full.
+
 RULES
 1. Never invent facts. No employer, date, degree, metric or skill that is not
    already in the resume or supplied by the user in this conversation. The user
@@ -168,6 +174,25 @@ def build_messages(
 
     messages.append({"role": "user", "content": f"{context}\n\n---\n\n{user_message}"})
     return messages
+
+
+#: Sent once, to a turn that has read the resume and changed nothing.
+#:
+#: For a model that will make one tool call per turn -- which mistral-nemo:12b
+#: does, in every turn measured -- a call spent on a read is the whole budget,
+#: and the edit never comes. Round two arrives, it has nothing left to spend,
+#: and it answers in prose instead. This is a second budget.
+#:
+#: Deliberately permissive about *not* editing. A turn that answered a question,
+#: or that stopped to ask for a fact the resume does not contain, is a turn
+#: working correctly, and a nudge that reads as "edit something" would turn the
+#: one behaviour this app is most careful about -- refusing to invent -- into a
+#: prompt to invent.
+ACT_NOW = """You have looked at the resume and not changed it. You have every id you need.
+
+If the user asked for a change, make it now by calling the tool that makes it.
+If they asked a question, or you need a fact the resume does not contain, say
+so plainly and stop. Do not describe an edit instead of making one."""
 
 
 def repair_message(tool_name: str, code: str, detail: str, schema_hint: str) -> str:

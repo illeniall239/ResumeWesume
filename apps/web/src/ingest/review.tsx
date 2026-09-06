@@ -311,7 +311,7 @@ export default function ImportReview() {
           rule between the rail and the board, continued upward. */}
       <div className="rail rail--top">
         <div className="rail__brand">
-          <Wordmark size={12} />
+          <Wordmark size={15} />
         </div>
 
         <div className="rail__actions">

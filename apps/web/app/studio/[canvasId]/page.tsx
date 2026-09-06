@@ -454,7 +454,7 @@ export default function StudioPage({
               that are actually on screen, so saying the visible name reaches
               it by voice, and then says where it goes. */}
           <a className="rail__home" href="/" aria-label="resumewesume, your résumés">
-            <Wordmark size={12} />
+            <Wordmark size={15} />
           </a>
 
           {/* The conversation's own control, over the conversation's own

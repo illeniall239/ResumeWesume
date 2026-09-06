@@ -48,7 +48,7 @@ from studio.agent.assembler import (
 from studio.agent.budget import BudgetExceeded, TurnBudget
 from studio.agent.context import find, full_section, outline, roster, uploads
 from studio.agent.grounding import Grounder
-from studio.agent.prompts import build_messages, repair_message
+from studio.agent.prompts import ACT_NOW, build_messages, repair_message
 from studio.agent.prose import ProseStream
 from studio.agent.salvage import (
     closest_tool,
@@ -166,6 +166,9 @@ class TurnRunner:
         self._checkpoints: dict[str, str] = {}
         #: What the guards compare against, for the same reason.
         self._base_doc: StudioDoc | None = None
+        #: Every tool this turn has run, in order, by the name that actually
+        #: executed -- so a call salvage corrected is recorded as what it became.
+        self._called: list[str] = []
 
     def begin(
         self, *, document_id: str, base_doc: StudioDoc, checkpoint_id: str
@@ -192,6 +195,7 @@ class TurnRunner:
         self._origin = document_id
         self._base_doc = base_doc
         self._checkpoints = {document_id: checkpoint_id}
+        self._called = []
 
     async def run(self, request: TurnRequest, channel: TurnChannel) -> TurnResult:
         started = time.monotonic()
@@ -297,6 +301,9 @@ class TurnRunner:
         )
         worklist: Worklist | None = None
         nudged_key: str | None = None
+        #: Whether the turn has already been told to act. Once per turn: the
+        #: second identical nudge to a model that has answered gets silence.
+        asked_to_act = False
         # What the assistant says, with a blank line between the thought it had
         # before it started working and the one it had after.
         prose = ProseStream(channel.emit)
@@ -469,12 +476,41 @@ class TurnRunner:
 
                 outstanding = worklist.remaining() if worklist else []
 
+                # A turn that has only looked. Every tool it ran was read-only
+                # and nothing was applied, so whatever was asked for, the
+                # document has not moved.
+                #
+                # For a model that makes one tool call per turn -- which
+                # mistral-nemo:12b does, in every turn measured -- a call spent
+                # on a read is the entire budget and the edit never comes. It
+                # answers round two in prose, and measured across twenty-four
+                # runs the split was exact: every turn that opened with a read
+                # applied nothing, every turn that went straight to a tool
+                # edited. So the turn is given one more round, once, with the
+                # document already in front of it.
+                #
+                # Once, and never after an edit has landed -- a model that
+                # has done the work and stopped is finished, and asking again
+                # is how a tailoring pass ends up doing the same edit twice.
+                # `only_looked` carries that second rule on its own: a turn
+                # whose every call was read-only has applied nothing by
+                # definition, so there is no separate check to keep in step.
+                only_looked = bool(self._called) and all(
+                    tool in _READ_ONLY for tool in self._called
+                )
+                nudge_to_act = (
+                    not executed_any
+                    and not outstanding
+                    and only_looked
+                    and not asked_to_act
+                )
+
                 # A turn ends when the model stops calling tools *and* there is
                 # nothing left on the list. Without that second half a model
                 # that announces "here is your tailored resume" after one edit
                 # ends the turn on its own say-so, which is the whole failure
                 # this list exists to correct.
-                if not executed_any and not outstanding:
+                if not executed_any and not outstanding and not nudge_to_act:
                     break
 
                 messages.append(assembler.assistant_message())
@@ -487,6 +523,9 @@ class TurnRunner:
                     )
                 else:
                     nudged_key = None
+                    if nudge_to_act:
+                        asked_to_act = True
+                        messages.append({"role": "user", "content": ACT_NOW})
 
             # Said once, on a turn that ran to completion. The user is judging a
             # finished document with one undo behind it, rather than a
@@ -652,6 +691,7 @@ class TurnRunner:
                 call, channel, "unknown_tool", f"There is no tool called {call.name!r}."
             )
 
+        self._called.append(name)
         channel.emit(ev.ToolStart(call_id=call.call_id, name=name, tier=spec.tier))
 
         raw_arguments = call.arguments
