@@ -5030,9 +5030,7 @@
         <rect width="100%" height="100%" fill="url(#grid)" />
 
         <!-- Boundaries (behind everything) -->
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="region" data-composition-frame-id="0" data-composition-frame-label="Your machine — nothing leaves it unless you pick a cloud provider" x="10" y="50" width="1110" height="504" rx="12" class="c-region" stroke-width="1"/>
-
-        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="1" data-composition-frame-label="The safety boundary is the engine, not the prompt" x="450" y="440" width="670" height="114" rx="8" class="c-security-group" stroke-width="1"/>
+        <rect data-graph-role="structural-frame" data-composition-frame-kind="security-group" data-composition-frame-id="0" data-composition-frame-label="The safety boundary is the engine, not the prompt" x="450" y="440" width="670" height="114" rx="8" class="c-security-group" stroke-width="1"/>
 
         <!-- Connection paths (before components for correct z-order) -->
         <path data-edge-from="browser" data-edge-to="web" data-edge-label="HTTPS" data-edge-key="0" data-edge-id="open" data-composition-points="180,300;250,300" d="M 180 300 L 250 300" class="a-emphasis" stroke-width="1.8" marker-end="url(#arrowhead-emphasis)"/>
@@ -5047,8 +5045,8 @@
         <path data-edge-from="chromium" data-edge-to="web" data-edge-label="GET /print/&lt;id&gt;" data-edge-key="9" data-edge-id="print-back" data-composition-points="330,144;330,268" d="M 330 144 L 330 268" class="a-dashed" stroke-width="1.5" marker-end="url(#arrowhead-dashed)"/>
 
         <!-- Components -->
-        <g id="node-browser" data-node-id="browser" data-node-label="Browser" tabindex="0" role="button" aria-label="Focus Browser, one person, one machine, Your machine — nothing leaves it unless you pick a cloud provider" aria-pressed="false" data-node-kind="external" data-node-sublabel="one person, one machine" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider">
-          <title>Browser · one person, one machine · Your machine — nothing leaves it unless you pick a cloud provider</title>
+        <g id="node-browser" data-node-id="browser" data-node-label="Browser" tabindex="0" role="button" aria-label="Focus Browser, one person, one machine, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="one person, one machine" data-node-context="Architecture component">
+          <title>Browser · one person, one machine · Architecture component</title>
           <rect x="40" y="268" width="140" height="64" rx="6" class="c-mask"/>
           <rect x="40" y="268" width="140" height="64" rx="6" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(46 274) scale(0.6875)">
@@ -5059,8 +5057,8 @@
         <text data-detail="context" x="110" y="314" class="t-muted" font-size="9" text-anchor="middle">one person, one machine</text>
         </g>
 
-        <g id="node-web" data-node-id="web" data-node-label="Next.js app" tabindex="0" role="button" aria-label="Focus Next.js app, register · studio · /print, Your machine — nothing leaves it unless you pick a cloud provider" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="register · studio · /print" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider">
-          <title>Next.js app · register · studio · /print · Your machine — nothing leaves it unless you pick a cloud provider</title>
+        <g id="node-web" data-node-id="web" data-node-label="Next.js app" tabindex="0" role="button" aria-label="Focus Next.js app, register · studio · /print, Architecture component" aria-pressed="false" data-node-kind="frontend" data-node-sublabel="register · studio · /print" data-node-context="Architecture component">
+          <title>Next.js app · register · studio · /print · Architecture component</title>
           <rect x="250" y="268" width="160" height="64" rx="6" class="c-mask"/>
           <rect x="250" y="268" width="160" height="64" rx="6" class="c-frontend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="frontend" class="semantic-sigil s-frontend" transform="translate(256 274) scale(0.6875)">
@@ -5073,8 +5071,8 @@
         <text data-detail="context" x="330" y="314" class="t-muted" font-size="9" text-anchor="middle">register · studio · /print</text>
         </g>
 
-        <g id="node-chromium" data-node-id="chromium" data-node-label="Headless Chromium" tabindex="0" role="button" aria-label="Focus Headless Chromium, renders the PDF, Your machine — nothing leaves it unless you pick a cloud provider" aria-pressed="false" data-node-kind="backend" data-node-sublabel="renders the PDF" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider">
-          <title>Headless Chromium · renders the PDF · Your machine — nothing leaves it unless you pick a cloud provider</title>
+        <g id="node-chromium" data-node-id="chromium" data-node-label="Headless Chromium" tabindex="0" role="button" aria-label="Focus Headless Chromium, renders the PDF, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="renders the PDF" data-node-context="Architecture component">
+          <title>Headless Chromium · renders the PDF · Architecture component</title>
           <rect x="250" y="80" width="160" height="64" rx="6" class="c-mask"/>
           <rect x="250" y="80" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(256 86) scale(0.6875)">
@@ -5084,8 +5082,8 @@
         <text data-detail="context" x="330" y="126" class="t-muted" font-size="9" text-anchor="middle">renders the PDF</text>
         </g>
 
-        <g id="node-api" data-node-id="api" data-node-label="FastAPI" tabindex="0" role="button" aria-label="Focus FastAPI, documents · turns · export, Your machine — nothing leaves it unless you pick a cloud provider" aria-pressed="false" data-node-kind="backend" data-node-sublabel="documents · turns · export" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider">
-          <title>FastAPI · documents · turns · export · Your machine — nothing leaves it unless you pick a cloud provider</title>
+        <g id="node-api" data-node-id="api" data-node-label="FastAPI" tabindex="0" role="button" aria-label="Focus FastAPI, documents · turns · export, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="documents · turns · export" data-node-context="Architecture component">
+          <title>FastAPI · documents · turns · export · Architecture component</title>
           <rect x="480" y="268" width="160" height="64" rx="6" class="c-mask"/>
           <rect x="480" y="268" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(486 274) scale(0.6875)">
@@ -5095,8 +5093,8 @@
         <text data-detail="context" x="560" y="314" class="t-muted" font-size="9" text-anchor="middle">documents · turns · export</text>
         </g>
 
-        <g id="node-turnloop" data-node-id="turnloop" data-node-label="Turn loop" tabindex="0" role="button" aria-label="Focus Turn loop, streams, calls, retries, Your machine — nothing leaves it unless you pick a cloud provider" aria-pressed="false" data-node-kind="backend" data-node-sublabel="streams, calls, retries" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider">
-          <title>Turn loop · streams, calls, retries · Your machine — nothing leaves it unless you pick a cloud provider</title>
+        <g id="node-turnloop" data-node-id="turnloop" data-node-label="Turn loop" tabindex="0" role="button" aria-label="Focus Turn loop, streams, calls, retries, Architecture component" aria-pressed="false" data-node-kind="backend" data-node-sublabel="streams, calls, retries" data-node-context="Architecture component">
+          <title>Turn loop · streams, calls, retries · Architecture component</title>
           <rect x="710" y="268" width="160" height="64" rx="6" class="c-mask"/>
           <rect x="710" y="268" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(716 274) scale(0.6875)">
@@ -5106,8 +5104,8 @@
         <text data-detail="context" x="790" y="314" class="t-muted" font-size="9" text-anchor="middle">streams, calls, retries</text>
         </g>
 
-        <g id="node-ollama" data-node-id="ollama" data-node-label="Ollama" tabindex="0" role="button" aria-label="Focus Ollama, the local provider, Your machine — nothing leaves it unless you pick a cloud provider" aria-pressed="false" data-node-kind="external" data-node-sublabel="the local provider" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider">
-          <title>Ollama · the local provider · Your machine — nothing leaves it unless you pick a cloud provider</title>
+        <g id="node-ollama" data-node-id="ollama" data-node-label="Ollama" tabindex="0" role="button" aria-label="Focus Ollama, the local provider, Architecture component" aria-pressed="false" data-node-kind="external" data-node-sublabel="the local provider" data-node-context="Architecture component">
+          <title>Ollama · the local provider · Architecture component</title>
           <rect x="940" y="268" width="150" height="64" rx="6" class="c-mask"/>
           <rect x="940" y="268" width="150" height="64" rx="6" class="c-external" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="external" class="semantic-sigil s-external" transform="translate(946 274) scale(0.6875)">
@@ -5129,8 +5127,8 @@
         <text data-detail="context" x="1260" y="176" class="t-muted" font-size="9" text-anchor="middle">Claude plan, or an API key</text>
         </g>
 
-        <g id="node-tools" data-node-id="tools" data-node-label="Tool registry" tabindex="0" role="button" aria-label="Focus Tool registry, 32 typed tools, tiered, Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt" aria-pressed="false" data-node-kind="security" data-node-sublabel="32 typed tools, tiered" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt">
-          <title>Tool registry · 32 typed tools, tiered · Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt</title>
+        <g id="node-tools" data-node-id="tools" data-node-label="Tool registry" tabindex="0" role="button" aria-label="Focus Tool registry, 32 typed tools, tiered, The safety boundary is the engine, not the prompt" aria-pressed="false" data-node-kind="security" data-node-sublabel="32 typed tools, tiered" data-node-context="The safety boundary is the engine, not the prompt">
+          <title>Tool registry · 32 typed tools, tiered · The safety boundary is the engine, not the prompt</title>
           <rect x="480" y="470" width="160" height="64" rx="6" class="c-mask"/>
           <rect x="480" y="470" width="160" height="64" rx="6" class="c-security" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="security" class="semantic-sigil s-security" transform="translate(486 476) scale(0.6875)">
@@ -5141,8 +5139,8 @@
         <text data-detail="context" x="560" y="516" class="t-muted" font-size="9" text-anchor="middle">32 typed tools, tiered</text>
         </g>
 
-        <g id="node-ops" data-node-id="ops" data-node-label="Document engine" tabindex="0" role="button" aria-label="Focus Document engine, 10 primitive ops, gated, Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt" aria-pressed="false" data-node-kind="backend" data-node-sublabel="10 primitive ops, gated" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt">
-          <title>Document engine · 10 primitive ops, gated · Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt</title>
+        <g id="node-ops" data-node-id="ops" data-node-label="Document engine" tabindex="0" role="button" aria-label="Focus Document engine, 10 primitive ops, gated, The safety boundary is the engine, not the prompt" aria-pressed="false" data-node-kind="backend" data-node-sublabel="10 primitive ops, gated" data-node-context="The safety boundary is the engine, not the prompt">
+          <title>Document engine · 10 primitive ops, gated · The safety boundary is the engine, not the prompt</title>
           <rect x="710" y="470" width="160" height="64" rx="6" class="c-mask"/>
           <rect x="710" y="470" width="160" height="64" rx="6" class="c-backend" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="backend" class="semantic-sigil s-backend" transform="translate(716 476) scale(0.6875)">
@@ -5152,8 +5150,8 @@
         <text data-detail="context" x="790" y="516" class="t-muted" font-size="9" text-anchor="middle">10 primitive ops, gated</text>
         </g>
 
-        <g id="node-store" data-node-id="store" data-node-label="SQLite" tabindex="0" role="button" aria-label="Focus SQLite, doc · op log · checkpoints, Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt" aria-pressed="false" data-node-kind="database" data-node-sublabel="doc · op log · checkpoints" data-node-context="Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt">
-          <title>SQLite · doc · op log · checkpoints · Your machine — nothing leaves it unless you pick a cloud provider › The safety boundary is the engine, not the prompt</title>
+        <g id="node-store" data-node-id="store" data-node-label="SQLite" tabindex="0" role="button" aria-label="Focus SQLite, doc · op log · checkpoints, The safety boundary is the engine, not the prompt" aria-pressed="false" data-node-kind="database" data-node-sublabel="doc · op log · checkpoints" data-node-context="The safety boundary is the engine, not the prompt">
+          <title>SQLite · doc · op log · checkpoints · The safety boundary is the engine, not the prompt</title>
           <rect x="940" y="470" width="150" height="64" rx="6" class="c-mask"/>
           <rect x="940" y="470" width="150" height="64" rx="6" class="c-database" stroke-width="1.5"/>
           <g aria-hidden="true" data-semantic-sigil="database" class="semantic-sigil s-database" transform="translate(946 476) scale(0.6875)">
@@ -5207,12 +5205,7 @@
         </g>
 
         <!-- Boundary labels (foreground masks keep routes out of titles) -->
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="region" data-composition-frame-label="Your machine — nothing leaves it unless you pick a cloud provider">
-          <rect data-graph-role="structural-frame-label-mask" x="14" y="60" width="361" height="16" rx="3" class="c-mask"/>
-          <text data-boundary-label="" x="18" y="73" class="t-cloud" font-size="9" font-weight="600">Your machine — nothing leaves it unless you pick a cloud provider</text>
-        </g>
-
-        <g data-graph-role="structural-frame-label" data-composition-frame-id="1" data-composition-frame-kind="security-group" data-composition-frame-label="The safety boundary is the engine, not the prompt">
+        <g data-graph-role="structural-frame-label" data-composition-frame-id="0" data-composition-frame-kind="security-group" data-composition-frame-label="The safety boundary is the engine, not the prompt">
           <rect data-graph-role="structural-frame-label-mask" x="454" y="450" width="274.59999999999997" height="16" rx="3" class="c-mask"/>
           <text data-boundary-label="" x="458" y="463" class="t-security" font-size="9" font-weight="600">The safety boundary is the engine, not the prompt</text>
         </g>
