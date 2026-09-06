@@ -1,27 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="resumewesume">
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="resumewesume">
   <!--
-    The sticker, compressed to one letter.
+    A coral dot, and nothing else.
 
-    RESUME and WESUME differ only in their first character, so that letter is
-    the whole name reduced to the part that changes. The wordmark reverses
-    `wesume` out of a coral capsule; this is that capsule with the one letter
-    left in it, which is why the w wears the colour and not the R.
+    It was the wordmark's capsule with a stroked `w` left in it, since RESUME
+    and WESUME differ only in that letter. Sound as an idea, wrong at the size
+    a favicon is seen: a 7 unit stroke on a 64 unit box is a hairline once it
+    is quartered, and a three vertex zigzag inside a rounded square is more
+    shapes than 16 pixels can hold. A filled circle has one edge, and the
+    colour does the identifying, so nothing has to survive being four pixels
+    across.
 
-    Drawn rather than set in a webfont: a favicon is rendered before any font
-    has loaded and in contexts that have none, so a glyph would fall back to
-    whatever the system happens to hold. A stroked polyline is the letterform
-    itself and looks the same everywhere -- and at 16px, which is the size this
-    is actually seen at, a monoline w is more legible than a filled one.
+    NOTE, and it is the reason this file rendered as a broken image for its
+    whole life: an XML comment may not contain a double hyphen. The comment
+    that used to be here wrote its dashes the way every other comment in this
+    codebase does, which made the document unparseable, so the browser threw
+    away the whole icon. Punctuate with commas here. Nowhere else in the tree
+    has this constraint, which is exactly why it went unnoticed.
 
-    Radius is 18% of the side, as the wordmark's capsule reads at this aspect.
+    `width` and `height` alongside the viewBox for the same reason of not
+    trusting a default: an intrinsic size is what a favicon is rasterised from.
   -->
-  <rect width="64" height="64" rx="11.5" fill="#FF5C39"/>
-  <path
-    fill="none"
-    stroke="#FFFFFF"
-    stroke-width="7"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    d="M14 21 L22 44 L32 27 L42 44 L50 21"
-  />
+  <circle cx="32" cy="32" r="32" fill="#FF5C39"/>
 </svg>

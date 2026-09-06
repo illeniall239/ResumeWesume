@@ -129,18 +129,46 @@ describe('the mark', () => {
 describe('the favicon', () => {
   const icon = readFileSync(resolve(process.cwd(), 'app/icon.svg'), 'utf8');
 
-  it('is the same sticker, compressed to the letter that changes', () => {
-    // RESUME and WESUME differ only in their first character, so that letter
-    // is the whole name reduced to the part that changes -- and it is the w,
-    // because the w is the half wearing the colour.
+  it('carries the coral the mark carries, which is the whole identification', () => {
+    // The tab and the page have to agree, and at this size the colour is the
+    // only thing that can carry that -- so it is the same literal as the
+    // capsule in the wordmark, not a near neighbour.
     expect(icon).toContain('#FF5C39');
-    expect(icon).not.toContain('#12110F');
+    expect(css).toContain('--brand: #ff5c39');
   });
 
-  it('draws the letter rather than setting it', () => {
+  it('is one shape, because 16px cannot hold two', () => {
+    // It was the capsule with a stroked `w` in it. At the size a favicon is
+    // actually seen the stroke is a hairline and the three vertices land on
+    // top of each other, so it resolved as a smear and read as broken. One
+    // filled circle has one edge and survives any scale.
+    const shapes = [...icon.matchAll(/<(circle|rect|path|polygon|ellipse|line)[\s/>]/g)];
+    expect(shapes).toHaveLength(1);
+    expect(shapes[0][1]).toBe('circle');
+  });
+
+  it('sets no type, at any size', () => {
     // A favicon renders before any font has loaded and in contexts that have
     // none, so a glyph would fall back to whatever the system happens to hold.
     expect(icon).not.toMatch(/font-family|<text/);
-    expect(icon).toMatch(/<path/);
+  });
+
+  it('has no double hyphen inside its comment', () => {
+    // Not style. An XML comment may not contain `--`, and the comment that
+    // used to be here punctuated its asides the way every other comment in
+    // this codebase does -- exactly like this sentence. That made the document
+    // unparseable, so the browser discarded the icon and the tab showed a
+    // broken image, for the whole life of the file. This is the only place in
+    // the tree with that constraint, which is why nothing caught it.
+    const body = icon.slice(icon.indexOf('<!--') + 4, icon.indexOf('-->'));
+    expect(body).not.toContain('--');
+  });
+
+  it('declares an intrinsic size', () => {
+    // A favicon is rasterised to 16 or 32 px from whatever size the document
+    // claims. A viewBox alone gives a ratio and no size, which leaves that to
+    // a default nobody chose.
+    expect(icon).toMatch(/width="64"/);
+    expect(icon).toMatch(/height="64"/);
   });
 });
