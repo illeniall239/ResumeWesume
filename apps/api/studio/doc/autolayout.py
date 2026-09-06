@@ -142,7 +142,11 @@ def _columns(arrangement: Layout, page: PageSpec) -> tuple[float, float, float, 
 
 
 def layout(
-    doc: StudioDoc, *, page: PageSpec = A4, arrangement: Layout | None = None
+    doc: StudioDoc,
+    *,
+    page: PageSpec = A4,
+    arrangement: Layout | None = None,
+    heights: dict[str, float] | None = None,
 ) -> list[PageNode]:
     """One page, one frame per section with something in it.
 
@@ -160,8 +164,14 @@ def layout(
 
     The heights are advisory here as everywhere else; the client measures and
     corrects them, and it keeps each column on its own cursor while it does.
+
+    ``heights`` overrides the estimates, keyed by ref. It is what makes a
+    re-stack possible: the browser has already measured this document and those
+    numbers are the accurate ones, so re-deriving the order must not throw them
+    away and send every frame back to an estimate.
     """
     arrangement = arrangement or doc.layout
+    measured = heights or {}
     rail_x, rail_w, main_x, main_w = _columns(arrangement, page)
     stacked = arrangement == "stack"
 
@@ -171,6 +181,7 @@ def layout(
     cursors = {"rail": page.margin, "main": page.margin}
 
     def place(ref: str, height: float, column: str = "main") -> None:
+        height = measured.get(ref, height)
         if stacked:
             column, x, w = "main", page.margin, page.content_width
         elif column == "rail":
@@ -190,6 +201,7 @@ def layout(
 
     def span(ref: str, height: float) -> None:
         """Full width, with both columns resuming below it."""
+        height = measured.get(ref, height)
         below = max(cursors.values())
         cursors["rail"] = cursors["main"] = below
         elements.append(
@@ -242,3 +254,51 @@ def layout(
         place("blocks", _ESTIMATED_SECTION_HEIGHT)
 
     return [PageNode(nid=derived_id(NodeKind.PAGE, "1"), size="A4", elements=list(elements))]
+
+
+def restack(doc: StudioDoc, *, page: PageSpec = A4) -> None:
+    """Put the frames back in the document's own order, in place.
+
+    The stack of frames is what a reader sees -- on screen and in the exported
+    PDF, both of which draw by ``rect.y``. Reordering entries rewrote the list
+    and moved nothing, so the document said one order and the page showed
+    another; on the tailoring path the assistant would report the new order,
+    the stored document would agree, and the PDF would keep the old one.
+
+    This re-derives the positions and nothing else. Heights come from the
+    frames that are already there, because the browser measured them and the
+    server cannot: re-running the estimating layout would be correct in order
+    and wrong in geometry, and the page would jump on every move.
+
+    Anything without a ``ref`` -- a box or a line somebody placed by hand -- is
+    left exactly where it was. It is not part of the flow and never was.
+    """
+    existing = {
+        element.ref: element
+        for node in doc.pages
+        for element in node.elements
+        if getattr(element, "ref", None)
+    }
+    if not existing:
+        return
+
+    fresh = layout(
+        doc,
+        page=page,
+        heights={ref: element.rect.h for ref, element in existing.items()},
+    )
+    placed = {
+        element.ref: element.rect
+        for node in fresh
+        for element in node.elements
+        if getattr(element, "ref", None)
+    }
+    for ref, element in existing.items():
+        rect = placed.get(ref)
+        if rect is None:
+            # A frame the walk no longer reaches: its node is gone, and gate 7
+            # is what decides whether that is allowed. Not this function's call.
+            continue
+        element.rect.x = rect.x
+        element.rect.y = rect.y
+        element.rect.w = rect.w

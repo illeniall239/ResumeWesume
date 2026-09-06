@@ -19,6 +19,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from studio.doc.autolayout import restack
 from studio.doc.index import NodeIndex
 from studio.doc.nodes import NodeKind, kind_of
 from studio.doc.ops import (
@@ -343,6 +344,12 @@ def _resolve_container(
     return None, None
 
 
+#: The ops that change where things sit in the flow, and so where their frames
+#: belong. `set_section` is here for its `order` field, which moves a whole
+#: section past another one.
+_REORDERING = (Reorder, MoveNode, SetSection)
+
+
 def apply_ops(
     doc: StudioDoc,
     ops: list[DocOp],
@@ -370,6 +377,17 @@ def apply_ops(
             )
         else:
             rejected.append(reject)
+
+    # An op that changed the order changed where things sit on the page, and
+    # nothing else re-derives that. Frames are drawn and printed by `rect.y`,
+    # so without this the list says one order and the sheet shows another --
+    # which on the tailoring path meant the PDF sent to an employer kept the
+    # order the assistant had just reported changing.
+    #
+    # Only when the order actually moved. A re-stack on every batch would
+    # quietly straighten geometry somebody had dragged by hand.
+    if any(isinstance(op, _REORDERING) for op in ops):
+        restack(working)
 
     # Gate 6: the batch as a whole must still be a valid document. A single op
     # can be individually legal and still leave the document inconsistent.

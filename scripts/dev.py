@@ -312,8 +312,20 @@ def main() -> int:
     # reported themselves ready, and every request through the app answered
     # 500. Ports that are wrong together are silent; ports that are wrong
     # separately fail like this.
+    # Two names, because there are two callers. `API_ORIGIN` is read by
+    # `next.config.ts` for the browser's /api/* rewrite; `INTERNAL_API_ORIGIN`
+    # is read by `lib/api.ts` when a *server* component fetches, and it
+    # defaults to port 8000 on its own.
+    #
+    # Setting only the first is silent and specific: everything a person
+    # clicks keeps working, because that all goes through the browser. Only
+    # /print is a server component, so the single thing that breaks is PDF
+    # export -- and it breaks by fetching from a port with no such document,
+    # which the print page catches and renders as an empty page. Chromium then
+    # exports that: a blank PDF, no error anywhere. Exactly the failure this
+    # file's other port comment was written about, one layer down.
     api_env = {**os.environ, "WEB_BASE_URL": web_url}
-    web_env = {**os.environ, "API_ORIGIN": api_url}
+    web_env = {**os.environ, "API_ORIGIN": api_url, "INTERNAL_API_ORIGIN": api_url}
 
     say("Starting the API and the web app. Ctrl+C stops both.")
     servers = [
