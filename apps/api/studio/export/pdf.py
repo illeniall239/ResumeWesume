@@ -92,12 +92,18 @@ async def render_pdf(
     margins_mm: dict[str, float] | None = None,
 ) -> bytes:
     """Render ``url`` to PDF bytes."""
+    # Zero by default, because the page being rendered already carries its own
+    # margin: a canvas page is a full 210x297mm sheet whose frames sit 10mm in,
+    # and a flowing page has that 10mm as padding. Adding another 10mm here put
+    # a 210mm box in a 190mm printable area, so Chromium scaled the whole
+    # résumé to 90.5% to make it fit -- a 21pt name came out 19.08pt, and the
+    # margins came to 19mm rather than the 10mm the document is drawn with.
     margins = margins_mm or {}
     margin = {
-        "top": f"{margins.get('top', 10)}mm",
-        "bottom": f"{margins.get('bottom', 10)}mm",
-        "left": f"{margins.get('left', 10)}mm",
-        "right": f"{margins.get('right', 10)}mm",
+        "top": f"{margins.get('top', 0)}mm",
+        "bottom": f"{margins.get('bottom', 0)}mm",
+        "left": f"{margins.get('left', 0)}mm",
+        "right": f"{margins.get('right', 0)}mm",
     }
     return await asyncio.to_thread(
         _render_blocking, url, page_size=page_size, margin=margin

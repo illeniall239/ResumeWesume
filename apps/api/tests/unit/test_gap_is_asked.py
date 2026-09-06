@@ -223,3 +223,26 @@ class TestTheModelIsToldToAsk:
         )
         assert "TAILORING TO A JOB" in sent
         assert "ask how the user wants to proceed" in sent
+
+    async def test_a_pasted_advert_is_not_an_instruction_to_start_editing(
+        self, repo: DocumentRepo
+    ) -> None:
+        # The posting arrives by being pasted into the chat now, and a message
+        # that is plainly an advert is not somebody asking for an edit. The
+        # model is told to say which job it has and ask.
+        state = await repo.create(make_doc(), title="Alex Morgan")
+
+        backend = ScriptedBackend([turn(say("Got it."), done("stop"))])
+        runner = TurnRunner(repo=repo, backend=backend, budget=TurnBudget())
+        await runner.run(
+            TurnRequest(document_id=state.id, message=POSTING),
+            TurnChannel(turn_id="t", document_id=state.id),
+        )
+
+        sent = "\n".join(
+            str(message.get("content", ""))
+            for request in backend.received
+            for message in request.get("messages", [])
+        )
+        assert "pastes the posting straight into the chat" in sent
+        assert "ask whether to tailor the" in sent

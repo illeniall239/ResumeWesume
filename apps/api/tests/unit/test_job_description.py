@@ -267,6 +267,38 @@ class TestWhatReachesTheModel:
         # only a real block has both ends.
         assert "</job_description>" not in sent
 
+    async def test_the_turn_it_is_pasted_in_does_not_carry_it_twice(
+        self, client: AsyncClient
+    ) -> None:
+        # The posting arrives by being pasted into the chat, so on that one
+        # turn the message *is* the advert. Repeating it under
+        # <job_description> doubles the longest thing in the prompt, and on a
+        # 4,096-token context what falls off the front is the system prompt and
+        # the tool schemas.
+        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
+        created = await seed(client)
+        state = await repo.get(created["id"])
+
+        sent = await self._run(repo, state, POSTING, on_turn=POSTING)
+
+        assert "</job_description>" not in sent
+        # It is there once, as the message the person actually sent.
+        assert "Kubernetes and Terraform" in sent
+
+    async def test_every_turn_after_it_does(self, client: AsyncClient) -> None:
+        # Which is the whole reason it is stored: the next instruction is
+        # "tailor it", and that message carries nothing.
+        repo: DocumentRepo = client.repo  # type: ignore[attr-defined]
+        created = await seed(client)
+        await client.put(
+            f"/api/v1/documents/{created['id']}/job-description", json={"text": POSTING}
+        )
+        state = await repo.get(created["id"])
+
+        sent = await self._run(repo, state, "now tailor it")
+
+        assert "</job_description>" in sent
+
     async def test_a_posting_named_on_the_turn_wins(self, client: AsyncClient) -> None:
         # A one-off "try it against this instead", without disturbing what the
         # document is aimed at.

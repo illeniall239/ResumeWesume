@@ -30,6 +30,8 @@ export function BoardPlane({
   onEditText,
   onEditField,
   onFocusNode,
+  onSplitLine,
+  onRemoveLine,
 }: {
   boards: DocumentResponse[];
   selected: string | null;
@@ -42,6 +44,9 @@ export function BoardPlane({
   onEditText: (nid: string, value: string) => void;
   onEditField: (target: string, value: string) => void;
   onFocusNode: (nid: string | null) => void;
+  /** Enter at the end of a bullet opens the next one; Backspace closes an empty one. */
+  onSplitLine: (nid: string) => void;
+  onRemoveLine: (nid: string) => void;
 }) {
   const doc = useStudio((state) => state.doc);
   const changed = useStudio((state) => state.changed);
@@ -97,6 +102,8 @@ export function BoardPlane({
                   drafts={drafts}
                   editable
                   onFocusNode={onFocusNode}
+                  onSplitLine={onSplitLine}
+                  onRemoveLine={onRemoveLine}
                   onEditText={onEditText}
                   onEditField={onEditField}
                   interactive

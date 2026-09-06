@@ -186,7 +186,6 @@ function ProviderRow({ provider }: { provider: ProviderInfo }) {
 export function ProviderSettings({ onClose }: { onClose: () => void }) {
   const providers = useModels((state) => state.providers);
   const error = useModels((state) => state.error);
-  const fallback = useModels((state) => state.fallback);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -234,10 +233,6 @@ export function ProviderSettings({ onClose }: { onClose: () => void }) {
           ))}
         </div>
 
-        <footer className="settings__foot">
-          With nothing selected the assistant runs <code>{fallback}</code> from
-          the environment.
-        </footer>
       </div>
     </div>
   );

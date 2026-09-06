@@ -272,11 +272,16 @@ class ChatMessage(Base):
     history -- the assistant would ask again for dates the person had already
     given it, mid-task, with no sign anything had been lost.
 
-    Deliberately narrow: role, text, and how the turn ended. The tool chips the
-    sidebar draws while a turn runs are reconstructed by the client's event
-    reducer, and a second reduction here would be a copy of that logic drifting
-    out of step with it. What a tool call *did* is in the document and its op
-    log, which outlive any transcript.
+    The reasoning and the tool calls are stored with it, having started out
+    left to the client on the argument that reducing the event stream twice
+    would be one copy of that logic drifting out of step with the other. True,
+    and it cost more than it saved: a reload left every past turn as a bare
+    paragraph, so the record of *how* the resume came to say what it says --
+    which the whole sidebar exists to show -- survived only until the tab was
+    refreshed. What is written here is the settled shape of a finished turn,
+    not the live one: each call with its final status, and the thinking as one
+    block. The running, drafting and confirming states have no meaning once a
+    turn is over, and they are the parts the client's reducer actually owns.
     """
 
     __tablename__ = "chat_messages"
@@ -308,5 +313,17 @@ class ChatMessage(Base):
     #: cancelled. Null for the user's own message, which does not end.
     status: Mapped[str | None] = mapped_column(String(16), default=None)
     turn_id: Mapped[str | None] = mapped_column(String(36), default=None)
+
+    #: What the model was working through, as one block. Null on a user's
+    #: message and on any turn from a model that does not report thinking.
+    thinking: Mapped[str | None] = mapped_column(Text, default=None)
+    #: What its tools did: one entry per call, in the order they ran, each with
+    #: the status it finished in. Null rather than empty on rows written before
+    #: this existed, so an old transcript is silent about its tools instead of
+    #: claiming there were none.
+    #:
+    #: Both are nullable so they can be added to an existing table -- see
+    #: `_add_missing_columns`.
+    activity: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, default=None)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)

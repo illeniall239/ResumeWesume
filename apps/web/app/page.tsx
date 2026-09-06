@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import type { CanvasResponse } from '@/contracts/doc';
-import { createCanvas, createDocument, fetchCanvases } from '@/lib/api';
+import { createDocument, fetchCanvases } from '@/lib/api';
 import DocumentFlow from '@/render/document-flow';
 import { BLANK_DOC, PREVIEW_DOC } from '@/render/preview-doc';
 import { TemplateCard } from '@/render/template-card';
@@ -53,26 +53,6 @@ export default function Home() {
       .then(setCanvases)
       .catch((cause: Error) => setError(cause.message));
   }, []);
-
-  /**
-   * A canvas with nothing on it, to build a résumé on from scratch.
-   *
-   * A real state rather than a half-made one: somebody who wants to write
-   * their own sheet rather than start from a template or an import begins
-   * here, and the canvas offers the blank sheet once they arrive. Every other
-   * route creates a canvas as a side effect of creating a résumé.
-   */
-  async function startEmpty() {
-    setBusy(true);
-    setError(null);
-    try {
-      const canvas = await createCanvas('Untitled');
-      router.push(`/studio/${canvas.id}`);
-    } catch (cause) {
-      setError((cause as Error).message);
-      setBusy(false);
-    }
-  }
 
   async function create(template: TemplateInfo, blank = false) {
     setBusy(true);
@@ -156,12 +136,6 @@ export default function Home() {
           Settings
         </button>
 
-        {/* An empty canvas, for building a résumé from scratch. A real state:
-            the sheet arrives when you ask for it there, rather than being
-            chosen before there is anywhere to put it. */}
-        <button className="reg-link" type="button" onClick={startEmpty} disabled={busy}>
-          Empty canvas
-        </button>
 
         <button
           className="reg-new"

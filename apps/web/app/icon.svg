@@ -1,16 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="resumewesume">
   <!--
-    The same mark as the wordmark's tile, and the reason the mark is built
-    around one letter: RESUME and WESUME differ only in their first character,
-    so the R is the whole name compressed to the part that changes.
+    The sticker, compressed to one letter.
+
+    RESUME and WESUME differ only in their first character, so that letter is
+    the whole name reduced to the part that changes. The wordmark reverses
+    `wesume` out of a coral capsule; this is that capsule with the one letter
+    left in it, which is why the w wears the colour and not the R.
 
     Drawn rather than set in a webfont: a favicon is rendered before any font
     has loaded and in contexts that have none, so a glyph would fall back to
-    whatever the system happens to hold. The path below is the letterform
-    itself, which looks the same everywhere.
+    whatever the system happens to hold. A stroked polyline is the letterform
+    itself and looks the same everywhere -- and at 16px, which is the size this
+    is actually seen at, a monoline w is more legible than a filled one.
 
-    Radius is 18% of the side, matching `.wm__tile`.
+    Radius is 18% of the side, as the wordmark's capsule reads at this aspect.
   -->
-  <rect width="64" height="64" rx="11.5" fill="#12110F"/>
-  <path fill="#FFFFFF" d="M22 18h13.4c3.2 0 5.7.8 7.4 2.4 1.7 1.6 2.6 3.8 2.6 6.5 0 2-.5 3.7-1.4 5.1-.9 1.4-2.2 2.4-3.9 3L46 46h-6.9l-5.2-9.7h-5.6V46H22V18Zm6.3 5.1v8.2h6.4c1.5 0 2.7-.36 3.5-1.1.8-.73 1.2-1.75 1.2-3.05 0-1.3-.4-2.3-1.2-3-.8-.7-2-1.05-3.5-1.05h-6.4Z"/>
+  <rect width="64" height="64" rx="11.5" fill="#FF5C39"/>
+  <path
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    d="M14 21 L22 44 L32 27 L42 44 L50 21"
+  />
 </svg>

@@ -119,6 +119,53 @@ async def get_conversation(request: Request, canvas_id: str) -> dict[str, Any]:
         for board in (await _repo(request).get_canvas(canvas_id)).boards
     }
 
+    # Which turn snapshots each board currently *is*, and where the last
+    # restore on it came from. One lookup per board rather than per message: a
+    # conversation is long and the answer is the same for every turn in it.
+    wanted: dict[str, set[str]] = {}
+    for points in checkpoints.values():
+        for checkpoint_id, _version, document_id in points:
+            if document_id in boards:
+                wanted.setdefault(document_id, set()).add(checkpoint_id)
+
+    undone = {
+        board_id: await _repo(request).undone_turn_checkpoint(board_id, ids)
+        for board_id, ids in wanted.items()
+    }
+    restores = {
+        board_id: await _repo(request).latest_restore(board_id) for board_id in wanted
+    }
+
+    def redo_points(message: Any) -> list[dict[str, str]]:
+        """Where every board this turn touched stood *after* it, if it is
+        currently undone.
+
+        A revert writes the state it replaced as its own inverse, so the way
+        back is already recorded and this only has to find it. Without it a
+        reload offered to undo a turn that was already undone -- and taking the
+        offer put the document back where it already was, which reads as a
+        control that does nothing.
+        """
+        if message.role != "assistant" or not message.turn_id:
+            return []
+        found = []
+        for checkpoint_id, _version, document_id in checkpoints.get(
+            message.turn_id, []
+        ):
+            # Undone means the board *is* what it was before the turn, by
+            # content. Matching instead on which checkpoint was last restored
+            # broke after one round trip: undo, redo, undo again leaves the
+            # board at the turn's starting content by way of a snapshot the
+            # reverts made along the way, and the turn's own id is nowhere in
+            # it. The reload then offered to undo a turn the sheet had visibly
+            # already undone.
+            if undone.get(document_id) != checkpoint_id:
+                continue
+            restore = restores.get(document_id)
+            if restore:
+                found.append({"board_id": document_id, "checkpoint_id": restore[1]})
+        return found
+
     def undo_points(message: Any) -> list[dict[str, str]]:
         """Where every board this turn touched stood before it.
 
@@ -140,6 +187,10 @@ async def get_conversation(request: Request, canvas_id: str) -> dict[str, Any]:
             if document_id in boards and version < boards[document_id].version
         ]
 
+    # Once per message: it is asked for twice below, and it walks every board
+    # the turn touched.
+    redos = {message.id: redo_points(message) for message in messages}
+
     return {
         "messages": [
             {
@@ -147,6 +198,12 @@ async def get_conversation(request: Request, canvas_id: str) -> dict[str, Any]:
                 "role": message.role,
                 "text": message.text,
                 "status": message.status,
+                # What the turn was working through and what its tools did.
+                # Without these a reload left every past turn as a bare
+                # paragraph, and the record of how the resume came to say what
+                # it says lasted only as long as the tab.
+                "thinking": message.thinking,
+                "activity": message.activity,
                 # The board the message itself names, for the common turn.
                 "checkpoint": next(
                     (
@@ -158,6 +215,9 @@ async def get_conversation(request: Request, canvas_id: str) -> dict[str, Any]:
                 ),
                 # Every board it touched, which is what undoing it must restore.
                 "checkpoints": undo_points(message),
+                # And where to put it back to, for a turn already undone.
+                "redo": redos[message.id],
+                "reverted": bool(redos[message.id]),
                 # Which version this turn acted on. The conversation is about
                 # the résumé; an edit landed on one of its versions.
                 "board_id": message.document_id,

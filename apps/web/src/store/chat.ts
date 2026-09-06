@@ -16,6 +16,7 @@ import { create } from 'zustand';
 import type { StreamEvent } from '@/stream/ndjson';
 import { clearCanvasMessages, fetchCanvasMessages } from '@/lib/api';
 import { cancelTurn, startTurn } from '@/stream/ndjson';
+import { readsAsAPosting } from '@/chat/posting';
 import { useStudio } from '@/store/studio';
 
 export interface ToolActivity {
@@ -51,7 +52,17 @@ export interface ChatMessage {
    * a control that appears broken.
    */
   checkpoints?: { boardId: string; checkpointId: string }[];
-  /** Already put back. The offer is not made twice. */
+  /**
+   * Where to put every board back to, once this turn has been undone.
+   *
+   * The counterpart of `checkpoints`, and the same kind of thing: a revert
+   * writes the state it replaced as a snapshot of its own, so putting a turn
+   * back needs no second mechanism -- only the other id. The two swap places
+   * on every press, which is what lets undo and redo be pressed alternately
+   * rather than once each.
+   */
+  redo?: { boardId: string; checkpointId: string }[];
+  /** Currently undone, so the offer on it is to put it back. */
   reverted?: boolean;
   /**
    * Which version this turn acted on, and what it is called.
@@ -85,6 +96,8 @@ interface ChatState {
   reset: () => void;
   /** Put the document back to how it was before this turn. */
   undoTurn: (messageId: string) => Promise<void>;
+  /** And put it back, for a turn that has been undone. */
+  redoTurn: (messageId: string) => Promise<void>;
   /** Read the conversation for a canvas — every version of the résumé. */
   load: (canvasId: string) => Promise<void>;
   forget: (canvasId: string) => Promise<void>;
@@ -106,6 +119,13 @@ const tiers = new Map<string, string>();
 
 function newId(): string {
   return Math.random().toString(36).slice(2, 10);
+}
+
+/** How much of an older message is worth carrying forward. */
+const HISTORY_CHARS = 600;
+
+function clip(text: string): string {
+  return text.length <= HISTORY_CHARS ? text : `${text.slice(0, HISTORY_CHARS - 1)}…`;
 }
 
 export const useChat = create<ChatState>((set, get) => ({
@@ -149,17 +169,33 @@ export const useChat = create<ChatState>((set, get) => ({
     // actually true until the model names one.
     studio.attend({ target: null, kind: 'waiting' });
 
+    // A posting pasted into the chat is what the sheet is aimed at from now
+    // on. Kept on the document rather than read off this one message, because
+    // tailoring is a conversation -- you paste it, you ask, you read it back,
+    // you ask again -- and only the first of those turns contains the advert.
+    //
+    // Compared against what the document is already aimed at, so a follow-up
+    // is not a round trip for no change. Not awaited: the turn carries the
+    // text itself, so the store catching up only redraws the line above the
+    // field.
+    const pasted =
+      readsAsAPosting(text) && text.trim() !== (studio.jobDescription ?? '').trim();
+    if (pasted) void studio.aimAt(text);
+
     const handle = startTurn(
       {
         document_id: documentId,
         message: text,
-        job_description: jobDescription,
+        job_description: pasted ? text : jobDescription,
         // Only the last few turns: a local model's context is small, and older
-        // history is the least valuable thing competing for it.
+        // history is the least valuable thing competing for it. Clipped as
+        // well as counted, because a job posting is pasted into this box now
+        // and six of those unabridged is the whole context window gone -- on
+        // the one thing already sent in full under <job_description>.
         history: get()
           .messages.slice(-6)
           .filter((message) => message.text)
-          .map((message) => ({ role: message.role, content: message.text })),
+          .map((message) => ({ role: message.role, content: clip(message.text) })),
         // The node the user has focus in. The agent is refused there.
         busy_nids: studio.focused ? [studio.focused] : [],
       },
@@ -256,20 +292,25 @@ export const useChat = create<ChatState>((set, get) => ({
   async undoTurn(messageId) {
     const message = get().messages.find((held) => held.id === messageId);
     if (!message?.checkpoints?.length || message.reverted) return;
+    await travel(messageId, message.checkpoints, true, set, get);
+  },
 
-    // Every board it touched, not the one that happens to be open. A turn that
-    // moved between versions changed both, and putting back only the one on
-    // screen would leave the other quietly edited.
-    for (const point of message.checkpoints) {
-      await useStudio.getState().revertTo(point.checkpointId, point.boardId);
-      if (useStudio.getState().error) return;
-    }
-
-    set({
-      messages: get().messages.map((held) =>
-        held.id === messageId ? { ...held, reverted: true } : held
-      ),
-    });
+  /**
+   * And back again.
+   *
+   * Undo without redo is a trapdoor: taking the offer is the only way to find
+   * out what the turn did, and a fourteen-edit turn undone by mistake is
+   * fourteen edits to type back by hand -- which is the exact cost `undoTurn`
+   * exists to remove, pointed the other way.
+   *
+   * The same call as undo, at the snapshot the revert left behind. Nothing
+   * here knows which direction it is going; the two lists swap and the mark
+   * flips.
+   */
+  async redoTurn(messageId) {
+    const message = get().messages.find((held) => held.id === messageId);
+    if (!message?.redo?.length || !message.reverted) return;
+    await travel(messageId, message.redo, false, set, get);
   },
 
   async load(canvasId) {
@@ -285,7 +326,21 @@ export const useChat = create<ChatState>((set, get) => ({
           id: message.id,
           role: message.role,
           text: message.text,
-          activity: [],
+          // From the server, in the shape the reducer builds live. The two are
+          // the same list read twice: the running, drafting and confirming
+          // states a turn passes through belong to the stream, and a turn that
+          // is over has none of them left.
+          thinking: message.thinking ?? undefined,
+          activity: (message.activity ?? []).map((item) => ({
+            callId: item.call_id,
+            name: item.name,
+            tier: item.tier,
+            status: item.status,
+            label: item.label,
+            detail: item.detail,
+            code: item.code,
+            touched: item.touched,
+          })),
           status: message.status ?? undefined,
           checkpoints: message.checkpoints?.length
             ? message.checkpoints.map((point) => ({
@@ -293,6 +348,16 @@ export const useChat = create<ChatState>((set, get) => ({
                 checkpointId: point.checkpoint_id,
               }))
             : undefined,
+          redo: message.redo?.length
+            ? message.redo.map((point) => ({
+                boardId: point.board_id,
+                checkpointId: point.checkpoint_id,
+              }))
+            : undefined,
+          // From the log, not from this session: a turn undone before the page
+          // was reloaded is still undone, and offering to undo it again would
+          // put the résumé back where it already is.
+          reverted: message.reverted || undefined,
           board: message.board ?? undefined,
           boardId: message.board_id ?? undefined,
         })),
@@ -378,6 +443,25 @@ export function targetOf(args: Record<string, unknown> | undefined): string | nu
   if (nid) return nid;
   if (typeof args.target === 'string') return args.target;
   if (typeof args.section === 'string') return args.section;
+  // A `field` with no node is `set_personal_info`, whose fields render as
+  // `personal.<name>` -- the same path the header's own `data-field` carries.
+  if (typeof args.field === 'string') return `personal.${args.field}`;
+
+  // The entry a line is being added to or reordered inside. `add_bullet` and
+  // `reorder_bullets` name no node of their own, because the node they are
+  // about does not exist yet or is not one node -- but the change appears
+  // inside the parent either way.
+  if (typeof args.parent === 'string') return args.parent;
+  // A whole section, by key: `set_section` shows, hides or reorders one, and
+  // the section frame carries `data-section`.
+  if (typeof args.key === 'string') return args.key;
+  // A layout gesture over several boxes at once. The first is where the eye
+  // should be; the rest move with it.
+  if (Array.isArray(args.nids) && typeof args.nids[0] === 'string') return args.nids[0];
+  // The sheet something is being placed on or taken off. Coarser than the
+  // rest, and the best there is: the box does not exist yet, so there is no
+  // finer thing to point at until `touched` names it.
+  if (typeof args.page === 'string') return args.page;
   return null;
 }
 
@@ -388,6 +472,47 @@ export function targetOf(args: Record<string, unknown> | undefined): string | nu
  * as a failure, and that judgement was wrong for every advisory notice until it
  * was pinned.
  */
+/**
+ * Move a turn's boards to a set of snapshots, and record the way back.
+ *
+ * One function for both directions because they are one operation: a revert
+ * hands back the state it replaced, so the list to press next is always the
+ * one this press produced. Written separately they drifted immediately -- the
+ * first version of redo forgot to record its own way back, so a turn could be
+ * put back exactly once and then neither button did anything.
+ */
+async function travel(
+  messageId: string,
+  points: { boardId: string; checkpointId: string }[],
+  reverted: boolean,
+  set: (partial: Partial<ChatState>) => void,
+  get: () => ChatState
+): Promise<void> {
+  // Every board it touched, not the one that happens to be open. A turn that
+  // moved between versions changed both, and putting back only the one on
+  // screen would leave the other quietly edited.
+  const back: { boardId: string; checkpointId: string }[] = [];
+  for (const point of points) {
+    const wayBack = await useStudio.getState().revertTo(point.checkpointId, point.boardId);
+    if (useStudio.getState().error) return;
+    if (wayBack) back.push({ boardId: point.boardId, checkpointId: wayBack });
+  }
+
+  set({
+    messages: get().messages.map((held) =>
+      held.id === messageId
+        ? {
+            ...held,
+            reverted,
+            // The lists swap. What was pressed becomes the way back, and the
+            // way back becomes what to press.
+            ...(reverted ? { redo: back } : { checkpoints: back }),
+          }
+        : held
+    ),
+  });
+}
+
 export function applyEvent(
   event: StreamEvent,
   patch: (change: (message: ChatMessage) => ChatMessage) => void,

@@ -49,14 +49,29 @@ _PREFIXES: dict[str, str] = {
     "ollama": "ollama_chat/",
 }
 
-_KNOWN_PREFIXES = tuple(value for value in _PREFIXES.values() if value)
-
-
 def qualified_model(provider: str, model: str) -> str:
-    """Prefix a model name for litellm, without double-prefixing."""
-    if model.startswith(_KNOWN_PREFIXES):
+    """Prefix a model name for litellm, without double-prefixing.
+
+    Only *this* provider's own prefix counts as already-prefixed. Matching any
+    known prefix looks equivalent and is not, because a gateway's model ids are
+    themselves ``vendor/model``: OpenRouter calls its route to GPT-5
+    ``openai/gpt-5``, and read as "already prefixed" that goes to litellm
+    unchanged, so the turn is sent to OpenAI directly -- with an OpenRouter key
+    that OpenAI will reject, or against whatever OpenAI key happens to be
+    configured, which bills the wrong account for a request the user believed
+    was going somewhere else.
+
+    Measured against OpenRouter's live catalogue when this was fixed: 132 of
+    its 364 tool-capable models, every ``openai/``, ``anthropic/`` and
+    ``deepseek/`` route it offers.
+
+    An empty prefix means the provider is litellm's default namespace and the
+    name is already what it wants.
+    """
+    prefix = _PREFIXES.get(provider, "")
+    if not prefix or model.startswith(prefix):
         return model
-    return f"{_PREFIXES.get(provider, '')}{model}"
+    return f"{prefix}{model}"
 
 
 def probe_supports_tools(provider: str, model: str) -> bool:

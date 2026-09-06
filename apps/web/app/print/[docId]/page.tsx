@@ -9,23 +9,25 @@ import { fetchDocument } from '@/lib/api';
  * client JavaScript. Headless Chromium navigates here and waits for
  * `[data-print-root]`, which DocumentFlow carries.
  *
- * Two templates share this route. `?template=ats` renders the content subtree
- * through DocumentFlow -- the plain single column, geometry ignored -- and
- * anything else renders the placed canvas. Both are the same components the
- * studio uses, because screen-versus-PDF divergence was a recurring bug in the
+ * It renders the placed canvas -- the same `PageCanvas` the studio draws, so
+ * the file is the document rather than a second rendering of it that has to be
+ * kept in step. Screen-versus-PDF divergence was a recurring bug in the
  * previous app whenever those were separate code paths.
+ *
+ * A document with no pages still has to produce something, and the flowing
+ * renderer is what it produced before the canvas existed. There used to be a
+ * `?template=ats` that asked for that on purpose; it threw away every position
+ * on the canvas, and it was the default, so the file most people got was the
+ * one that did not look like their document.
  */
 export const dynamic = 'force-dynamic';
 
 export default async function PrintPage({
   params,
-  searchParams,
 }: {
   params: Promise<{ docId: string }>;
-  searchParams: Promise<{ template?: string }>;
 }) {
   const { docId } = await params;
-  const { template } = await searchParams;
 
   let doc = null;
   try {
@@ -37,11 +39,9 @@ export default async function PrintPage({
     return <div data-print-root />;
   }
 
-  // The ATS export ignores layout entirely and renders the content subtree
-  // through the flowing renderer. Nothing is reverse-engineered from boxes:
-  // it is the same component, on the same content, that produced every PDF
-  // this app has ever exported.
-  if (template === 'ats' || !doc.pages.length) {
+  // Nothing to place it on. The same component, on the same content, that
+  // produced every PDF this app exported before pages existed.
+  if (!doc.pages.length) {
     return (
       <div className="page">
         <DocumentFlow doc={doc} />

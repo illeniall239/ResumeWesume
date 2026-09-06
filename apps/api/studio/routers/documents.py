@@ -7,7 +7,7 @@ the same repo, so both actors share one mutation path and one set of gates.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, File, Header, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -86,6 +86,20 @@ class ApplyRequest(BaseModel):
     # Nodes the user currently has focus in. The agent is refused on these; a
     # direct edit is not, since the actor is the person holding the caret.
     busy_nids: list[str] = Field(default_factory=list)
+    #: Whether this batch is a gesture or a re-derivation.
+    #:
+    #: Only undo bookkeeping reads it -- it grants nothing, so a client cannot
+    #: reach anything by claiming either value. `layout` means the client
+    #: measured the rendered document and is correcting frame geometry to
+    #: match, which is not something a person did and must not become an undo
+    #: unit: it lands after almost every edit that changes how much room a line
+    #: takes, and counting it cost a press per edit and cleared the redo stack
+    #: on the press after every undo.
+    #:
+    #: It cannot be derived from the ops. A person dragging a frame and the
+    #: measure pass correcting one both compile to `set_geometry`, and the drag
+    #: is certainly undoable -- only the caller knows which of the two this is.
+    actor: Literal["user", "layout"] = "user"
 
 
 class ApplyResponse(BaseModel):
@@ -328,6 +342,11 @@ async def get_conversation(request: Request, document_id: str) -> dict[str, Any]
                 "role": message.role,
                 "text": message.text,
                 "status": message.status,
+                # See the same pair in the canvas conversation: the reasoning
+                # and the tool calls, so a reload redraws the turn rather than
+                # a paragraph of its conclusion.
+                "thinking": message.thinking,
+                "activity": message.activity,
                 "checkpoint": undo_point(message),
             }
             for message in messages
@@ -368,7 +387,7 @@ async def apply_operations(
         # system exists to constrain the *model*, not the author.
         granted_tiers={"A", "B", "C"},
         busy_nids=set(body.busy_nids),
-        actor="user",
+        actor=body.actor,
     )
     try:
         state, applied, rejected = await _repo(request).apply(
@@ -403,15 +422,32 @@ class RevertRequest(BaseModel):
     checkpoint_id: str
 
 
-@router.post("/{document_id}/revert", response_model=DocumentResponse)
+class RevertResponse(DocumentResponse):
+    """The document as it now stands, and the way back out of the revert.
+
+    A restore already writes a snapshot of where the document stood before it,
+    as the inverse of its own op -- so undoing a revert needs no second
+    mechanism, only the id. Handed back here because this is the moment it is
+    free: the caller is about to offer "redo this turn", and asking for it
+    later means finding it again in the log.
+    """
+
+    redo_checkpoint: str
+
+
+@router.post("/{document_id}/revert", response_model=RevertResponse)
 async def revert_document(
     request: Request, document_id: str, body: RevertRequest
-) -> DocumentResponse:
+) -> RevertResponse:
     try:
-        state = await _repo(request).revert(document_id, body.checkpoint_id)
+        state, redo_point = await _repo(request).revert(
+            document_id, body.checkpoint_id
+        )
     except KeyError:
         raise HTTPException(status_code=404, detail="Checkpoint not found") from None
-    return _as_response(state)
+    return RevertResponse(
+        **_as_response(state).model_dump(), redo_checkpoint=redo_point
+    )
 
 
 class ConfirmRequest(BaseModel):

@@ -14,6 +14,13 @@
  * *within* a document, and a deleted canvas has no op log left to reverse — so
  * the second press is the only thing between a stray click and losing a whole
  * job hunt.
+ *
+ * A bin, on the name row, on hover. It was a cross down among the metadata,
+ * which was wrong twice over: a cross is the mark this app already uses for a
+ * rejected edit and for closing a dialog, neither of which destroys anything;
+ * and beside a timestamp it read as furniture belonging to the timestamp
+ * rather than to the résumé. It acts on the thing the name names, so that is
+ * the line it belongs on.
  */
 
 'use client';
@@ -24,7 +31,7 @@ import type { CanvasResponse } from '@/contracts/doc';
 import { deleteCanvas } from '@/lib/api';
 import { timeAgo } from '@/lib/when';
 import DocumentFlow from '@/render/document-flow';
-import { Cross } from '@/ui/marks';
+import { Bin } from '@/ui/marks';
 
 /**
  * How many boards a card draws.
@@ -104,19 +111,37 @@ export function CanvasCard({
         </div>
       )}
 
-      <span className="reg-doc__name">{canvas.title || 'Untitled'}</span>
+      {/* The name and the way to be rid of it, on one line: the bin acts on
+          the thing the name names. Drawn on hover -- and on keyboard focus,
+          which is the same affordance for anyone not using a mouse -- because
+          a delete on every card at rest turns a list of your own work into a
+          list of things to be careful of. */}
+      <span className="reg-doc__head">
+        <span className="reg-doc__name">{canvas.title || 'Untitled'}</span>
+        <button
+          type="button"
+          className="reg-doc__drop"
+          onClick={() => setAsking(true)}
+          aria-label={`Delete ${canvas.title || 'Untitled'}`}
+          title="Delete"
+        >
+          <Bin size={14} />
+        </button>
+      </span>
 
       <span className="reg-doc__sub">
         {asking ? (
           <>
-            <span>
+            {/* Specific about what goes: "delete this" understates it for a
+                canvas holding four versions aimed at four different jobs. */}
+            <span className="reg-doc__ask">
               {boards.length > 1
                 ? `Delete this and all ${boards.length} versions?`
                 : 'Delete this?'}
             </span>
             <button
               type="button"
-              className="reg-doc__drop reg-doc__drop--asking"
+              className="reg-doc__answer reg-doc__answer--go"
               onClick={remove}
               disabled={busy}
             >
@@ -124,7 +149,7 @@ export function CanvasCard({
             </button>
             <button
               type="button"
-              className="reg-doc__drop reg-doc__drop--asking"
+              className="reg-doc__answer"
               onClick={() => setAsking(false)}
             >
               Keep
@@ -139,16 +164,6 @@ export function CanvasCard({
             {boards.length > 1 && (
               <span className="reg-doc__count">{boards.length} versions</span>
             )}
-            <button
-              type="button"
-              className="reg-doc__drop"
-              onClick={() => setAsking(true)}
-              aria-label={`Delete ${canvas.title || 'Untitled'}`}
-              title="Delete"
-              style={{ marginLeft: 'auto' }}
-            >
-              <Cross size={12} />
-            </button>
           </>
         )}
       </span>

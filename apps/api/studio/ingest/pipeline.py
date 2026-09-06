@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
+from studio.doc.autolayout import layout
 from studio.doc.legacy import from_resume_data
 from studio.ingest import pdf
 from studio.ingest.contact import Contact, parse_contact
@@ -239,6 +240,13 @@ class ImportRunner:
         # this document, but confirming posts ``resume_data`` back and mints
         # them again server-side. The client never supplies a node id.
         preview = from_resume_data(data)
+        # And a page to sit on, exactly as ``POST /documents`` gives one to
+        # every document it creates. Without it the review screen had nothing
+        # to paginate and fell back to the flowing renderer -- so it showed one
+        # continuous column while the studio, moments later, showed the same
+        # résumé across two sheets. A review that does not show what you are
+        # about to get is not a review.
+        preview.pages = layout(preview)
 
         channel.emit(
             ImportReady(

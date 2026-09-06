@@ -28,7 +28,7 @@ import { ModelPicker } from '@/chat/model-picker';
 import { TargetJob } from '@/chat/target-job';
 import { stripNodeIds } from '@/chat/prose';
 import { readTarget, textOf } from '@/doc/read';
-import { Caution, Check, Cross, Query, Running, Undo } from '@/ui/marks';
+import { Caution, Check, Cross, Query, Redo, Running, Undo } from '@/ui/marks';
 import { useChat, type ChatMessage, type PendingConfirm, type ToolActivity } from '@/store/chat';
 import { useCanvas } from '@/store/canvas';
 import { useStudio } from '@/store/studio';
@@ -102,6 +102,7 @@ function Instruction({ message }: { message: ChatMessage }) {
  */
 export function Revision({ message }: { message: ChatMessage }) {
   const undoTurn = useChat((state) => state.undoTurn);
+  const redoTurn = useChat((state) => state.redoTurn);
   // Not while the document is mid-write: a revert lands as a whole new
   // version, and racing it against a save in flight is how two clients end up
   // disagreeing about which one won.
@@ -201,7 +202,24 @@ export function Revision({ message }: { message: ChatMessage }) {
             <Markdown text={prose} />
           </div>
         )}
-        {idle && <p className="revision__status">Working…</p>}
+        {idle && (
+          /* The one place in the sidebar where nothing is happening on screen
+             yet: the model has been sent the message and has not begun to
+             answer. A still line there reads the same as a hung one, so the
+             dots keep time -- the smallest possible thing that says the wait
+             is a wait and not a stall.
+
+             `role="status"` and the dots hidden from it: a screen reader gets
+             "Working" once, rather than an ellipsis animating at it. */
+          <p className="revision__status" role="status">
+            Working
+            <span className="ticker" aria-hidden="true">
+              <span>.</span>
+              <span>.</span>
+              <span>.</span>
+            </span>
+          </p>
+        )}
 
         {silent && message.status !== 'cancelled' && (
           <p className="revision__status revision__status--silent">
@@ -240,6 +258,27 @@ export function Revision({ message }: { message: ChatMessage }) {
             {message.checkpoints.length > 1 ? 'Undo this turn everywhere' : 'Undo this turn'}
           </button>
         ) : null}
+
+        {/* And the way back out of that.
+            Undo on its own is a trapdoor: taking the offer is the only way to
+            find out what the turn did, and a fourteen-edit turn undone by
+            mistake is fourteen edits to type back by hand -- which is the cost
+            the button above exists to remove, pointed the other way. Same
+            control, same place, so the pair reads as one switch rather than as
+            two decisions. */}
+        {message.reverted && message.redo?.length ? (
+          <button
+            type="button"
+            className="revision__undo"
+            onClick={() => void redoTurn(message.id)}
+            disabled={busy}
+            title="Put this turn's changes back"
+          >
+            <Redo size={12} />
+            {message.redo.length > 1 ? 'Redo this turn everywhere' : 'Redo this turn'}
+          </button>
+        ) : null}
+
         {message.reverted && (
           <p className="revision__status">Reverted. The sheet is as it was before this.</p>
         )}
@@ -369,7 +408,21 @@ export function ChatPanel({ documentId }: { documentId: string }) {
   const dismissConfirm = useChat((state) => state.dismissConfirm);
 
   const [draft, setDraft] = useState('');
+  const [over, setOver] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
+
+  // A posting is usually copied out of a browser and pasted, which the field
+  // already handles. When it is a file from a job board it is a PDF, and a
+  // drop is the whole gesture -- no button, and nothing to read before you
+  // know whether you need it.
+  const drop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setOver(false);
+    const file = Array.from(event.dataTransfer.files).find(
+      (candidate) => candidate.type === 'application/pdf'
+    );
+    if (file) void useStudio.getState().aimAtPdf(file);
+  };
 
   const submit = () => {
     if (!draft.trim() || streaming) return;
@@ -432,10 +485,20 @@ export function ChatPanel({ documentId }: { documentId: string }) {
       {/* A bordered box, not a ruled line. The field is where everything in
           this column starts, and an underline alone left it ambiguous how far
           it went and where to click. */}
-      <div className="composer">
-        {/* Which job this résumé is aimed at. Above the field rather than
-            beside Send, because it is a standing fact about the document and
-            not a thing you set per message. */}
+      <div
+        className={over ? 'composer composer--over' : 'composer'}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setOver(true);
+        }}
+        onDragLeave={() => setOver(false)}
+        onDrop={drop}
+      >
+        {/* Which job this résumé is aimed at, shown only once it is aimed at
+            one. Above the field rather than beside Send, because it is a
+            standing fact about the document and not a thing you set per
+            message -- and it is set by pasting the posting into the field
+            below, not by a control of its own. */}
         <TargetJob />
 
         <textarea
@@ -449,7 +512,7 @@ export function ChatPanel({ documentId }: { documentId: string }) {
               submit();
             }
           }}
-          placeholder="Tell the assistant what to change…"
+          placeholder="Tell the assistant what to change, or paste the job posting…"
           rows={2}
           disabled={streaming}
         />

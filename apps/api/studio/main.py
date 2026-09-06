@@ -148,6 +148,7 @@ async def observability(request: Request, call_next):
 app.include_router(canvases.router, prefix="/api/v1")
 app.include_router(documents.router, prefix="/api/v1")
 app.include_router(export.router, prefix="/api/v1")
+app.include_router(export.backup_router, prefix="/api/v1")
 app.include_router(turns.router, prefix="/api/v1")
 app.include_router(ingest.router, prefix="/api/v1")
 app.include_router(assets.router, prefix="/api/v1")

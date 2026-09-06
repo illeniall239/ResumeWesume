@@ -20,6 +20,7 @@ vi.mock('@/lib/api', async () => {
 });
 
 import { setJobDescription, setJobDescriptionFromPdf } from '@/lib/api';
+import ChatPanel from '@/chat/chat-panel';
 import { TargetJob, headline } from '@/chat/target-job';
 import { useStudio } from '@/store/studio';
 
@@ -67,55 +68,36 @@ describe('naming the posting', () => {
   });
 });
 
-describe('the control', () => {
-  it('offers to add one when the sheet is aimed at nothing', () => {
-    render(<TargetJob />);
-    expect(screen.getByRole('button', { name: /add the job/i })).toBeInTheDocument();
+describe('the line above the field', () => {
+  it('says nothing at all until there is a posting', () => {
+    // There was a button here offering to add one. It asked somebody to
+    // declare, before typing anything, that the next thing they did was
+    // aiming rather than editing -- a step in front of the thing they were
+    // going to do anyway, which is to paste the advert into the field.
+    const { container } = render(<TargetJob />);
+    expect(container).toBeEmptyDOMElement();
   });
 
   it('names the posting once there is one', () => {
     useStudio.setState({ jobDescription: POSTING });
     render(<TargetJob />);
     expect(screen.getByText('Senior Backend Engineer — Stripe')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /add the job/i })).not.toBeInTheDocument();
   });
 
   it('renders nothing before a document has loaded', () => {
-    // The store's documentId is what every call here needs; without one the
-    // control would offer an action that cannot go anywhere.
-    useStudio.setState({ documentId: null });
+    useStudio.setState({ documentId: null, jobDescription: POSTING });
     const { container } = render(<TargetJob />);
     expect(container).toBeEmptyDOMElement();
   });
 
-  it('stores what was pasted', async () => {
-    vi.mocked(setJobDescription).mockResolvedValue(stored(POSTING));
-    render(<TargetJob />);
-    fireEvent.click(screen.getByRole('button', { name: /add the job/i }));
-
-    fireEvent.change(screen.getByPlaceholderText(/paste the job description/i), {
-      target: { value: POSTING },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /use this/i }));
-
-    await waitFor(() => expect(setJobDescription).toHaveBeenCalledWith('doc-1', POSTING));
-    await waitFor(() => expect(useStudio.getState().jobDescription).toBe(POSTING));
-  });
-
-  it('opens showing the posting it already has', () => {
-    // So "read it again" and "replace it" are the same gesture, and neither
-    // starts by wiping what is there.
+  it('is a name, not a way back into a dialog', () => {
+    // The posting is in the transcript, where it was pasted. The only thing
+    // to do here is stop aiming at it.
     useStudio.setState({ jobDescription: POSTING });
     render(<TargetJob />);
-    fireEvent.click(screen.getByRole('button', { name: /senior backend engineer/i }));
-    expect(screen.getByPlaceholderText(/paste the job description/i)).toHaveValue(POSTING);
-  });
-
-  it('will not save what is already saved', () => {
-    useStudio.setState({ jobDescription: POSTING });
-    render(<TargetJob />);
-    fireEvent.click(screen.getByRole('button', { name: /senior backend engineer/i }));
-    expect(screen.getByRole('button', { name: /use this/i })).toBeDisabled();
+    const buttons = screen.getAllByRole('button');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]).toHaveAccessibleName(/stop aiming/i);
   });
 
   it('stops aiming at a job with one press', async () => {
@@ -130,38 +112,63 @@ describe('the control', () => {
     await waitFor(() => expect(setJobDescription).toHaveBeenCalledWith('doc-1', ''));
     await waitFor(() => expect(useStudio.getState().jobDescription).toBeNull());
   });
+});
 
-  it('reads one out of a PDF', async () => {
+describe('a posting read out of a PDF', () => {
+  it('is stored the same way a pasted one is', async () => {
+    // The drop target is the composer; this is the store action behind it.
     vi.mocked(setJobDescriptionFromPdf).mockResolvedValue(stored(POSTING));
-    render(<TargetJob />);
-    fireEvent.click(screen.getByRole('button', { name: /add the job/i }));
-
     const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'posting.pdf', {
       type: 'application/pdf',
     });
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, { target: { files: [file] } });
 
-    await waitFor(() => expect(setJobDescriptionFromPdf).toHaveBeenCalledWith('doc-1', file));
-    await waitFor(() => expect(useStudio.getState().jobDescription).toBe(POSTING));
+    await useStudio.getState().aimAtPdf(file);
+
+    expect(setJobDescriptionFromPdf).toHaveBeenCalledWith('doc-1', file);
+    expect(useStudio.getState().jobDescription).toBe(POSTING);
   });
 
-  it('reports a PDF it could not read, in the server’s own words', async () => {
+  it('reports one it could not read, in the server’s own words', async () => {
     // A scan with no text layer is the common case, and "No text could be read
     // from that PDF" tells somebody what to do about it. A generic failure does
     // not.
     vi.mocked(setJobDescriptionFromPdf).mockRejectedValue(
       new Error('No text could be read from that PDF. It may be a scan.')
     );
-    render(<TargetJob />);
-    fireEvent.click(screen.getByRole('button', { name: /add the job/i }));
 
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement;
-    fireEvent.change(input, {
-      target: { files: [new File(['x'], 'scan.pdf', { type: 'application/pdf' })] },
+    await useStudio.getState().aimAtPdf(new File(['x'], 'scan.pdf', { type: 'application/pdf' }));
+
+    expect(useStudio.getState().error).toMatch(/may be a scan/);
+    expect(useStudio.getState().jobDescription).toBeNull();
+  });
+});
+
+describe('dropping a PDF on the composer', () => {
+  it('aims the résumé at the posting inside it', async () => {
+    // The only file this pane takes, so the whole box is the target and there
+    // is no button in front of it. The dialog that used to hold this is gone.
+    vi.mocked(setJobDescriptionFromPdf).mockResolvedValue(stored(POSTING));
+    const { container } = render(<ChatPanel documentId="doc-1" />);
+    const composer = container.querySelector('.composer') as HTMLElement;
+
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46])], 'posting.pdf', {
+      type: 'application/pdf',
+    });
+    fireEvent.drop(composer, { dataTransfer: { files: [file] } });
+
+    await waitFor(() => expect(setJobDescriptionFromPdf).toHaveBeenCalledWith('doc-1', file));
+  });
+
+  it('ignores anything that is not a PDF', () => {
+    // A dragged image is for the résumé, not for the posting, and guessing
+    // wrong here would silently re-aim the sheet at a photograph.
+    const { container } = render(<ChatPanel documentId="doc-1" />);
+    const composer = container.querySelector('.composer') as HTMLElement;
+
+    fireEvent.drop(composer, {
+      dataTransfer: { files: [new File(['x'], 'headshot.png', { type: 'image/png' })] },
     });
 
-    await waitFor(() => expect(useStudio.getState().error).toMatch(/may be a scan/));
-    expect(useStudio.getState().jobDescription).toBeNull();
+    expect(setJobDescriptionFromPdf).not.toHaveBeenCalled();
   });
 });

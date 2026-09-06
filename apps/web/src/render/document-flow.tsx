@@ -15,7 +15,7 @@
 
 'use client';
 
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useRef, type ReactNode } from 'react';
 import type {
   CustomSectionNode,
   EducationNode,
@@ -58,6 +58,17 @@ export interface DocumentFlowProps {
   onEditField?: (target: string, value: string) => void;
   /** Focus tells the server the user holds this node, so the agent is refused there. */
   onFocusNode?: (nid: string | null) => void;
+  /**
+   * Enter at the end of a line: open the next one.
+   *
+   * The gesture every list editor has, so it needs no chrome and nothing to
+   * discover. Without it a résumé could be edited word for word and never
+   * gain a line, and somebody wanting one more bullet had to ask the
+   * assistant for it.
+   */
+  onSplitLine?: (nid: string) => void;
+  /** Backspace in a line that is already empty: close it. */
+  onRemoveLine?: (nid: string) => void;
   /**
    * Draw empty fields as their hint, even where they are not editable yet.
    *
@@ -157,6 +168,22 @@ function fieldsOf(
 }
 
 /**
+ * Whether the caret sits at the very end of the text.
+ *
+ * Enter only opens a new line from the end. In the middle of a sentence it
+ * would have to split the words too, and a résumé bullet cut in half by a
+ * stray keypress is a worse outcome than a keypress that does nothing.
+ */
+function atEnd(element: HTMLElement): boolean {
+  const selection = window.getSelection();
+  if (!selection || !selection.isCollapsed || selection.rangeCount === 0) return false;
+  const range = selection.getRangeAt(0).cloneRange();
+  range.selectNodeContents(element);
+  range.setStart(selection.getRangeAt(0).endContainer, selection.getRangeAt(0).endOffset);
+  return range.toString().length === 0;
+}
+
+/**
  * One editable run of words.
  *
  * The single place `contentEditable` is spelled, because every rule attached to
@@ -185,8 +212,10 @@ function Editable({
   onEditText,
   onEditField,
   onFocusNode,
+  onSplitLine,
+  onRemoveLine,
 }: {
-  as?: 'span' | 'div' | 'p' | 'li' | 'h1';
+  as?: 'span' | 'div' | 'p' | 'li' | 'h1' | 'h2';
   className?: string;
   /** The node this belongs to: what gets locked, flashed and focus-reported. */
   nid: string;
@@ -210,6 +239,8 @@ function Editable({
   onEditText?: (nid: string, value: string) => void;
   onEditField?: (target: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
+  onSplitLine?: (nid: string) => void;
+  onRemoveLine?: (nid: string) => void;
 }) {
   const isLocked = locked?.has(nid) ?? false;
   const live = editable && !isLocked;
@@ -225,6 +256,29 @@ function Editable({
   // worked on, not only while this particular run happens to be live. The hint
   // is drawn by CSS from the attribute and is never text in the document.
   const hinted = live || placeholders;
+
+  // What the element held when the caret arrived, and whether Escape has just
+  // put it back. Refs rather than state: neither should redraw anything, and a
+  // re-render between keydown and blur would lose them.
+  const entered = useRef(value);
+  const reverted = useRef(false);
+
+  /**
+   * Send what is in the element, if it is genuinely new.
+   *
+   * Two guards, and both are load-bearing. Against `value`, so text that
+   * arrived from elsewhere while the caret sat here is not written back as if
+   * the user had typed it -- a rejected agent edit reappeared that way on
+   * blur. Against `entered`, so a redraw that restores what was already here
+   * does not commit either, which is what makes Escape leave nothing behind.
+   */
+  const commit = (element: HTMLElement) => {
+    const next = element.textContent ?? '';
+    if (next === value || next === entered.current) return;
+    entered.current = next;
+    if (field) onEditField?.(`${nid}.${field}`, next);
+    else onEditText?.(nid, next);
+  };
 
   return (
     <Tag
@@ -243,13 +297,60 @@ function Editable({
       data-placeholder={hinted ? placeholder : undefined}
       contentEditable={live ? 'plaintext-only' : undefined}
       suppressContentEditableWarning
-      onFocus={() => onFocusNode?.(nid)}
+      onFocus={(event) => {
+        onFocusNode?.(nid);
+        // What was here when the caret arrived, so a blur can tell an edit
+        // from a redraw. `value` is the current prop, and a change landing
+        // from elsewhere while this is focused moves it -- comparing against
+        // that made the blur commit the incoming text straight back as if the
+        // user had typed it, and a rejected agent edit reappeared on release.
+        entered.current = event.currentTarget.textContent ?? '';
+      }}
+      onKeyDown={(event) => {
+        if (!live) return;
+
+        // Escape abandons. Every dialog in this app takes it that way, and the
+        // one place where the stakes are a person's own words took it as
+        // "commit" -- there was no way out of a half-typed line except undo.
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.currentTarget.textContent = entered.current;
+          reverted.current = true;
+          event.currentTarget.blur();
+          return;
+        }
+
+        if (event.key === 'Enter' && !event.shiftKey) {
+          // Never a line break. `plaintext-only` accepts one, and a résumé
+          // field is a data field: a newline inside a job title reached the
+          // stored value and the PDF, where it read as a rendering fault.
+          event.preventDefault();
+          if (onSplitLine && atEnd(event.currentTarget)) {
+            commit(event.currentTarget);
+            onSplitLine(nid);
+          }
+          return;
+        }
+
+        // Backspace at the head of an already-empty line closes it. The
+        // counterpart to Enter, and the only way to be rid of a bullet: a
+        // person who cleared one was left with a bullet point marking nothing.
+        if (
+          event.key === 'Backspace' &&
+          onRemoveLine &&
+          (event.currentTarget.textContent ?? '') === ''
+        ) {
+          event.preventDefault();
+          onRemoveLine(nid);
+        }
+      }}
       onBlur={(event) => {
         onFocusNode?.(null);
-        const next = event.currentTarget.textContent ?? '';
-        if (next === value) return;
-        if (field) onEditField?.(`${nid}.${field}`, next);
-        else onEditText?.(nid, next);
+        if (reverted.current) {
+          reverted.current = false;
+          return;
+        }
+        commit(event.currentTarget);
       }}
     >
       {shown}
@@ -269,6 +370,8 @@ function Bullet({
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
+  onSplitLine?: (nid: string) => void;
+  onRemoveLine?: (nid: string) => void;
 }) {
   return (
     <Editable
@@ -290,6 +393,8 @@ function Bullets(props: {
   editable?: boolean;
   onEditText?: (nid: string, value: string) => void;
   onFocusNode?: (nid: string | null) => void;
+  onSplitLine?: (nid: string) => void;
+  onRemoveLine?: (nid: string) => void;
 }) {
   if (props.bullets.length === 0) return null;
   return (
@@ -310,21 +415,59 @@ function Bullets(props: {
 function Section({
   title,
   sectionKey,
+  titleNid,
+  titleField,
   children,
+  ...rest
 }: {
   title: string;
   sectionKey?: string;
+  /**
+   * What the heading commits against, when it can be changed.
+   *
+   * A built-in section is not a node -- it is an entry in `doc.sections`
+   * saying what the résumé calls this part of itself -- so it is addressed as
+   * `section.<key>`, the way `personal.email` is. A custom section *is* a
+   * node, and its heading is the `label` field on it.
+   *
+   * Absent for the flowing export and the print route, where nothing is
+   * editable and a plain `<h2>` is what belongs on the page.
+   */
+  titleNid?: string;
+  titleField?: string;
   children: React.ReactNode;
-}) {
+} & Partial<Omit<DocumentFlowProps, 'doc'>>) {
   return (
     <section className="section" data-no-break data-section={sectionKey}>
-      <h2
-        className="section__title"
-        data-page-block={`title:${title}`}
-        data-page-heading
-      >
-        {title}
-      </h2>
+      {/* Editable only where editing happens. The print route and the ATS
+          export render this same component with `editable` unset, and a PDF
+          must carry no editing affordance -- so those get the plain heading
+          they always had, attributes and all. */}
+      {titleNid && titleField && rest.editable ? (
+        <Editable
+          as="h2"
+          className="section__title"
+          nid={titleNid}
+          field={titleField}
+          value={title}
+          placeholder="Heading"
+          changed={rest.changed}
+          locked={rest.locked}
+          drafts={rest.drafts}
+          editable={rest.editable}
+          placeholders={rest.placeholders}
+          onEditField={rest.onEditField}
+          onFocusNode={rest.onFocusNode}
+        />
+      ) : (
+        <h2
+          className="section__title"
+          data-page-block={`title:${title}`}
+          data-page-heading
+        >
+          {title}
+        </h2>
+      )}
       {children}
     </section>
   );
@@ -541,7 +684,13 @@ function SkillsBlock({
 
 function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & DocumentFlowProps) {
   return (
-    <Section title={section.label || section.key} sectionKey={section.key}>
+    <Section
+      title={section.label || section.key}
+      sectionKey={section.key}
+      titleNid={section.nid}
+      titleField="label"
+      {...rest}
+    >
       {section.text && (
         <Editable
           as="p"
@@ -625,7 +774,14 @@ export function DocumentFlow(props: DocumentFlowProps) {
     switch (meta.key) {
       case 'summary':
         return doc.summary ? (
-          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Summary'}>
+          <Section
+            key={meta.key}
+            sectionKey={meta.key}
+            title={meta.label || 'Summary'}
+            titleNid="section"
+            titleField={meta.key}
+            {...props}
+          >
             <Editable
               as="p"
               className="summary"
@@ -645,7 +801,14 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'experience':
         return mine(doc.experience).length ? (
-          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Experience'}>
+          <Section
+            key={meta.key}
+            sectionKey={meta.key}
+            title={meta.label || 'Experience'}
+            titleNid="section"
+            titleField={meta.key}
+            {...props}
+          >
             {mine(doc.experience).map((entry) => (
               <ExperienceBlock key={entry.nid} entry={entry} {...props} />
             ))}
@@ -653,7 +816,14 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'education':
         return mine(doc.education).length ? (
-          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Education'}>
+          <Section
+            key={meta.key}
+            sectionKey={meta.key}
+            title={meta.label || 'Education'}
+            titleNid="section"
+            titleField={meta.key}
+            {...props}
+          >
             {mine(doc.education).map((entry) => (
               <EducationBlock key={entry.nid} entry={entry} {...props} />
             ))}
@@ -661,7 +831,14 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'projects':
         return mine(doc.projects).length ? (
-          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Projects'}>
+          <Section
+            key={meta.key}
+            sectionKey={meta.key}
+            title={meta.label || 'Projects'}
+            titleNid="section"
+            titleField={meta.key}
+            {...props}
+          >
             {mine(doc.projects).map((entry) => (
               <ProjectBlock key={entry.nid} entry={entry} {...props} />
             ))}
@@ -669,7 +846,14 @@ export function DocumentFlow(props: DocumentFlowProps) {
         ) : null;
       case 'skills':
         return doc.skills.length ? (
-          <Section key={meta.key} sectionKey={meta.key} title={meta.label || 'Skills'}>
+          <Section
+            key={meta.key}
+            sectionKey={meta.key}
+            title={meta.label || 'Skills'}
+            titleNid="section"
+            titleField={meta.key}
+            {...props}
+          >
             <SkillsBlock groups={doc.skills} {...props} />
           </Section>
         ) : null;
@@ -930,7 +1114,13 @@ function renderRoot(
     }[section.key as 'experience' | 'education' | 'projects'];
 
     return (
-      <Section title={section.label || section.key} sectionKey={section.key}>
+      <Section
+        title={section.label || section.key}
+        sectionKey={section.key}
+        titleNid="section"
+        titleField={section.key}
+        {...props}
+      >
         {ctx.mine(entries as { nid: string }[]).map((entry) => (
           <Block key={entry.nid} entry={entry as never} {...props} />
         ))}

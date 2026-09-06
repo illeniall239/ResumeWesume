@@ -152,6 +152,83 @@ async def turn_status(request: Request, turn_id: str) -> dict[str, Any]:
         "cancelled": channel.cancelled,
     }
 
+def _transcript(channel: TurnChannel) -> tuple[str | None, list[dict[str, Any]]]:
+    """The reasoning and the tool calls of a finished turn.
+
+    From the same replay the prose comes from. A turn in flight has states this
+    does not: running, drafting, awaiting a confirmation. Those belong to the
+    client's reducer and are meaningless once the turn is over -- what is left
+    is each call and the status it finished in, which is what somebody coming
+    back to the conversation needs to read.
+
+    Ordered by the calls, and warnings are kept in place among them: a note
+    saying most of the resume was rewritten is about the edits either side of
+    it, and floated to the end it reads as being about the last one.
+    """
+    calls: dict[str, dict[str, Any]] = {}
+    activity: list[dict[str, Any]] = []
+    thinking: list[str] = []
+
+    for event in channel.replay_from(0):
+        if isinstance(event, ev.ThinkingDelta):
+            thinking.append(event.text)
+
+        elif isinstance(event, ev.ToolStart):
+            entry: dict[str, Any] = {
+                "call_id": event.call_id,
+                "name": event.name,
+                "tier": event.tier,
+                # A call the turn never came back to -- cancelled, or the
+                # process died. Left as it was rather than guessed at.
+                "status": "running",
+            }
+            calls[event.call_id] = entry
+            activity.append(entry)
+
+        elif isinstance(event, ev.PatchApplied):
+            entry = calls.get(event.call_id, {})
+            entry.update(status="applied", label=event.label, touched=event.touched)
+
+        elif isinstance(event, ev.PatchRejected):
+            entry = calls.get(event.call_id, {})
+            entry.update(status="rejected", code=event.code, detail=event.message)
+
+        elif isinstance(event, ev.ConfirmRequired):
+            calls.get(event.call_id, {}).update(status="confirm")
+
+        elif isinstance(event, (ev.BoardForked, ev.BoardSwitched, ev.BoardRenamed)):
+            verb = {
+                "board_forked": "started",
+                "board_switched": "moved to",
+                "board_renamed": "renamed it",
+            }[event.type]
+            calls.get(event.call_id, {}).update(
+                status="applied", label=f"{verb} {event.title}"
+            )
+
+        elif isinstance(event, (ev.Warning, ev.DriftSuppressed)):
+            source = getattr(event, "source", None)
+            # Which model answered is not something a tool did. Stored on the
+            # message itself by the client; in this list it would wear the same
+            # mark as an edit.
+            if source == "model":
+                continue
+            activity.append(
+                {
+                    "call_id": f"note_{event.seq}",
+                    "name": getattr(event, "guard", None) or source or "note",
+                    "tier": "A",
+                    # Advisory, never a failure: these exist because the engine
+                    # chose to report rather than refuse, and the work landed.
+                    "status": "note",
+                    "detail": getattr(event, "detail", "")
+                    or getattr(event, "message", ""),
+                }
+            )
+
+    return ("".join(thinking).strip() or None, activity)
+
+
 async def _remember(
     repo: DocumentRepo,
     request: TurnRequest,
@@ -175,11 +252,15 @@ async def _remember(
         "failed",
     )
 
+    thinking, activity = _transcript(channel)
+
     try:
         await repo.add_messages(
             request.document_id,
             [("user", request.message, None), ("assistant", prose, status)],
             turn_id=turn_id,
+            thinking=thinking,
+            activity=activity or None,
         )
     except Exception:  # noqa: BLE001 -- a transcript must never fail a turn
         logger.exception("Could not store the conversation for turn %s", turn_id)

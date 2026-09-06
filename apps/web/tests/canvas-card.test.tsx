@@ -146,3 +146,32 @@ describe('removing a canvas', () => {
     expect(screen.getByRole('link')).toBeTruthy();
   });
 });
+
+describe('the way to be rid of a résumé', () => {
+  it('is a bin, on the name row', () => {
+    // A cross is the mark this app uses for a rejected edit and for closing a
+    // dialog, neither of which destroys anything. And it sat among the
+    // metadata, where it read as furniture belonging to the timestamp rather
+    // than to the résumé it deletes.
+    const { container } = render(
+      <CanvasCard canvas={canvas([board('doc_1', 'Rao Muhammad Hamza')])} onDeleted={vi.fn()} onError={vi.fn()} />
+    );
+    const head = container.querySelector('.reg-doc__head')!;
+    expect(head.querySelector('.reg-doc__name')).toBeTruthy();
+    expect(head.querySelector('.reg-doc__drop')).toBeTruthy();
+  });
+
+  it('stays in the tab order while it is invisible', () => {
+    // It is drawn on hover, which for anyone not using a mouse means on focus.
+    // Hiding it with `visibility` or `display` would make it unfocusable, so
+    // `:focus-visible` could never match and the control would be unreachable
+    // without a pointer.
+    const { container } = render(
+      <CanvasCard canvas={canvas([board('doc_1', 'Rao Muhammad Hamza')])} onDeleted={vi.fn()} onError={vi.fn()} />
+    );
+    const bin = container.querySelector<HTMLButtonElement>('.reg-doc__drop')!;
+    expect(bin.hidden).toBe(false);
+    expect(bin.disabled).toBe(false);
+    expect(bin.getAttribute('aria-label')).toMatch(/^Delete /);
+  });
+});

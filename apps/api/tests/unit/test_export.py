@@ -73,7 +73,15 @@ class TestRunsOffTheEventLoop:
 
         assert ticks > 3, "the loop was blocked while the browser rendered"
 
-    async def test_margins_default_to_ten_millimetres(self, monkeypatch) -> None:
+    async def test_the_paper_adds_no_margin_of_its_own(self, monkeypatch) -> None:
+        """The page being rendered already carries one.
+
+        A canvas page is a full 210x297mm sheet whose frames sit 10mm in, and a
+        flowing page has that 10mm as padding. Adding another 10mm here put a
+        210mm box in a 190mm printable area, so Chromium scaled the whole
+        résumé to 90.5% to make it fit: a 21pt name came out 19.08pt, and the
+        margins measured 19mm rather than the 10mm the document is drawn with.
+        """
         captured: dict[str, dict[str, str]] = {}
 
         def fake(url: str, *, page_size: str, margin: dict[str, str]) -> bytes:
@@ -83,11 +91,23 @@ class TestRunsOffTheEventLoop:
         monkeypatch.setattr(export, "_render_blocking", fake)
         await render_pdf(URL)
         assert captured["margin"] == {
-            "top": "10mm",
-            "bottom": "10mm",
-            "left": "10mm",
-            "right": "10mm",
+            "top": "0mm",
+            "bottom": "0mm",
+            "left": "0mm",
+            "right": "0mm",
         }
+
+    async def test_a_caller_may_still_ask_for_one(self, monkeypatch) -> None:
+        captured: dict[str, dict[str, str]] = {}
+
+        def fake(url: str, *, page_size: str, margin: dict[str, str]) -> bytes:
+            captured["margin"] = margin
+            return b""
+
+        monkeypatch.setattr(export, "_render_blocking", fake)
+        await render_pdf(URL, margins_mm={"top": 15})
+        assert captured["margin"]["top"] == "15mm"
+        assert captured["margin"]["left"] == "0mm"
 
     async def test_a_render_failure_propagates_to_the_caller(
         self, monkeypatch

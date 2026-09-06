@@ -595,13 +595,27 @@ body {
 
 
 @media print {
+  /* No margin from the paper, because every page box here already carries its
+     own. A canvas page is a full 210x297mm sheet whose frames sit 10mm in; a
+     flowing `.page` has that 10mm as padding. Letting the browser add its own
+     on top made the printed résumé 90.5% of the size it was designed at -- a
+     21pt name came out 19.08pt -- because a 210mm box does not fit a 190mm
+     printable area, so it was scaled to. The export made the same mistake,
+     which is why the two agreed with each other and not with the document. */
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
   body {
     background: var(--paper);
   }
 
   .page {
     width: auto;
-    padding: 0;
+    /* Kept, not zeroed: with `@page` margin at 0 this padding is the only
+       thing between the words and the edge of the paper. */
+    padding: var(--page-margin);
     box-shadow: none;
   }
 
@@ -684,10 +698,31 @@ body {
 /* An empty editable field still has to be somewhere to aim at: with no text
    and no box, a blank job title is zero pixels wide and unclickable. The hint
    is drawn, never rendered as content -- an editable's blur reads its text, so
-   a placeholder in the DOM would be committed as the value. */
-.editable:empty::before {
+   a placeholder in the DOM would be committed as the value.
+
+   One pseudo-element carries it, and it is `::after`, because a bullet's glyph
+   already owns `::before`: on an empty bullet the two rules land on the same
+   pseudo-element, and the hint inherits the glyph's `position: absolute` and
+   is drawn out in the margin. Splitting them across the two -- content on one,
+   colour on the other -- draws the hint twice, once in each, which is what
+   "Your nameYour name" was. Content and face belong together, here.
+
+   This rule is the face; the content is switched on below. */
+.editable:empty::after {
   color: var(--muted, #94a3b8);
   font-style: italic;
+}
+
+/* And a line with nothing in it is still a line. A hint gives an inline field
+   its height back, but only while it is drawn -- and a bullet at rest has no
+   hint and no text, so without a floor it collapses to nothing and the row
+   cannot be aimed at. Clearing a bullet left it unreachable that way.
+
+   Only while the document is being worked on: `.editable` is set by that. A
+   blank line is somewhere to type; on the printed page it is whitespace, and
+   reserving a row for it there would put a stray gap in the PDF. */
+.bullet.editable:empty {
+  min-height: 1.2em;
 }
 
 /* Punctuation that belongs to a hint rather than to the résumé: the comma
@@ -715,7 +750,13 @@ body {
    affordance rather than a claim. Content, not opacity: an invisible
    placeholder still occupies its own width, and the reflow pass measures
    rendered width to decide what fits on a page. */
-.editable:empty::before,
+/* Never while the assistant is writing here. `.node--drafting` puts its typing
+   caret in `::after` too, and the two rules met on one pseudo-element: the
+   hint's text with the caret's 1px width and red fill, so the words of the
+   placeholder were crushed into a red sliver for as long as the draft was
+   still empty. A field being written into is not a field with nothing in it,
+   so the hint stands down and the caret has the element to itself. */
+.editable:empty:not(.node--drafting)::after,
 .hint {
   content: '';
   display: none;
@@ -732,7 +773,7 @@ body {
     .section:hover,
     .section:focus-within
   )
-  .editable:empty::before {
+  .editable:empty:not(.node--drafting)::after {
   content: attr(data-placeholder);
   display: inline;
 }
@@ -757,13 +798,18 @@ body {
    inside a line of other text. Applied to everything it was a bug: an empty
    `h1` and the `div` under it both became inline-block, so a new résumé put
    "Your name" and "Your title" on the same line with nothing between them. A
-   block-level field is already full width and needs no help. */
+   block-level field is already full width and needs no help.
+
+   A `li` is the same mistake one element further down. An empty bullet turned
+   `inline-block` stops being a row: two blank bullets sat side by side on one
+   line, 30px apart, and the list read as a pair of stray dots rather than as
+   two lines waiting to be typed in. It gets its clickable height from
+   `.bullet.editable:empty` above, which is the right way to give a block one. */
 .editable:empty {
   min-width: 4ch;
 }
 
-span.editable:empty,
-li.editable:empty {
+span.editable:empty {
   display: inline-block;
 }
 

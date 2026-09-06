@@ -151,7 +151,7 @@ class TestCheckpoints:
         mid = await repo.get(state.id)
         assert mid is not None and mid.doc.experience[0].bullets == []
 
-        reverted = await repo.revert(state.id, checkpoint)
+        reverted, _ = await repo.revert(state.id, checkpoint)
         assert [b.text for b in reverted.doc.experience[0].bullets] == [
             "Rebuilt the ledger."
         ]
@@ -162,7 +162,7 @@ class TestCheckpoints:
         state = await repo.create(make_doc())
         checkpoint = await repo.checkpoint(state.id)
         await repo.apply(state.id, [SetText(nid=BULLET, value="changed")], ctx=tiers())
-        reverted = await repo.revert(state.id, checkpoint)
+        reverted, _ = await repo.revert(state.id, checkpoint)
         assert reverted.version == 3
 
     async def test_whole_turn_reverts_as_one_unit(self, repo: DocumentRepo) -> None:
@@ -174,7 +174,7 @@ class TestCheckpoints:
             ctx=tiers(),
             turn_id="turn-1",
         )
-        reverted = await repo.revert(state.id, checkpoint)
+        reverted, _ = await repo.revert(state.id, checkpoint)
         assert reverted.doc.experience[0].bullets[0].text == "Rebuilt the ledger."
         assert reverted.doc.summary is not None
         assert reverted.doc.summary.text == "Backend engineer."

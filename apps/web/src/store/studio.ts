@@ -77,6 +77,17 @@ interface StudioState {
   serverDoc: StudioDoc | null;
   /** Sent, not yet acknowledged. */
   pending: DocOp[];
+  /**
+   * Whether everything staged since the last send is a re-derivation.
+   *
+   * The measure pass corrects frame geometry to match what the browser
+   * rendered. That is not something a person did, so it must not become an
+   * undo unit -- it lands after almost every edit that changes how much room a
+   * line takes, and counting it cost a press per edit and killed redo on the
+   * press after every undo. Decided by the first op of a batch and revoked by
+   * any real gesture joining it, because a batch carrying both is undoable.
+   */
+  derived: boolean;
   /** Made locally, not yet sent. */
   local: DocOp[];
 
@@ -140,9 +151,11 @@ interface StudioState {
   refresh: () => Promise<void>;
   edit: (ops: DocOp[]) => Promise<void>;
   /** Apply locally and show it now; send at the next commit boundary. */
-  stage: (ops: DocOp[]) => void;
+  stage: (ops: DocOp[], derived?: boolean) => void;
   /** Send everything staged. Called on pointer-up, on blur, before a turn. */
   flush: () => Promise<void>;
+  /** Commit a geometry correction the measure pass derived; never an undo unit. */
+  relayout: (ops: DocOp[]) => Promise<void>;
   applyServerPatch: (
     version: number,
     hash: string,
@@ -153,9 +166,14 @@ interface StudioState {
   setFocus: (nid: string | null) => void;
   /** Reverse the last committed batch, or put it back. */
   history: (direction: 'undo' | 'redo') => Promise<void>;
-  /** Aim the résumé at a posting; empty text stops aiming it at one. */
+  /**
+   * Aim the résumé at a posting; empty text stops aiming it at one.
+   *
+   * Called when a message pasted into the chat reads as an advert rather than
+   * an instruction, and by the cross on the line above the field.
+   */
   aimAt: (text: string) => Promise<void>;
-  /** The same, read out of a PDF from a job board. */
+  /** The same, read out of a job-board PDF dropped on the chat. */
   aimAtPdf: (file: File) => Promise<void>;
   /**
    * Put one board back to how it was before an agent turn.
@@ -164,7 +182,17 @@ interface StudioState {
    * board being restored is not always the one on screen. Restoring a board
    * that is not open updates the plane and leaves the live document alone.
    */
-  revertTo: (checkpointId: string, boardId?: string) => Promise<void>;
+  /**
+   * Put a board back to a snapshot, returning the way out of it.
+   *
+   * The checkpoint handed back holds where the board stood *before* this call,
+   * so restoring it undoes the revert. Returned rather than looked up later
+   * because this is the only moment it is free -- the server wrote it as the
+   * inverse of the restore a line before answering.
+   *
+   * Null if nothing moved: no board, or the revert failed.
+   */
+  revertTo: (checkpointId: string, boardId?: string) => Promise<string | null>;
   clearError: () => void;
   /** Point at where the agent is working. `null` puts the pen up. */
   attend: (attention: Attention | null) => void;
@@ -207,12 +235,17 @@ type Getter = () => StudioState;
  * the document and discarded the user's edit, which is the correct answer only
  * if you have thrown the conflict payload away — which it did.
  */
-async function send(set: Setter, get: Getter, batch: DocOp[]): Promise<void> {
+async function send(
+  set: Setter,
+  get: Getter,
+  batch: DocOp[],
+  actor: 'user' | 'layout' = 'user'
+): Promise<void> {
   const { documentId, version } = get();
   if (!documentId) return;
 
   try {
-    const response: ApplyResponse = await pushOps(documentId, batch, version);
+    const response: ApplyResponse = await pushOps(documentId, batch, version, actor);
     set({
       serverDoc: response.doc,
       version: response.version,
@@ -270,6 +303,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   error: null,
   serverDoc: null,
   pending: [],
+  derived: false,
   local: [],
   changed: new Set(),
   drafts: new Map(),
@@ -332,12 +366,13 @@ export const useStudio = create<StudioState>((set, get) => ({
    * lost if a send fails: the ops are still in `local` and the rendered
    * document still includes them.
    */
-  stage(ops) {
+  stage(ops, derived = false) {
     if (!ops.length) return;
     const { serverDoc, pending, local } = get();
     const next = [...local, ...ops];
     set({
       local: next,
+      derived: local.length === 0 ? derived : get().derived && derived,
       doc: serverDoc ? applyOps(serverDoc, [...pending, ...next]) : get().doc,
     });
   },
@@ -359,12 +394,26 @@ export const useStudio = create<StudioState>((set, get) => ({
       return;
     }
 
-    set({ saving: true, error: null, pending: batch, local: [] });
-    await send(set, get, batch);
+    const derived = get().derived;
+    set({ saving: true, error: null, pending: batch, local: [], derived: false });
+    await send(set, get, batch, derived ? 'layout' : 'user');
   },
 
   async edit(ops) {
     get().stage(ops);
+    await get().flush();
+  },
+
+  /**
+   * Send a batch the measure pass produced, marked as derived.
+   *
+   * Same path as `edit` in every other respect -- one flight, one version, the
+   * same conflict handling -- and different in the one way that matters: the
+   * server files it under `layout`, so undo walks straight past it to the edit
+   * the person actually made.
+   */
+  async relayout(ops) {
+    get().stage(ops, true);
     await get().flush();
   },
 
@@ -522,8 +571,16 @@ export const useStudio = create<StudioState>((set, get) => ({
    * turn whole.
    */
   async history(direction) {
-    const { documentId } = get();
+    const { documentId, saving, local } = get();
     if (!documentId) return;
+    // Not while a batch is in flight, and not on top of one still staged.
+    // Both write, and the two replies race to set `version` -- the loser
+    // leaves the client holding a stale one, so the next keystroke conflicts.
+    // Worse, the staged work is discarded below, so an undo pressed a moment
+    // after typing threw the typing away and then reversed something older.
+    if (saving) return;
+    if (local.length) await get().flush();
+
     set({ saving: true, error: null });
     try {
       const result = await reverseHistory(documentId, direction);
@@ -604,7 +661,7 @@ export const useStudio = create<StudioState>((set, get) => ({
   async revertTo(checkpointId, boardId) {
     const { documentId } = get();
     const target = boardId ?? documentId;
-    if (!target) return;
+    if (!target) return null;
     set({ saving: true, error: null });
     try {
       const result = await revertToCheckpoint(target, checkpointId);
@@ -616,7 +673,7 @@ export const useStudio = create<StudioState>((set, get) => ({
       if (target !== documentId) {
         useCanvas.getState().absorb(result);
         set({ saving: false });
-        return;
+        return result.redo_checkpoint;
       }
 
       useCanvas.getState().absorb(result);
@@ -637,8 +694,10 @@ export const useStudio = create<StudioState>((set, get) => ({
         drafts: new Map(),
         unverified: new Set(result.doc.unverified ?? []),
       });
+      return result.redo_checkpoint;
     } catch (cause) {
       set({ error: (cause as Error).message, saving: false });
+      return null;
     }
   },
 

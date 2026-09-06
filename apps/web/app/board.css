@@ -80,9 +80,56 @@
      not in. */
   --focus: #1b4f86;
 
-  --font-legend: var(--font-narrow), 'Archivo Narrow', ui-sans-serif, system-ui,
+  /* The mark's coral, and the one filled control's. Reversed white on it is
+     3.1:1, which is under the 4.5:1 AA wants at this size -- deliberate, and
+     the reason it stays on short bold labels on large targets and off anything
+     that has to be read. `--brand-press` is the same hue and saturation six
+     points darker, so a press reads as the colour pushed rather than a second
+     colour arriving. */
+  --brand: #ff5c39;
+  --brand-press: #ff431a;
+  /* Unavailable, drained from the same hue rather than swapped for a grey.
+     Black draining to grey worked because it dropped from 17.7:1 to 2.8:1 --
+     the fill visibly lost its ink. Coral has nowhere near that far to fall, so
+     the state has to be carried by saturation instead, and once the fill is
+     this pale a white label washes out and the button reads as a rendering
+     fault rather than as switched off. So the label drains with it, and it
+     drains by going lighter rather than by giving up its colour: a label
+     desaturated toward neutral comes out brown, which is not a state of this
+     button, it is a different colour. Holding the saturation near the brand's
+     keeps it recognisably the same button, switched off. 3.5:1 on the fill,
+     against 2.8:1 for white on the grey this replaced -- disabled controls are
+     exempt from 1.4.3, but an unreadable one is still bad. */
+  --brand-off: #fbdcd5;
+  --brand-off-ink: #cf4b2c;
+
+  /* One corner for the control family. Two values, not a scale: an icon-only
+     button is a ~22px square, where 4px reads far rounder than the same 4px on
+     a 32px-wide one, so the small ones come in a point. Paper keeps its own
+     square corners -- a sheet of A4 has none, and the thumbnails, the empty
+     slot and the template outlines are all sheet-shaped. Rounding those would
+     stop the register distinguishing a document from a button. */
+  --radius: 4px;
+  --radius-small: 3px;
+  /* A panel, not a control. The same 4px that reads as a rounded button is
+     almost invisible on a 580px dialog -- radius reads relative to the edge it
+     turns, so a surface an order of magnitude wider needs its own step or it
+     comes out looking square with a rendering fault in the corners. Stops well
+     short of the soft end: this is a dense settings panel, and past about 10px
+     the corner starts making a promise about the content that rows of hairline
+     rules do not keep. */
+  --radius-panel: 8px;
+
+  /* One family, two roles. `--font-legend` is the small uppercase lettering on
+     title blocks and schedule headers; `--font-ui` is everything that is prose
+     or a control. They used to be a condensed sibling and its normal width,
+     and DM Sans has no condensed -- so the legend keeps its own token, and its
+     own tracking and weight, while sharing the face. A second family
+     downloaded for label text is a cost the labels do not repay. */
+  --font-legend: var(--font-ui-stack), 'DM Sans', ui-sans-serif, system-ui,
     sans-serif;
-  --font-ui: var(--font-ui-stack), Archivo, ui-sans-serif, system-ui, sans-serif;
+  --font-ui: var(--font-ui-stack), 'DM Sans', ui-sans-serif, system-ui,
+    sans-serif;
 }
 
 body {
@@ -180,7 +227,7 @@ textarea {
   gap: 6px;
   padding: 6px 10px;
   border: 1px solid var(--hair);
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--legend);
   /* Sentence case in the UI face, not condensed caps with wide tracking. The
@@ -210,11 +257,16 @@ textarea {
   cursor: default;
 }
 
-/* The one filled control on the sheet. Rank is the fill, not a second colour:
-   ink on paper, reversed. */
+/* The one filled control on the sheet, and the only place the mark's colour is
+   spent away from the mark. Rank is still the fill; the fill is now the brand.
+
+   It sits a few degrees of hue from `--rev`, which is a pending change and the
+   fill of `.ctl--sign` beside it. What keeps the two apart is weight: coral is
+   half again as light and fully saturated where the red is not, and the red
+   never appears except on a block already outlined and barred in it. */
 .ctl--primary {
-  border-color: var(--legend);
-  background: var(--legend);
+  border-color: var(--brand);
+  background: var(--brand);
   color: #ffffff;
   font-weight: 500;
   font-size: 12.5px;
@@ -222,14 +274,14 @@ textarea {
 }
 
 .ctl--primary:hover:not(:disabled) {
-  background: #000000;
-  border-color: #000000;
+  background: var(--brand-press);
+  border-color: var(--brand-press);
 }
 
 .ctl--primary:disabled {
-  background: var(--legend-off);
-  border-color: var(--legend-off);
-  color: #ffffff;
+  background: var(--brand-off);
+  border-color: var(--brand-off);
+  color: var(--brand-off-ink);
 }
 
 .ctl--danger:hover:not(:disabled) {
@@ -249,7 +301,7 @@ textarea {
 .ctl--bare {
   padding: 4px;
   border-color: transparent;
-  border-radius: 3px;
+  border-radius: var(--radius-small);
   color: var(--legend-dim);
 }
 
@@ -342,6 +394,12 @@ textarea {
    is a stack of A4 sheets, so without it the row grew past 100vh and the
    bottom rail went below the fold with the title block on it. */
 .deck {
+  /* The one column both the bar and the panes below it split on. A variable
+     because they must never drift: the rule between the halves of the bar is
+     the rule between the rail and the board, continued upward, and a bar that
+     is 40px out from the column edge under it looks fine on its own and
+     crooked against the pane -- which is the sort of thing nobody files. */
+  --panes: minmax(320px, 380px) 1fr;
   display: grid;
   /* The document's bar, then the two panes under it. The bar is about the
      whole window -- which résumé is open, and what you can do to it -- so it
@@ -355,7 +413,7 @@ textarea {
 
 .deck__panes {
   display: grid;
-  grid-template-columns: minmax(320px, 380px) 1fr;
+  grid-template-columns: var(--panes);
   min-height: 0;
   /* The gap is the hairline between the two columns -- one rule drawn by the
      grid rather than a border on either side, so neither column has to know
@@ -408,7 +466,7 @@ textarea {
      upward. That is what lets the document's name sit over the document rather
      than over the column discussing it. */
   display: grid;
-  grid-template-columns: minmax(320px, 380px) 1fr;
+  grid-template-columns: var(--panes);
   align-items: stretch;
   gap: 1px;
   padding: 0;
@@ -426,6 +484,89 @@ textarea {
   min-width: 0;
   padding: 0 20px;
   background: var(--board-raised);
+}
+
+/* The conversation's own controls, in the half of the bar that sits over the
+   conversation. Quiet: they are about the transcript rather than about the
+   resume, and framed like the document's own actions they would read as
+   something that changes it.
+
+   The clear is asked about before it happens, which almost nothing else in
+   this app is -- every edit has an inverse and the way back is offered after
+   the fact instead. The transcript has none. It is the only record of what was
+   said, and there is nothing to restore it from. */
+.rail__spring {
+  flex: 1;
+}
+
+.rail__clear,
+.rail__answer {
+  flex: none;
+  padding: 3px 0;
+  border: 0;
+  background: transparent;
+  color: var(--legend-faint);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: var(--radius-small);
+}
+
+.rail__clear:hover:not(:disabled),
+.rail__answer:hover {
+  color: var(--legend);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.rail__clear:disabled {
+  color: var(--legend-off);
+  cursor: default;
+  text-decoration: none;
+}
+
+/* The question and its two answers, in the place the control was. A dialog
+   over the sheet for this would cover the thing being asked about. */
+.rail__ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--legend);
+  font-size: 12px;
+}
+
+/* Red, and the only red on this bar: it is the one press here that cannot be
+   taken back. `Keep` stays quiet, so the default read of the pair is to keep. */
+.rail__answer--go {
+  color: var(--rev-text);
+  font-weight: 500;
+}
+
+/* The mark, as the way out of a document. No underline and no colour of its
+   own -- a wordmark that changes ink on hover stops being a wordmark -- so the
+   press is shown on the capsule, which goes to the same darker coral the
+   filled controls go to. */
+.rail__home {
+  display: inline-flex;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-small);
+}
+
+.rail__home:hover .wm__pill {
+  background: var(--brand-press);
+}
+
+.rail__home:focus-visible {
+  outline: 2px solid var(--focus);
+  /* Clear of the capsule rather than tight to the text box, which on a lockup
+     this small would read as a border drawn around the mark. */
+  outline-offset: 3px;
 }
 
 /* 16 between groups on the actions half, not the rail's default 10. Every gap
@@ -948,6 +1089,48 @@ textarea {
   font-size: 12.5px;
 }
 
+/* The three dots after "Working", keeping time.
+
+   Opacity only, never content or width: a ticker that adds and removes dots
+   moves the text after it and, in a column of turns, nudges the whole
+   conversation on every beat. Each dot holds its space and changes how lit it
+   is, so nothing reflows.
+
+   Held at a floor rather than taken to zero -- an ellipsis that vanishes a
+   character at a time reads as text being deleted. */
+.ticker span {
+  opacity: 0.25;
+  animation: ticker 1.4s ease-in-out infinite;
+}
+
+.ticker span:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.ticker span:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+@keyframes ticker {
+  0%,
+  70%,
+  100% {
+    opacity: 0.25;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+/* Someone who has asked not to be moved still has to be able to tell a wait
+   from a hang, so the dots stay -- lit, and still. */
+@media (prefers-reduced-motion: reduce) {
+  .ticker span {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* A turn that came back empty. Marked, because the alternative is a numbered
    entry with nothing under it, which reads as the app being broken rather than
    as the model having failed to answer. */
@@ -976,7 +1159,7 @@ textarea {
   font-family: var(--font-ui);
   font-size: 12.5px;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-small);
 }
 
 .revision__undo:hover:not(:disabled) {
@@ -1180,6 +1363,13 @@ textarea {
   padding: 13px 16px;
   border-top: 1px solid var(--hair-soft);
   background: var(--board-raised);
+}
+
+/* A PDF from a job board, dragged over the box. The only file this pane
+   accepts, so the whole composer is the target rather than a well that has to
+   be aimed at -- and it says so only while something is being held over it. */
+.composer--over {
+  box-shadow: inset 0 0 0 1px var(--focus);
 }
 
 /* The model, then the button it governs. Right, under the right-hand end of
@@ -1830,14 +2020,68 @@ textarea {
    `currentColor`, so the same component reads on the white bar and on the
    near-black board without either knowing about the other. */
 
+/* Every measurement in `em`, off the one `font-size` the component sets, so
+   the lockup scales whole from the 15px on the register's bar to the 12px on
+   the studio's. The ratios are the drawing's own: at the 66px it is drawn at,
+   the pill is padded 8/20/12/20 and the words are 10 apart. */
 .wm {
+  display: inline-flex;
+  /* Baselines, not box centres. The capsule is taller than the plain word by
+     its own padding, and centring the two boxes lifts the reversed half about
+     2px clear of the line the other half sits on -- one word riding above the
+     other, which is the first thing the eye catches in a lockup this small. */
+  align-items: baseline;
+  gap: 0.152em;
+  font-family: var(--font-ui);
   font-weight: 700;
-  letter-spacing: -0.01em;
+  /* -3 at 66px in the drawing, eased because the faces the app has actually
+     been set in are wider and more open than the one it was drawn in: at the
+     full -0.045em their rounder bowls collide instead of closing up. Enough to
+     bind each half into one shape, which is what the lockup needs, and no
+     more. */
+  letter-spacing: -0.03em;
   line-height: 1;
   white-space: nowrap;
   color: inherit;
 }
 
+.wm__word {
+  color: inherit;
+}
+
+/* The sticker. Fully round rather than a large radius: at this size a 100px
+   corner and a capsule are the same shape, and saying capsule is what keeps it
+   one at every size the mark is set in.
+
+   Coral is the only colour in this app that means brand rather than state --
+   red proposes, green accepts, blue focuses -- so it is confined to this one
+   element and never borrowed for anything else. */
+.wm__pill {
+  /* 0.4625em of coral above the letters and 0.4625em below, which is what makes
+     this a sticker rather than a highlight: the capsule has to be bigger than
+     the word it holds, and evenly so.
+
+     The two numbers are not equal because padding is measured from the line
+     box, not from the ink. `wesume` has neither an ascender nor a descender,
+     so inside that box the letters already sit 0.3225em down from the top and
+     only 0.1475em up from the bottom; equal padding inherits that and lands
+     the word low. Each side here is the wanted 0.4625em less what the line box
+     has already spent, which is why the bottom carries exactly 0.175em more
+     than the top. The ends take a little more again, since the rounded ends
+     sweep in towards the w and the last e.
+
+     Those two figures were read off the render at 400px with the padding
+     zeroed and the corners squared, where one pixel is 0.0025em. Measure them
+     the same way whenever the face changes -- they are its ascent, descent and
+     x-height, not taste, and they moved when the app left Plex for DM Sans. */
+  padding: 0.14em 0.48em 0.315em;
+  border-radius: 999px;
+  background: var(--brand);
+  color: #ffffff;
+  transition: background-color 120ms ease-out;
+}
+
+/* The bar's own ink for the plain half; the pill brings its own. */
 .reg-bar .wm {
   color: var(--d9-ink);
 }
@@ -1865,6 +2109,7 @@ textarea {
   height: 28px;
   padding: 0 9px;
   border: 1px solid var(--d9-hair);
+  border-radius: var(--radius);
   background: var(--d9-chrome);
   color: var(--d9-faint);
 }
@@ -1938,7 +2183,8 @@ textarea {
   height: 32px;
   padding: 0 14px;
   border: 0;
-  background: var(--d9-ink);
+  border-radius: var(--radius);
+  background: var(--brand);
   color: #ffffff;
   font-family: inherit;
   font-size: 12.5px;
@@ -1947,11 +2193,12 @@ textarea {
 }
 
 .reg-new:hover:not(:disabled) {
-  background: #000000;
+  background: var(--brand-press);
 }
 
 .reg-new:disabled {
-  background: var(--d9-faint);
+  background: var(--brand-off);
+  color: var(--brand-off-ink);
   cursor: default;
 }
 
@@ -1991,8 +2238,20 @@ textarea {
   grid-template-columns: repeat(auto-fill, minmax(256px, 1fr));
   gap: 24px;
   list-style: none;
-  margin: 0;
+  /* Room under the last row, always. The template strip below is pushed to
+     the foot of the column by `margin-top: auto`, which gives a generous gap
+     while the list is short and none at all once it wraps and fills the
+     height -- so the strip's rule came to rest flush against the bottom row of
+     cards, reading as a collision rather than as a division.
+
+     Its own margin rather than padding on the strip: what is wanted is space
+     above the rule, and the strip's padding is inside it. */
+  margin: 0 0 36px;
   padding: 0;
+  /* And never squashed. A grid is a flex child here, so it would otherwise
+     shrink below the height of its rows and let the last one spill over
+     whatever came next. */
+  flex: none;
 }
 
 .reg-doc {
@@ -2105,7 +2364,19 @@ textarea {
   pointer-events: none;
 }
 
+/* The name, and the bin that acts on what it names. */
+.reg-doc__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .reg-doc__name {
+  /* Takes the room, so the bin sits at the right edge of the card rather than
+     wandering left and right with the length of each title. */
+  flex: 1;
+  min-width: 0;
   font-size: 13.5px;
   font-weight: 500;
   color: var(--d9-ink);
@@ -2122,27 +2393,93 @@ textarea {
   color: var(--d9-faint);
 }
 
-/* Only on hover, and only on the card it belongs to: a delete on every row at
-   rest turns a list of your own work into a list of things to be careful of. */
+/* Only on hover, and only on the card it belongs to: a delete on every card at
+   rest turns a list of your own work into a list of things to be careful of.
+
+   `pointer-events`, not `visibility`: a transparent button still answers a
+   click, so an invisible delete sat over every card waiting to be hit by a
+   stray press. Hiding it outright fixes that and costs more than it saves --
+   a `visibility: hidden` element cannot take focus at all, so `:focus-visible`
+   below could never match and the control became unreachable without a mouse.
+   Suppressing the pointer leaves it in the tab order, where it belongs. */
 .reg-doc__drop {
+  flex: none;
   display: inline-flex;
+  /* A 14px glyph is a 14px target. The padding gives it a hand-sized one and
+     the negative margin keeps the glyph itself aligned to the name's baseline
+     box rather than pushing the row wider. */
+  padding: 4px;
+  margin: -4px;
   border: 0;
+  border-radius: var(--radius-small);
   background: transparent;
-  padding: 0;
   color: var(--d9-faint);
   cursor: pointer;
   opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease-out;
 }
 
 .reg-doc:hover .reg-doc__drop,
-.reg-doc__drop:focus-visible,
-.reg-doc__drop--asking {
+.reg-doc__drop:focus-visible {
   opacity: 1;
+  pointer-events: auto;
 }
 
-.reg-doc__drop:hover,
-.reg-doc__drop--asking {
+.reg-doc__drop:hover {
   color: #a8322a;
+  background: #f6efee;
+}
+
+.reg-doc__drop:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* Asking. Two words and a question, on the line the timestamp was using --
+   which is the line the answer belongs on, because the question is about this
+   card and nothing else on the page needs to move for it. */
+.reg-doc__ask {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--d9-ink);
+}
+
+.reg-doc__answer {
+  flex: none;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--d9-gray);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+/* Only the destructive half is in the destructive colour. Both in red would
+   make "Keep" -- the safe answer, and the one a stray press should land on --
+   look like the dangerous one. */
+.reg-doc__answer--go {
+  color: #a8322a;
+  font-weight: 500;
+}
+
+.reg-doc__answer + .reg-doc__answer {
+  margin-left: 10px;
+}
+
+.reg-doc__answer:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.reg-doc__answer:disabled {
+  color: var(--legend-off);
+  cursor: default;
+  text-decoration: none;
 }
 
 /* The empty slot at the end of the row. Dashed, because it is where a sheet is
@@ -2288,26 +2625,19 @@ textarea {
 /* --- the checker's print --------------------------------------------------
    Import review. A checker reads a print against the source it was drawn from
    and marks each item read, queried, or not applicable. That is exactly what
-   this screen does, section by section. */
+   this screen does, section by section.
 
+   It wears the studio's frame -- `.deck`, `.rail`, `.sheet-scroll` -- because
+   it is the studio's act: a sheet on a board with a rail beside it saying what
+   is true of the sheet. What is left here is the rail's own furniture and the
+   two views of the board. */
+
+/* Nothing uploaded. The one state that is still a page rather than a frame:
+   there is no document to put on a board, so a board would be an empty room. */
 .checker {
-  max-width: 1180px;
-  margin: 0 auto;
-  padding: 40px 24px 72px;
-}
-
-.checker--empty {
   max-width: 560px;
-  padding-top: 110px;
-}
-
-.checker__head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  flex-wrap: wrap;
-  margin-bottom: 24px;
+  margin: 0 auto;
+  padding: 110px 24px 72px;
 }
 
 .checker__title {
@@ -2321,84 +2651,206 @@ textarea {
 }
 
 .checker__muted {
-  margin: 8px 0 0;
+  margin: 8px 0 18px;
   max-width: 62ch;
   font-size: 13.5px;
   line-height: 1.6;
   color: var(--legend-dim);
 }
 
-.checker__actions {
+/* The rail wants more room than the studio's, and the bar above it has to
+   split on the same column -- see `--panes`. Wider because every line here is
+   a heading, a reading and a link on one row, and at 320 the reading wrapped. */
+.deck--review {
+  --panes: minmax(360px, 420px) 1fr;
+}
+
+.read {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--board-raised);
 }
 
-.checker__grid {
-  display: grid;
-  grid-template-columns: minmax(300px, 400px) 1fr;
-  gap: 28px;
-  align-items: start;
-  margin-top: 22px;
-}
-
-@media (max-width: 900px) {
-  .checker__grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-.checker__panel {
-  min-width: 0;
-}
-
-.checker__h2 {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin: 0 0 10px;
-  padding-bottom: 8px;
+/* A hairline under the head, not a fill: the rail is one surface, and boxing
+   its top would make two panels out of one. */
+.read__head {
+  min-height: 45px;
   border-bottom: 1px solid var(--hair-soft);
-  font-size: 10.5px;
 }
 
-/* The name the document will be filed under. Editable here because this is the
-   only screen where it can be: the API takes a title at creation and has no
-   rename endpoint. */
-.checker__name {
-  padding: 3px 6px;
-  min-width: 180px;
+.read__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--legend);
+}
+
+/* Drawing-office lettering for the one reading that is a legend: how many of
+   the sections found were read. */
+.read__count {
+  font-family: var(--font-legend);
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--legend-faint);
+}
+
+.read__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+}
+
+.read__intro {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.58;
+  color: var(--legend-dim);
+}
+
+.read__failed {
+  margin: 12px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--legend-dim);
+}
+
+/* The board's own strip: what the sheet under it is, then how else to look at
+   it. Sentence case, because it names a thing rather than labelling a field. */
+.read__strip {
+  flex: none;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--legend);
+}
+
+.read__sub {
+  flex: none;
+  font-size: 12px;
+  color: var(--legend-faint);
+}
+
+/* The ledger line is a sentence, not a legend: it names a file and reports
+   four numbers about it. Set in caps and tracked it read as a warning, which
+   is the one thing it is not -- the whole line is good news until its last
+   two words. */
+.read__ledger {
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--legend-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The name, as a field. `.rail__name` is a span in the studio and an input
+   here, because this is the one screen where the title is not yet a
+   document's -- so this resets the input chrome and keeps the rail's type. */
+.rail__name--field {
+  padding: 2px 4px;
   border: 0;
   border-bottom: 1px solid var(--hair);
+  border-radius: 0;
   background: transparent;
-  color: var(--legend);
   font-family: var(--font-ui);
-  font-size: 12.5px;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
+  min-width: 12ch;
 }
 
-.checker__name:focus {
+.rail__name--field:focus {
   outline: 0;
   border-bottom-color: var(--focus);
 }
 
-.checker__sheet {
-  padding: 20px;
-  background: var(--board-deep);
+/* A view the board can be put in. Quieter than `.ctl`: these change what you
+   are looking at, they do not act on the document. */
+.chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--legend);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--legend-faint);
+  background: var(--board-lift);
+}
+
+.chip--on {
+  border-color: var(--legend);
+  background: var(--board-lift);
+}
+
+.chip:disabled {
+  border-color: var(--hair-soft);
+  color: var(--legend-off);
+  cursor: default;
+}
+
+.chip:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* What is on the board: the print, the text it was read from, or both. */
+.spread {
   display: flex;
   justify-content: center;
+  align-items: flex-start;
+  gap: 16px;
+  min-height: 0;
+}
+
+.spread__paper {
+  flex: none;
+}
+
+/* Two documents in the room one was sized for. The print is scaled down in
+   the component -- the readout has to agree with it -- and the source takes
+   whatever is left rather than holding a width of its own. */
+.spread--split .spread__source {
+  flex: 1;
+  width: auto;
+  max-width: 520px;
+}
+
+/* The text as it came off the file. A column of its own, bordered like the
+   sheet, so side by side reads as two documents rather than as a document and
+   a log beside it. */
+.spread__source {
+  flex: none;
+  width: 460px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  padding: 22px 24px;
+  border: 1px solid var(--hair);
+  background: var(--board-raised);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--legend-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .checks {
   list-style: none;
   margin: 0;
   padding: 0;
+  border-top: 1px solid var(--hair-soft);
 }
 
 .check {
-  padding: 9px 0;
+  padding: 11px 0;
   border-bottom: 1px solid var(--hair-soft);
 }
 
@@ -2437,12 +2889,23 @@ textarea {
 }
 
 .check__label {
-  font-size: 13.5px;
+  flex: none;
+  font-size: 12.5px;
   color: var(--legend);
 }
 
+/* The rule that carries the eye from a heading to its reading. A gap alone let
+   the readings wander with the length of each heading; a hairline puts them in
+   a column and says the two ends belong to each other. */
+.check__spring {
+  flex: 1;
+  min-width: 12px;
+  height: 1px;
+  background: var(--hair-soft);
+}
+
 .check__status {
-  margin-left: auto;
+  flex: none;
   font-family: var(--font-legend);
   font-size: 10.5px;
   font-weight: 600;
@@ -2451,8 +2914,46 @@ textarea {
   color: var(--legend-faint);
 }
 
+/* What came out, in its own words: the first employer and the last, the
+   contact details found, the first few skills. The reading says how much; this
+   says what, which is the half that can be checked against the original. */
+.check__note {
+  margin: 3px 0 0 22px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--legend-faint);
+  /* One line, always. It is a glance-check against the original, and a note
+     that wraps to three lines stops being one -- the rail turns into a wall of
+     grey and the headings it belongs to stop leading. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.check__peek {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--legend-dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.check__peek:hover {
+  color: var(--legend);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.check__peek:focus-visible {
+  outline: 1px solid var(--focus);
+  outline-offset: 2px;
+}
+
 .check__reason {
-  margin: 6px 0 0 23px;
+  margin: 6px 0 0 22px;
   max-width: 52ch;
   font-size: 12.5px;
   line-height: 1.55;
@@ -2460,7 +2961,7 @@ textarea {
 }
 
 .check__source {
-  margin: 8px 0 0 23px;
+  margin: 8px 0 0 22px;
   padding: 9px 11px;
   max-height: 240px;
   overflow-y: auto;
@@ -2473,147 +2974,12 @@ textarea {
   white-space: pre-wrap;
 }
 
-/* --- the issue station ----------------------------------------------------
-   Export. It used to be a link that opened a blank tab and left the person
-   guessing whether a file had been produced. Issuing a drawing is a step with
-   a beginning and an end: it states what it will produce, it runs, and it
-   reports back that the sheet exists. */
-
-.issue {
-  display: flex;
-  flex-direction: column;
-  width: min(520px, 100%);
-  background: var(--board);
-  border: 1px solid var(--hair);
-}
-
-.issue__head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 16px;
-  border-bottom: 1px solid var(--hair-soft);
-}
-
-.issue__title {
-  margin: 0;
-  font-family: var(--font-legend);
-  font-size: 15px;
-  font-weight: 700;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-  color: var(--legend);
-}
-
-.issue__body {
-  padding: 14px 16px;
-}
-
-.issue__intro {
-  margin: 0 0 14px;
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: var(--legend-dim);
-}
-
-.issue__templates {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  background: var(--hair-soft);
-  border-top: 1px solid var(--hair-soft);
-  border-bottom: 1px solid var(--hair-soft);
-}
-
-.issue__template {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 11px 12px;
-  border: 0;
-  background: var(--board);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.issue__template:hover {
-  background: var(--board-raised);
-}
-
-.issue__template--on {
-  background: var(--board-raised);
-}
-
-.issue__template--on .issue__radio {
-  border-color: var(--check);
-  color: var(--check);
-}
-
-.issue__radio {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
-  border: 1px solid var(--hair);
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: transparent;
-}
-
-.issue__name {
-  display: block;
-  font-size: 13.5px;
-  color: var(--legend);
-}
-
-.issue__what {
-  display: block;
-  margin-top: 2px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--legend-faint);
-}
-
-.issue__warn {
-  margin: 12px 0 0;
-  padding-left: 10px;
-  border-left: 1px solid var(--rev);
-  font-size: 12.5px;
-  line-height: 1.55;
-  color: var(--rev-text);
-}
-
-.issue__result {
-  margin: 14px 0 0;
-  padding: 10px 12px;
-  border-left: 1px solid var(--check);
-  background: var(--check-wash);
-  font-size: 13px;
-  line-height: 1.55;
-  color: var(--legend);
-}
-
-.issue__result--bad {
-  border-left-color: var(--rev);
-  background: var(--rev-wash);
-  color: var(--rev-text);
-}
-
-.issue__foot {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 0 16px 16px;
-}
 
 /* --- overlays -------------------------------------------------------------
-   A dialog is used for exactly two things: installing a key, and issuing the
-   sheet. Both are deliberate one-off acts that want protected focus. Nothing
-   else on the board opens one. */
+   A dialog is used for one thing: installing a key. Export used to open one
+   too, to ask which of two templates to render -- and the answer was always
+   the canvas, because the canvas is the document. A dialog that asks a
+   question with one right answer is a press somebody has to make twice. */
 
 .scrim {
   position: fixed;
@@ -2652,22 +3018,12 @@ textarea {
 .aim__name {
   flex: 1;
   min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
   color: var(--legend);
   font-family: var(--font-ui);
   font-size: 12.5px;
-  text-align: left;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  cursor: pointer;
-}
-
-.aim__name:hover {
-  text-decoration: underline;
-  text-underline-offset: 2px;
 }
 
 .aim__drop {
@@ -2679,73 +3035,16 @@ textarea {
   background: transparent;
   color: var(--legend-faint);
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius-small);
 }
 
 .aim__drop:hover {
   color: var(--legend);
 }
 
-.aim__add {
-  align-self: flex-start;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--legend-faint);
-  font-family: var(--font-ui);
-  font-size: 12.5px;
-  cursor: pointer;
-  border-radius: 2px;
-}
-
-.aim__add:hover {
-  color: var(--legend);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.aim__name:focus-visible,
-.aim__drop:focus-visible,
-.aim__add:focus-visible {
+.aim__drop:focus-visible {
   outline: 1px solid var(--focus);
   outline-offset: 2px;
-}
-
-/* Room to read a posting in. A job ad runs long and the requirements are as
-   often at the foot as the head, so this is sized to scroll rather than to
-   peep. */
-.aim__field {
-  /* Inset to the dialog's own gutter rather than running edge to edge: the
-     heading and the paragraph above it are set to that line, and a field that
-     ignores it reads as a different panel that happens to be here. */
-  width: auto;
-  min-height: 40vh;
-  margin: 14px 16px 0;
-  padding: 11px 12px;
-  border: 1px solid var(--hair);
-  border-radius: 4px;
-  background: var(--board-raised);
-  color: var(--legend);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  line-height: 1.55;
-  resize: vertical;
-}
-
-.aim__field::placeholder {
-  color: var(--legend-faint);
-}
-
-.aim__field:focus {
-  outline: 0;
-  border-color: var(--focus);
-}
-
-.aim__foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
 }
 
 /* --- the model picker -----------------------------------------------------
@@ -2765,7 +3064,7 @@ textarea {
      adjacent controls at different heights read as a mistake. */
   padding: 8px 10px;
   border: 1px solid var(--hair);
-  border-radius: 4px;
+  border-radius: var(--radius);
   background: transparent;
   color: var(--legend-dim);
   font-family: var(--font-ui);
@@ -2784,6 +3083,9 @@ textarea {
   white-space: nowrap;
 }
 
+/* The same corner as the settings dialog, because this is the surface that
+   opens it: Manage providers is the last row in here. Two floating panels one
+   click apart, one rounded and one square, is a difference nobody chose. */
 .picker__panel {
   position: fixed;
   z-index: 60;
@@ -2791,8 +3093,11 @@ textarea {
   flex-direction: column;
   max-height: min(420px, 70vh);
   border: 1px solid var(--hair);
+  border-radius: var(--radius-panel);
   background: var(--board-deep);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  /* As on `.settings`: the rows and their hover fills run edge to edge. */
+  overflow: hidden;
 }
 
 .picker__scroll {
@@ -2934,7 +3239,13 @@ textarea {
   width: min(580px, 100%);
   max-height: min(700px, 90vh);
   border: 1px solid var(--hair);
+  border-radius: var(--radius-panel);
   background: var(--board);
+  /* Load-bearing with the radius, not decoration. The head, the rows and the
+     foot all run the full width and carry their own rules; without this they
+     draw straight through the corner the border turns, and the panel reads as
+     rounded with four square patches on it. */
+  overflow: hidden;
 }
 
 .settings__head {

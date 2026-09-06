@@ -844,7 +844,7 @@ class TestSafety:
             TurnRequest(document_id=state.id, message="tighten both"), channel
         )
 
-        reverted = await repo.revert(state.id, result.checkpoint_id)
+        reverted, _ = await repo.revert(state.id, result.checkpoint_id)
         assert reverted.doc.experience[0].bullets[0].text == "Rebuilt the ledger."
         assert reverted.doc.experience[0].bullets[1].text == "Led the migration."
 

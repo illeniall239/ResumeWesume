@@ -17,7 +17,8 @@
 
 import { create } from 'zustand';
 
-import type { StudioDoc } from '@/contracts/doc';
+import type { DocOp, StudioDoc } from '@/contracts/doc';
+import { applyOps } from '@/doc/apply';
 import type { FailureCode, SectionStatus } from '@/ingest/events';
 import { createDocument } from '@/lib/api';
 import { cancelImport, startImport, type StreamEvent } from '@/stream/ndjson';
@@ -78,6 +79,14 @@ export interface ImportState extends ImportData {
   start: (file: File) => void;
   cancel: () => void;
   setTitle: (title: string) => void;
+  /**
+   * Correct the preview's geometry from what the browser measured.
+   *
+   * Local only. Nothing here is saved, so there is no version to bump and no
+   * op log to write to -- and it must stay that way: confirming posts
+   * ``resume_data``, never the doc, so these rects never leave the browser.
+   */
+  reflowPreview: (ops: DocOp[]) => void;
   confirm: () => Promise<string>;
   reset: () => void;
   hydrate: () => void;
@@ -320,6 +329,12 @@ export const useImport = create<ImportState>((set, get) => ({
   setTitle(title) {
     set({ title });
     stash(get());
+  },
+
+  reflowPreview(ops) {
+    const { doc } = get();
+    if (!doc || !ops.length) return;
+    set({ doc: applyOps(doc, ops) });
   },
 
   async confirm() {

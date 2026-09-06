@@ -36,7 +36,13 @@ from typing import Any
 
 from studio.agent.assembler import AssembledCall
 from studio.agent.bridge import MainLoop, run_with_subprocess_support
-from studio.agent.loop import TurnRequest, TurnResult, TurnRunner, _keywords
+from studio.agent.loop import (
+    TargetGone,
+    TurnRequest,
+    TurnResult,
+    TurnRunner,
+    _keywords,
+)
 from studio.agent.prompts import SCAFFOLD_NOTE, SYSTEM_PROMPT
 from studio.agent import drafting
 from studio.agent.prose import ProseStream
@@ -180,12 +186,19 @@ class ClaudeCodeRunner:
             jd_keywords=_keywords(job_description),
         )
         scaffolding = base_doc.scaffold
-        self._inner._scaffolding = scaffolding
-        self._inner._unsupported = []
-        self._inner._identity_changes = []
+        # Every field this turn needs on the inner runner is set with the
+        # checkpoint below, through `TurnRunner.begin`. Setting them one by one
+        # here is what broke this path: `_target` was never among them, so the
+        # runner kept the empty string it was constructed with.
 
         applied_total = 0
         rejected_total = 0
+        #: Set when the document is deleted out from under a turn in progress.
+        #: Caught in the handler rather than left to propagate: an exception
+        #: raised inside an SDK tool comes back to the model as a tool failure,
+        #: which is an invitation to try the same tool again, and there is
+        #: nothing left to edit.
+        vanished = False
         repairs_per_call: dict[str, int] = {}
 
         # The SDK may end up on a worker loop (see `bridge`), so everything that
@@ -207,11 +220,48 @@ class ClaudeCodeRunner:
                 )
                 # Executed on the server loop: this touches the repository, and
                 # a SQLAlchemy session belongs to the loop that opened it.
-                applied, rejected, message = await server_loop.run_async(
-                    self._inner._execute(
-                        call, request, channel, ledger, grounder, repairs_per_call
+                nonlocal vanished
+                try:
+                    applied, rejected, message = await server_loop.run_async(
+                        self._inner._execute(
+                            call, request, channel, ledger, grounder, repairs_per_call
+                        )
                     )
-                )
+                except TargetGone as gone:
+                    logger.warning(
+                        "Claude Code turn %s lost document %s mid-turn",
+                        channel.turn_id,
+                        gone.document_id,
+                    )
+                    if not vanished:
+                        vanished = True
+                        server_loop.run_sync(
+                            channel.emit,
+                            ev.ErrorEvent(
+                                code="not_found",
+                                message=(
+                                    "This resume is no longer open -- it was "
+                                    "deleted or closed while the assistant was "
+                                    "working on it. Nothing further was "
+                                    "changed. Open it again from your resumes "
+                                    "and ask once more."
+                                ),
+                            ),
+                        )
+                    # Said plainly, because the model reads this and the only
+                    # correct response to it is to stop.
+                    return {
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "The document being edited no longer "
+                                    "exists. Stop here: there is nothing to "
+                                    "edit and no other tool will work."
+                                ),
+                            }
+                        ]
+                    }
                 applied_total += applied
                 rejected_total += rejected
                 # The SDK wants MCP content back. `_execute` already phrased the
@@ -269,6 +319,13 @@ class ClaudeCodeRunner:
 
         checkpoint_id = await self._repo.checkpoint(
             request.document_id, label="before turn", turn_id=channel.turn_id
+        )
+        # The document, the board this turn starts on, and the checkpoint to
+        # undo to -- the same state `TurnRunner.run` sets for the local path.
+        self._inner.begin(
+            document_id=request.document_id,
+            base_doc=base_doc,
+            checkpoint_id=checkpoint_id,
         )
         channel.emit(
             ev.TurnStarted(
@@ -407,6 +464,10 @@ class ClaudeCodeRunner:
 
         except Cancelled:
             status = "cancelled"
+        except TargetGone:
+            # Only if the SDK let it through; the handler above normally
+            # catches it first and lets the turn wind down on its own.
+            vanished = True
         except Exception as error:  # noqa: BLE001 -- never leak a turn crash
             logger.exception("Claude Code turn %s crashed", channel.turn_id)
             channel.emit(
@@ -445,7 +506,10 @@ class ClaudeCodeRunner:
 
         final = await self._inner._finalise(request, base_doc, ledger, channel)
 
-        if status == "ok" and rejected_total and not applied_total:
+        if vanished:
+            # However the turn finished reading, it did not finish its work.
+            status = "failed"
+        elif status == "ok" and rejected_total and not applied_total:
             status = "failed"
         elif status == "ok" and rejected_total:
             status = "partial"

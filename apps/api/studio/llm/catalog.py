@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 #: How to ask a provider what it has. ``none`` means there is nothing to ask --
 #: an arbitrary OpenAI-compatible server may or may not implement /models, and
 #: is tried optimistically anyway.
-Listing = Literal["none", "ollama", "openai", "anthropic", "gemini"]
+Listing = Literal["none", "ollama", "openai", "anthropic", "gemini", "openrouter"]
 
 #: A dropdown that hangs is worse than one that shows the fallback. Short on
 #: purpose: this runs while a menu is open and a person is waiting.
@@ -83,6 +83,13 @@ class Provider:
     #: Prefixes litellm registry entries carry for this provider, stripped so a
     #: stored model id is what the provider itself would call it.
     registry_key: str = ""
+    #: Whether its catalogue can be read without a key.
+    #:
+    #: Separate from ``needs_key``, which is about running a completion. A
+    #: gateway publishes what it can route to so you can decide whether to sign
+    #: up at all, and refusing to ask until a key is stored inverts that: the
+    #: one question somebody has before paying is what they would get.
+    lists_without_key: bool = False
 
 
 #: The provider that is not a provider. It runs the Claude Agent SDK against
@@ -176,7 +183,11 @@ PROVIDERS: dict[str, Provider] = {
         routes_itself=True,
         label="OpenRouter",
         needs_key=True,
-        listing="openai",
+        # Its own mode rather than the generic OpenAI one, for two reasons the
+        # other OpenAI-shaped providers do not have: the catalogue is public,
+        # and it is enormous. See ``_parse``.
+        listing="openrouter",
+        lists_without_key=True,
         default_api_base="https://openrouter.ai/api/v1",
         note="One key, many providers. Key from openrouter.ai.",
         registry_key="openrouter",
@@ -341,8 +352,9 @@ def _request_for(
         # logged here -- see the except clause in ``list_models``.
         return f"{base}/v1beta/models", {}, {"key": api_key}
 
-    # OpenAI-shaped. The base already ends in /v1 for every provider that needs
-    # it, so the path is bare.
+    # OpenAI-shaped, OpenRouter included -- its catalogue endpoint answers the
+    # same shape and takes the key or no key. The base already ends in /v1 for
+    # every provider that needs it, so the path is bare.
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     return f"{base}/models", headers, {}
 
@@ -384,12 +396,53 @@ def _parse(provider: Provider, payload: Any) -> list[str]:
             and "generateContent" in (entry.get("supportedGenerationMethods") or [])
         ]
 
+    if provider.listing == "openrouter":
+        return _openrouter_models(payload)
+
     # OpenAI and Anthropic both answer {"data": [{"id": ...}]}.
     return [
         str(entry.get("id", ""))
         for entry in payload.get("data", [])
         if isinstance(entry, dict)
     ]
+
+
+def _openrouter_models(payload: Any) -> list[str]:
+    """OpenRouter's catalogue, cut down to what this app can actually use.
+
+    A gateway is a different problem from a provider. OpenRouter routes to
+    everything, so its list arrives with four hundred entries in it, and the
+    generic OpenAI handling did two wrong things with that: it offered models
+    that cannot call a tool, and it cut the list alphabetically. Measured
+    against the live catalogue, the first sixty ids ran from ``aion-labs`` to
+    ``deepseek`` -- no OpenAI models in the menu at all, no Google, and eight
+    entries that cannot edit a resume because they cannot call a tool.
+
+    So two filters and an ordering:
+
+    * **Tools.** A model that cannot call one cannot edit a resume; every edit
+      in this app is a tool call. OpenRouter says so per model, which is the
+      same guard the Gemini branch gets from ``generateContent``.
+    * **No ``:batch``.** Those are the asynchronous batch route, and a turn
+      here is streamed and watched as it lands.
+    * **Newest first, then cut.** Which sixty is the decision that matters, and
+      recency is the only signal in the payload that tracks what somebody
+      actually wants from a gateway. The caller re-sorts what survives into
+      alphabetical order, so the menu is still stable to read -- recency
+      chooses the members, not the order.
+    """
+    entries = [entry for entry in payload.get("data", []) if isinstance(entry, dict)]
+    usable = [
+        entry
+        for entry in entries
+        if "tools" in (entry.get("supported_parameters") or [])
+        and not str(entry.get("id", "")).endswith(":batch")
+    ]
+    # ``created`` is a unix timestamp. Missing on nothing today, and treated as
+    # oldest rather than newest if it ever is: an entry that will not say when
+    # it arrived should not displace one that does.
+    usable.sort(key=lambda entry: entry.get("created") or 0, reverse=True)
+    return [str(entry.get("id", "")) for entry in usable[:MAX_MODELS]]
 
 
 async def list_models(
@@ -419,7 +472,7 @@ async def list_models(
 
     fallback = fallback_models(provider_id)
 
-    if provider.needs_key and not api_key:
+    if provider.needs_key and not api_key and not provider.lists_without_key:
         return ModelListing(
             models=fallback,
             source="fallback",

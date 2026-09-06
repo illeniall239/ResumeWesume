@@ -81,6 +81,27 @@ logger = logging.getLogger(__name__)
 _READ_ONLY = {"read_document", "find_text"}
 
 
+class TargetGone(Exception):
+    """The document the turn is editing is no longer in the register.
+
+    Its own type because the alternative was to carry on with an empty
+    ``StudioDoc()``, which is what used to happen, and it produced a turn that
+    read as broken rather than as stopped: every read tool answered with a
+    blank resume, so the model reported the document as empty and started
+    hunting for the words it had just been shown, and every write raised
+    ``KeyError`` on the way to the database and came back as "The edit could
+    not be saved." The model cannot recover from that -- there is nothing to
+    edit -- so it retried until the stall counter ended the turn, eight
+    identical failures deep, with nothing anywhere saying the document was
+    gone. The turn start already refuses a missing document; this is the same
+    refusal for a document that goes missing mid-turn.
+    """
+
+    def __init__(self, document_id: str) -> None:
+        super().__init__(document_id)
+        self.document_id = document_id
+
+
 @dataclass
 class TurnRequest:
     document_id: str
@@ -146,6 +167,32 @@ class TurnRunner:
         #: What the guards compare against, for the same reason.
         self._base_doc: StudioDoc | None = None
 
+    def begin(
+        self, *, document_id: str, base_doc: StudioDoc, checkpoint_id: str
+    ) -> None:
+        """Everything this runner holds for the length of one turn.
+
+        Public, and gathered into one call, because there are two harnesses.
+        ``run`` drives the local models; the Agent SDK brings its own loop and
+        drives ``_execute`` directly, never entering ``run`` at all. That path
+        set three of these fields by hand and missed the rest -- including
+        ``_target``, which stays ``""`` from the constructor.
+
+        So every tool call on a Claude subscription read ``repo.get("")``,
+        found nothing, and worked against a document that was not there: reads
+        answered with a blank resume and writes raised ``KeyError`` on the way
+        to the database. Not an edge case -- that path could not write at all.
+        A method both harnesses call is the only version of this that cannot
+        drift again.
+        """
+        self._scaffolding = base_doc.scaffold
+        self._unsupported = []
+        self._identity_changes = []
+        self._target = document_id
+        self._origin = document_id
+        self._base_doc = base_doc
+        self._checkpoints = {document_id: checkpoint_id}
+
     async def run(self, request: TurnRequest, channel: TurnChannel) -> TurnResult:
         started = time.monotonic()
         state = await self._repo.get(request.document_id)
@@ -178,9 +225,6 @@ class TurnRunner:
         # being asked. Everything written under this is marked; see
         # ``unverified``.
         scaffolding = base_doc.scaffold
-        self._scaffolding = scaffolding
-        self._unsupported = []
-        self._identity_changes = []
         if scaffolding:
             # Lifts only the runaway-rewrite cap; every other limit stands.
             self._budget = self._budget.for_scaffold()
@@ -189,13 +233,14 @@ class TurnRunner:
         )
         schemas = self._registry.schemas(tiers)
 
-        self._target = request.document_id
-        self._origin = request.document_id
         checkpoint_id = await self._repo.checkpoint(
             request.document_id, label="before turn", turn_id=channel.turn_id
         )
-        self._checkpoints = {request.document_id: checkpoint_id}
-        self._base_doc = base_doc
+        self.begin(
+            document_id=request.document_id,
+            base_doc=base_doc,
+            checkpoint_id=checkpoint_id,
+        )
 
         channel.emit(
             ev.TurnStarted(
@@ -228,7 +273,14 @@ class TurnRunner:
             user_message=request.message,
             outline_text=outline_text,
             history=request.history,
-            job_description=job_description,
+            # Not twice. The turn a posting is pasted in, the message *is* the
+            # posting, and sending it again under <job_description> doubles the
+            # longest thing in the prompt -- on a 4,096-token context that is
+            # the system prompt and the tool schemas gone. Every turn after
+            # this one carries it, which is the point of storing it.
+            job_description=None
+            if job_description and job_description.strip() == request.message.strip()
+            else job_description,
             scaffold=scaffolding,
         )
 
@@ -458,6 +510,26 @@ class TurnRunner:
                 )
             channel.emit(ev.Warning(source="budget", message=message))
             status = "partial"
+        except TargetGone as gone:
+            # Ahead of the generic handler below, which would report this as a
+            # crash. It is not one: the document went away while the turn was
+            # working on it, and the only useful thing to say is which document
+            # and that the work stopped there.
+            logger.warning(
+                "Turn %s lost document %s mid-turn", channel.turn_id, gone.document_id
+            )
+            channel.emit(
+                ev.ErrorEvent(
+                    code="not_found",
+                    message=(
+                        "This resume is no longer open -- it was deleted or "
+                        "closed while the assistant was working on it. Nothing "
+                        "was changed. Open it again from your resumes and ask "
+                        "once more."
+                    ),
+                )
+            )
+            status = "failed"
         except BackendError as error:
             channel.emit(ev.ErrorEvent(code="provider_error", message=str(error)))
             status = "failed"
@@ -556,7 +628,9 @@ class TurnRunner:
     ) -> tuple[int, int, dict[str, Any]]:
         """Run one tool call. Returns (applied, rejected, tool message)."""
         state = await self._repo.get(self._target)
-        doc = state.doc if state else StudioDoc()
+        if state is None:
+            raise TargetGone(self._target)
+        doc = state.doc
 
         name = call.name
         spec = self._registry.get(name)
@@ -683,9 +757,20 @@ class TurnRunner:
                 self._target, ops, ctx=ctx, turn_id=channel.turn_id
             )
         except Exception as error:  # noqa: BLE001
-            logger.error("Applying %s failed: %s", name, error)
+            # With the traceback, and with the cause carried through to the
+            # message. "The edit could not be saved." on its own is the same
+            # sentence for a locked database, a document that has been deleted
+            # and a schema the write does not satisfy -- three problems with
+            # three different remedies, and no way to tell which one is in
+            # front of you. The model reads this too, and a named cause is the
+            # difference between adapting and retrying the identical call.
+            logger.exception("Applying %s to %s failed", name, self._target)
             return self._reject(
-                call, channel, "apply_failed", "The edit could not be saved."
+                call,
+                channel,
+                "apply_failed",
+                f"The edit could not be saved: {type(error).__name__}: {error}",
+                spec=spec,
             )
 
         if applied:

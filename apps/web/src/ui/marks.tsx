@@ -77,6 +77,28 @@ export function Cross(props: MarkProps) {
   );
 }
 
+/**
+ * Throwing something away.
+ *
+ * A bin rather than a cross, because a cross is the mark this app already uses
+ * for a rejected edit and for closing a dialog -- neither of which destroys
+ * anything. What deleting a résumé does is not a dismissal, and the glyph
+ * should not be borrowed from one.
+ *
+ * Drawn on the same 16 grid as the rest: a lid with a handle over it, and a
+ * body with two staves. Nothing narrower reads as a bin at 13px.
+ */
+export function Bin(props: MarkProps) {
+  return (
+    <Frame {...props}>
+      <path d="M2.5 4.5h11" />
+      <path d="M6.5 4.5V3a.5.5 0 01.5-.5h2a.5.5 0 01.5.5v1.5" />
+      <path d="M4 4.5l.6 8.2a.9.9 0 00.9.8h5a.9.9 0 00.9-.8L12 4.5" />
+      <path d="M6.8 7v4M9.2 7v4" />
+    </Frame>
+  );
+}
+
 /** Awaiting a decision. The state the stamp block is in. */
 export function Query(props: MarkProps) {
   return (

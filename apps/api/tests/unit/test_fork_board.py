@@ -158,7 +158,7 @@ class TestForkingBeforeTailoring:
         )
         copy = [b for b in canvas.boards if b.title == "Stripe - Payments"][0]
 
-        restored = await repo.revert(copy.id, result.checkpoint_id)
+        restored, _ = await repo.revert(copy.id, result.checkpoint_id)
 
         assert restored.doc.experience[0].bullets[0].text == "Rebuilt the ledger."
         # And the original never moved, so there was nothing there to restore.

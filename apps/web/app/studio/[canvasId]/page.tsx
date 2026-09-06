@@ -1,21 +1,25 @@
 'use client';
 
-import { use, useEffect, useRef, useState } from 'react';
+import { use, useCallback, useEffect, useRef, useState } from 'react';
 
 import type { DocOp } from '@/contracts/doc';
 import ChatPanel from '@/chat/chat-panel';
-import IssueStation from '@/export/issue-station';
+import ClearChat from '@/chat/clear-chat';
+import ExportButton from '@/export/export-button';
+import PrintButton from '@/export/print-button';
 import { InsertToolbar } from '@/canvas/insert-toolbar';
 import { SheetLength } from '@/canvas/sheet-length';
 import { usePan } from '@/canvas/use-pan';
 import { BoardPlane } from '@/canvas/board-plane';
 import { mintLike } from '@/canvas/ids';
+import { meantForTheSheet } from '@/canvas/keys';
 import { removeElements } from '@/canvas/pages';
 import { useSelection } from '@/canvas/selection';
 import { canZoom, fitZoom, useView } from '@/canvas/view';
 import { useReflow } from '@/canvas/use-reflow';
 import { Minus, Plus, Redo, Undo } from '@/ui/marks';
 import { Wordmark } from '@/ui/wordmark';
+import { addLineAfter, removeLine } from '@/doc/lines';
 import { templateLabel } from '@/render/templates';
 import { useChat } from '@/store/chat';
 import { createDocument } from '@/lib/api';
@@ -58,12 +62,13 @@ export default function StudioPage({
   const locked = useStudio((state) => state.locked);
   const load = useStudio((state) => state.load);
   const edit = useStudio((state) => state.edit);
+  const relayout = useStudio((state) => state.relayout);
   const setFocus = useStudio((state) => state.setFocus);
   const history = useStudio((state) => state.history);
   const stage = useStudio((state) => state.stage);
   const flush = useStudio((state) => state.flush);
   const nudgeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [issuing, setIssuing] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   const zoom = useView((state) => state.zoom);
@@ -135,7 +140,11 @@ export default function StudioPage({
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
-      const typing = target?.isContentEditable || target instanceof HTMLTextAreaElement;
+      // Not only "is the caret live" but "is the person reading the
+      // conversation" -- a click on a reply focuses nothing, so without the
+      // second question Ctrl+A there selected every box on the page and threw
+      // the text selection away. See `meantForTheSheet`.
+      const mine = meantForTheSheet(target, window.getSelection()?.anchorNode ?? null);
 
       // Escape is handled before the deference to contentEditable, because
       // leaving the text is exactly what it means there -- and the handler
@@ -150,7 +159,7 @@ export default function StudioPage({
         }
         return;
       }
-      if (typing) return;
+      if (!mine) return;
 
       const selected = useSelection.getState().selected;
 
@@ -281,6 +290,68 @@ export default function StudioPage({
     return () => window.removeEventListener('keydown', onKey);
   }, [history]);
 
+  /**
+   * Enter at the end of a bullet: open the next one.
+   *
+   * Everything on the sheet could be edited by hand and nothing could be added:
+   * the insert strip offers a text box, an image and three shapes, which are
+   * decoration on the canvas rather than a line under a job. So a person who
+   * wanted one more bullet had to ask the assistant for it.
+   *
+   * The caret follows the new line. Without that the gesture opens a line and
+   * leaves you looking at it, which is a worse answer than not opening one.
+   */
+  const addLine = useCallback(
+    (after: string) => {
+      const made = addLineAfter(useStudio.getState().doc, after);
+      if (!made) return;
+      void edit(made.ops);
+      // After the render that draws it. The element does not exist yet, and
+      // `plaintext-only` is applied on the same pass.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          const line = document.querySelector<HTMLElement>(
+            `[data-nid="${made.nid}"]`
+          );
+          line?.focus();
+        });
+      });
+    },
+    [edit]
+  );
+
+  /**
+   * Backspace in an empty bullet: close it.
+   *
+   * The counterpart, and the only way to be rid of a line: clearing one left a
+   * bullet point marking nothing, with no gesture that would remove it. The
+   * last bullet of an entry is kept -- see `removeLine` -- because Backspace
+   * is held down, and an entry emptying itself out from under the cursor is
+   * not what anybody meant by it.
+   */
+  const dropLine = useCallback(
+    (nid: string) => {
+      const cut = removeLine(useStudio.getState().doc, nid);
+      if (!cut) return;
+      void edit(cut.ops);
+      if (!cut.focus) return;
+      requestAnimationFrame(() => {
+        const line = document.querySelector<HTMLElement>(`[data-nid="${cut.focus}"]`);
+        if (!line) return;
+        line.focus();
+        // At the end of the line above, which is where the character you just
+        // deleted was: a caret dropped at the start reads as having jumped.
+        const range = document.createRange();
+        range.selectNodeContents(line);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      });
+    },
+    [edit]
+  );
+
   // The server places frames without being able to measure text, so a freshly
   // migrated document opens with its sections overlapping until this corrects
   // them from what the browser actually rendered.
@@ -288,7 +359,12 @@ export default function StudioPage({
   // Version is part of the key: without it the pass runs once and never
   // again, so text an agent turn made longer overflows its frame and is
   // drawn over whatever sits below.
-  useReflow(canvasRef, doc, edit, version);
+  // `relayout`, not `edit`: this batch is the browser's measurement written
+  // down, not a gesture, so it must not land in the undo stack. It used to,
+  // and the cost was a press per edit -- the first Ctrl+Z moved geometry
+  // nobody could see -- plus a dead redo, because the correction that followed
+  // an undo read as a fresh edit and cleared the stack.
+  useReflow(canvasRef, doc, relayout, version);
 
   /**
    * Open at a magnification the sheet actually fits.
@@ -371,7 +447,22 @@ export default function StudioPage({
             between the conversation and the sheet -- and the document's name
             sits over the document. */}
         <div className="rail__brand">
-          <Wordmark size={12} />
+          {/* The way back. Everything else on this bar acts on the document;
+              the mark is the one thing here that is not about it, so it is
+              what leaves it -- which is where a logo goes in every other
+              application a person has used. The label leads with the words
+              that are actually on screen, so saying the visible name reaches
+              it by voice, and then says where it goes. */}
+          <a className="rail__home" href="/" aria-label="resumewesume, your résumés">
+            <Wordmark size={12} />
+          </a>
+
+          {/* The conversation's own control, over the conversation's own
+              column. Not in the composer row: that row is where a message is
+              sent from, and a button that empties the transcript sitting
+              beside Send is a misclick with nothing behind it. */}
+          <span className="rail__spring" />
+          <ClearChat canvasId={canvasId} />
         </div>
 
         <div className="rail__actions">
@@ -475,16 +566,21 @@ export default function StudioPage({
             foot of the page. Everything you *do* to the document lives on
             this rail; the block below states what the document is. */}
         {/* The one filled control on the sheet: it is the only thing here
-            that produces a file. */}
-        <button
-          type="button"
-          className="ctl ctl--primary"
-          onClick={() => setIssuing(true)}
+            that produces a file -- and it produces it, rather than opening a
+            dialog that asks the same question again. */}
+        {/* Print first, then Export. Most people print a CV, and the file is
+            the step you take when you cannot. */}
+        <PrintButton
+          documentId={documentId ?? canvasId}
           disabled={!doc}
-          title="Export a PDF"
-        >
-        Export PDF
-      </button>
+          onError={setExportError}
+        />
+        <ExportButton
+          documentId={documentId ?? canvasId}
+          title={title || 'resume'}
+          disabled={!doc}
+          onError={setExportError}
+        />
         </div>
       </div>
 
@@ -513,8 +609,10 @@ export default function StudioPage({
             </div>
           )}
 
-          {(error || canvasError) && (
-            <div className="notice notice--error">{error || canvasError}</div>
+          {(error || canvasError || exportError) && (
+            <div className="notice notice--error">
+              {error || canvasError || exportError}
+            </div>
           )}
           {loading && <div className="notice">Reading the sheet…</div>}
 
@@ -545,6 +643,8 @@ export default function StudioPage({
                   void edit([{ op: 'set_field', target, value }]);
                 }}
                 onFocusNode={setFocus}
+                onSplitLine={addLine}
+                onRemoveLine={dropLine}
               />
             ) : (
               !loading && (
@@ -607,15 +707,6 @@ export default function StudioPage({
           </div>
         </section>
       </div>
-
-      {issuing && (
-        <IssueStation
-          documentId={documentId ?? canvasId}
-          title={title || 'resume'}
-          doc={doc}
-          onClose={() => setIssuing(false)}
-        />
-      )}
     </main>
   );
 }

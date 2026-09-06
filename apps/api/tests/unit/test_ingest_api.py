@@ -170,6 +170,29 @@ class TestStream:
         assert ready["failed"] == 0
         assert ready["title"] == "Alex Morgan"
 
+    async def test_the_preview_arrives_on_a_page(self, client) -> None:
+        # The review screen draws sheets, and a document with no pages has
+        # nothing to draw them from -- it fell back to the flowing renderer and
+        # showed one continuous column, while the studio showed the same résumé
+        # across two. A review that does not show what you are about to get is
+        # not a review, so the importer lays out a page exactly as
+        # POST /documents does for every document it creates.
+        scripted(SUMMARY, EXPERIENCE, EDUCATION)
+        ready = events((await upload(client, pdf_bytes())).text)[-1]
+
+        pages = ready["doc"]["pages"]
+        assert pages, "the preview arrived with nowhere to be drawn"
+        # Every frame binds to something the renderer can find: the header, a
+        # section key, or an entry nid. A frame pointing at nothing draws
+        # nothing, and the section it stood for is silently missing.
+        refs = [
+            element["ref"] for element in pages[0]["elements"] if "ref" in element
+        ]
+        assert "personal" in refs
+        assert "experience" in refs
+        entries = {entry["nid"] for entry in ready["doc"]["experience"]}
+        assert entries <= set(refs)
+
     async def test_the_checklist_is_announced_before_any_parsing(self, client) -> None:
         """So the user sees what was found in their resume immediately, rather
         than an empty box for the length of a model call."""

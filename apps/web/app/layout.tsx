@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Archivo, Archivo_Narrow, Source_Serif_4 } from 'next/font/google';
+import { DM_Sans, Source_Serif_4 } from 'next/font/google';
 
 import './globals.css';
 // After globals, deliberately: globals owns the document and the PDF, and the
@@ -8,28 +8,30 @@ import './globals.css';
 import './board.css';
 
 /**
- * Drawing-office lettering, self-hosted.
+ * The app's face, self-hosted.
  *
- * `next/font` downloads these at build time and serves them from our own
- * origin, so there is no request to Google at runtime -- which matters for an
- * app whose whole position is that nothing leaves the machine.
+ * `next/font` downloads it at build time and serves it from our own origin, so
+ * there is no request to Google at runtime -- which matters for an app whose
+ * whole position is that nothing leaves the machine.
  *
- * Archivo Narrow is the legend face: condensed, upright, monoline, and legible
- * in caps at ten pixels, which is what a title block and a schedule header
- * need. Archivo is the same skeleton at normal width and carries everything
- * that is actually prose. One superfamily, two roles.
+ * DM Sans, chosen for softness after two faces that were not soft enough. It
+ * was Archivo, a grotesque -- flat-cut terminals, tight apertures, rigid
+ * verticals -- and then IBM Plex Sans, which is humanist and opens the
+ * apertures but keeps a squared, engineered skeleton underneath. That skeleton
+ * is what still read as firm. DM Sans is geometric with genuinely round bowls
+ * and very low stroke contrast, so the softness is in the shapes themselves
+ * rather than in how their ends are cut.
+ *
+ * One face, both roles, which is the change that came with it. The legend
+ * lettering -- small uppercase labels, tracked out -- used to be a condensed
+ * sibling, and DM Sans has none. Set in the same face at normal width it is a
+ * little less dense and reads no worse, and the alternative was keeping an
+ * entire second family downloaded for label text.
  *
  * The document's own faces are untouched and live in globals.css. A résumé's
  * typography is the thing an employer reads, and it is not ours to restyle.
  */
-const narrow = Archivo_Narrow({
-  subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-narrow',
-  display: 'swap',
-});
-
-const body = Archivo({
+const body = DM_Sans({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
   variable: '--font-ui-stack',
@@ -62,7 +64,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={`${narrow.variable} ${body.variable} ${docSerif.variable}`}>
+    <html lang="en" className={`${body.variable} ${docSerif.variable}`}>
       <body>{children}</body>
     </html>
   );

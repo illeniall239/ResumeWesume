@@ -39,6 +39,7 @@ from studio.doc.ops import (
     Tier,
 )
 from studio.doc.schema import (
+    DEFAULT_SECTIONS,
     AnyElement,
     CustomItemNode,
     FrameElement,
@@ -205,6 +206,11 @@ def tier_of(op: DocOp, index: NodeIndex) -> Tier:
     """Derive the risk tier of an op from what it touches."""
     if isinstance(op, SetField):
         owner, attribute = _split_target(op.target)
+        # A heading is what the résumé calls a part of itself, not a claim
+        # about the person: renaming "Experience" to "Selected Work" changes
+        # presentation and no fact. Tier A, the same as reordering.
+        if owner == "section":
+            return "A"
         if owner == "personal":
             return "C"
         if attribute in IDENTITY_FIELDS:
@@ -630,6 +636,42 @@ def _do_set_style(index: NodeIndex, op: SetStyle) -> RejectedOp | None:
 
 def _do_set_field(doc: StudioDoc, index: NodeIndex, op: SetField) -> RejectedOp | None:
     owner, attribute = _split_target(op.target)
+
+    # A section's own heading. Addressed by section key rather than by nid,
+    # because a section is not a node: it is an entry in ``doc.sections`` that
+    # says what the résumé calls this part of itself and in what order. That is
+    # why the headings were the one text on the page nobody could change --
+    # every op reaches a nid, and there was no nid to reach.
+    #
+    # Renaming one is presentation and touches not a word of anybody's history,
+    # so it is a plain field write like any other. What it must not do is
+    # rename the *key*: `experience` is what the tools, the importer and the
+    # layout all address, and only the label moves.
+    if owner == "section":
+        # A document with nothing declared is rendered from the default set --
+        # so the headings on screen are real and renaming one has to work.
+        # Materialised on first write rather than at creation, which keeps a
+        # document that has never been touched byte-identical to what it was.
+        if not doc.sections:
+            doc.sections = [meta.model_copy() for meta in DEFAULT_SECTIONS]
+        meta = next((entry for entry in doc.sections if entry.key == attribute), None)
+        if meta is None:
+            known = ", ".join(entry.key for entry in doc.sections)
+            return _reject(
+                op,
+                RejectCode.UNKNOWN_NODE,
+                f"No section {attribute!r}. This résumé has: {known}",
+            )
+        if not _matches(meta.label, op.expect):
+            return _reject(
+                op,
+                RejectCode.STALE_EXPECT,
+                "Current value does not match",
+                {"actual": meta.label},
+            )
+        op.before = meta.label
+        meta.label = op.value or ""
+        return None
 
     if owner == "personal":
         if attribute not in type(doc.personal).model_fields:

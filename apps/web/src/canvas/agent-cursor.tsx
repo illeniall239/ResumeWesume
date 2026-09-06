@@ -97,6 +97,11 @@ function locate(root: HTMLElement, target: string): Element | null {
     root.querySelector(`[data-field="${escaped}"]`) ??
     root.querySelector(`[data-nid="${escaped}"]`) ??
     root.querySelector(`[data-section="${escaped}"]`) ??
+    // A whole sheet. The tools that place a box, an image or a shape name the
+    // page they land on and nothing finer -- the thing itself does not exist
+    // yet -- so the pen goes to the page and the `touched` that follows brings
+    // it the rest of the way.
+    root.querySelector(`[data-page="${escaped}"]`) ??
     // `nid.field` where the field is not separately rendered: fall back to the
     // entry that holds it, which is where the change will show up anyway.
     (target.includes('.')

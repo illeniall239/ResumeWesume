@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -18,6 +19,7 @@ from studio.doc.history import VersionGroup, version_to_redo, version_to_undo
 from studio.doc.ops import AppliedOp, DocOp, RejectedOp
 from studio.doc.schema import StudioDoc
 from studio.persistence.models import (
+    _utcnow,
     Asset,
     Base,
     Canvas,
@@ -304,11 +306,19 @@ class DocumentRepo:
         messages: list[tuple[str, str, str | None]],
         *,
         turn_id: str | None = None,
+        thinking: str | None = None,
+        activity: list[dict[str, Any]] | None = None,
     ) -> None:
         """Append ``(role, text, status)`` triples to a document's conversation.
 
         Written once, after the turn settles, so a turn that was cancelled or
         crashed leaves the same trace the user saw rather than a half-message.
+
+        ``thinking`` and ``activity`` land on the assistant's row and nowhere
+        else -- they are what the turn did, and the user's message did not do
+        anything. Keywords rather than two more slots in every tuple: a turn
+        writes one assistant message, and widening the tuple would have every
+        caller pass ``None, None`` to say so.
         """
         rows = [
             ChatMessage(
@@ -317,6 +327,8 @@ class DocumentRepo:
                 text=text,
                 status=status,
                 turn_id=turn_id,
+                thinking=thinking if role == "assistant" else None,
+                activity=activity if role == "assistant" else None,
             )
             for role, text, status in messages
             if text.strip()
@@ -645,6 +657,186 @@ class DocumentRepo:
             await session.commit()
         return CanvasState(id=canvas_id, title=title.strip() or "Untitled", boards=[])
 
+    async def export_everything(self) -> dict[str, Any]:
+        """Every résumé on this machine, as one restorable object.
+
+        The backup story for a program people install. There is no server
+        holding a copy: if ``studio.db`` is lost or corrupted, every résumé
+        goes with it, and per-document PDF export does not bring one back --
+        a PDF is a rendering, not a document.
+
+        Content rather than a copy of the database file. A ``.db`` is opaque,
+        tied to the schema version that wrote it, and useless to anything but
+        this program; a document here is the same shape ``POST /documents``
+        already accepts, so a restore is replay rather than a migration.
+
+        Assets travel with it, base64 in the JSON. A résumé whose photo is
+        missing is not a résumé that was backed up, and they are content
+        addressed -- so restoring the same bundle twice stores one copy.
+        """
+        async with self._session() as session:
+            canvases = (
+                await session.execute(select(Canvas).order_by(Canvas.created_at))
+            ).scalars().all()
+            documents = (
+                await session.execute(select(Document).order_by(Document.created_at))
+            ).scalars().all()
+            assets = (await session.execute(select(Asset))).scalars().all()
+
+            return {
+                "format": "resumewesume.backup",
+                # Not the schema version: this says how the *bundle* is shaped,
+                # so a reader can refuse one it does not understand rather than
+                # half-restoring it. Each document carries its own
+                # `schema_version` inside `doc`, as it does in the database.
+                "version": 1,
+                "exported_at": _utcnow().isoformat(),
+                "canvases": [
+                    {
+                        "id": row.id,
+                        "title": row.title,
+                        "created_at": row.created_at.isoformat(),
+                        "updated_at": row.updated_at.isoformat(),
+                    }
+                    for row in canvases
+                ],
+                "documents": [
+                    {
+                        "id": row.id,
+                        "canvas_id": row.canvas_id,
+                        "title": row.title,
+                        "doc": row.doc,
+                        "job_description": row.job_description,
+                        "source_markdown": row.source_markdown,
+                        "created_at": row.created_at.isoformat(),
+                        "updated_at": row.updated_at.isoformat(),
+                    }
+                    for row in documents
+                ],
+                "assets": [
+                    {
+                        "id": row.id,
+                        "document_id": row.document_id,
+                        "mime": row.mime,
+                        "width": row.width,
+                        "height": row.height,
+                        "filename": row.filename,
+                        "data": base64.b64encode(row.data).decode("ascii"),
+                    }
+                    for row in assets
+                ],
+            }
+
+    async def restore_everything(self, bundle: dict[str, Any]) -> dict[str, int]:
+        """Put back whatever is missing, and touch nothing that is here.
+
+        The same rule the database adoption follows, and for the same reason:
+        a restore is reached for when something has already gone wrong, and the
+        one outcome worse than not recovering is destroying what survived. So
+        an id already present is left exactly as it is -- which also makes this
+        idempotent, and makes "I deleted one résumé by mistake" work: the
+        bundle brings back the missing one and steps over the rest.
+
+        What does not come back is history. The op log is not in a backup --
+        it is most of the bulk and none of the value once a disk has failed --
+        so a restored document starts at version 1 with nothing to undo. Its
+        words, its layout, its images and the posting it is aimed at are what
+        a backup is for, and those are whole.
+        """
+        if bundle.get("format") != "resumewesume.backup":
+            raise ValueError("That file is not a ResumeWesume backup.")
+        if int(bundle.get("version", 0)) != 1:
+            raise ValueError(
+                f"That backup is version {bundle.get('version')!r}, which this "
+                "version of the app cannot read."
+            )
+
+        counts = {"canvases": 0, "documents": 0, "assets": 0, "skipped": 0}
+
+        async with self._session() as session:
+            # Canvases first: a document names the canvas it belongs to, and a
+            # board restored before its canvas would point at nothing.
+            for entry in bundle.get("canvases") or []:
+                identifier = str(entry.get("id") or "")
+                if not identifier or await session.get(Canvas, identifier):
+                    counts["skipped"] += 1
+                    continue
+                session.add(
+                    Canvas(id=identifier, title=str(entry.get("title") or "Untitled"))
+                )
+                counts["canvases"] += 1
+
+            for entry in bundle.get("documents") or []:
+                identifier = str(entry.get("id") or "")
+                if not identifier or await session.get(Document, identifier):
+                    counts["skipped"] += 1
+                    continue
+                # Through the schema, not straight into the column: a bundle
+                # that has been hand-edited or half-written is refused here
+                # rather than stored and found to be unreadable on open.
+                #
+                # Named, because the raw validation error is a wall of type
+                # complaints against a document the person cannot see. Which
+                # résumé is broken is the one thing they can act on -- it tells
+                # them what they have lost and what the rest of the file still
+                # holds.
+                try:
+                    doc = load_doc(entry.get("doc") or {})
+                except ValueError as error:
+                    raise ValueError(
+                        f"The résumé {entry.get('title') or identifier!r} in that "
+                        f"backup could not be read, so nothing was restored: {error}"
+                    ) from None
+                session.add(
+                    Document(
+                        id=identifier,
+                        canvas_id=entry.get("canvas_id"),
+                        title=str(entry.get("title") or "Untitled"),
+                        doc=doc.model_dump(mode="json"),
+                        # Recomputed rather than carried. The hash is what
+                        # every conditional request compares against, and one
+                        # taken on trust from a file could disagree with the
+                        # bytes beside it forever.
+                        content_hash=content_hash(doc),
+                        version=1,
+                        job_description=entry.get("job_description"),
+                        source_markdown=entry.get("source_markdown"),
+                    )
+                )
+                counts["documents"] += 1
+
+            for entry in bundle.get("assets") or []:
+                identifier = str(entry.get("id") or "")
+                if not identifier or await session.get(Asset, identifier):
+                    counts["skipped"] += 1
+                    continue
+                try:
+                    data = base64.b64decode(entry.get("data") or "", validate=True)
+                except (ValueError, TypeError):
+                    counts["skipped"] += 1
+                    continue
+                session.add(
+                    Asset(
+                        id=identifier,
+                        # Deliberately dropped: it records which document first
+                        # introduced the image, and that document may not be
+                        # part of this restore. The bytes are what matter, and
+                        # they are addressed by their own hash.
+                        document_id=None,
+                        mime=str(entry.get("mime") or "image/png"),
+                        data=data,
+                        width=int(entry.get("width") or 0),
+                        height=int(entry.get("height") or 0),
+                        byte_size=len(data),
+                        filename=str(entry.get("filename") or "")[:255],
+                    )
+                )
+                counts["assets"] += 1
+
+            await session.commit()
+
+        return counts
+
     async def list_canvases(self) -> list[CanvasState]:
         """Every canvas, newest activity first, each with its boards.
 
@@ -887,6 +1079,18 @@ class DocumentRepo:
                 )
             ).scalars().all()
 
+            # A wholesale swap is reversed by swapping back, not by replaying
+            # ops: undoing a turn from the transcript restores a snapshot, and
+            # there is no set of ops that expresses "the document as it was".
+            # The row carries both ends, so this is symmetric and redo is the
+            # same call in the other direction.
+            if len(rows) == 1 and (rows[0].op or {}).get("op") == "restore":
+                back = (rows[0].inverse or {}).get("checkpoint")
+                if not back:
+                    return None
+                state, _ = await self._restore(document_id, back, actor=direction)
+                return state, target
+
             # Reverse seq order: the last op applied is the first undone, or a
             # remove-then-insert pair would restore into a list that has not
             # been put back yet.
@@ -1037,6 +1241,60 @@ class DocumentRepo:
         History stays append-only: reverting never rewinds ``version``, so a
         client holding an old ETag still gets a conflict rather than silently
         appearing to be up to date.
+
+        The version it produces is written into the op log, and that is not
+        bookkeeping for its own sake. Undo chooses what to reverse by walking
+        the log, so a version with nothing in it was invisible: after undoing a
+        turn from the transcript, the next Ctrl+Z aimed at the turn *below* the
+        revert and re-applied inverses to a document they had already been
+        applied to. Nothing appeared to happen, and every press after that was
+        one step further out of step with what the person could see.
+
+        The row carries the snapshot on both sides -- where the document went,
+        and where it came from -- so reversing it is a restore in the other
+        direction rather than an op replay. ``_reverse`` handles that specially;
+        no other write in this class needs it, because no other write is a
+        wholesale swap.
+        """
+        return await self._restore(document_id, checkpoint_id, actor="revert")
+
+    async def latest_restore(self, document_id: str) -> tuple[str, str] | None:
+        """The last snapshot put back on this document, and the way out of it.
+
+        ``(what was restored, where it came from)``, or None if the document
+        has never been reverted. The second half is the answer to "put that
+        back": it holds the state the restore replaced.
+
+        Only the last one, and that is the whole rule -- a restore is a
+        wholesale swap, so the most recent one is the only one that describes
+        where the document now stands.
+        """
+        async with self._session() as session:
+            row = (
+                await session.execute(
+                    select(DocumentOp)
+                    .where(
+                        DocumentOp.document_id == document_id,
+                        DocumentOp.op["op"].as_string() == "restore",
+                    )
+                    .order_by(DocumentOp.version.desc(), DocumentOp.seq.desc())
+                    .limit(1)
+                )
+            ).scalars().first()
+            if row is None or not row.inverse:
+                return None
+            return (row.op["checkpoint"], row.inverse["checkpoint"])
+
+    async def _restore(
+        self, document_id: str, checkpoint_id: str, *, actor: str
+    ) -> tuple[DocumentState, str]:
+        """Put a snapshot back, returning the state and the way out of it.
+
+        The second value is the checkpoint holding where the document stood
+        *before* this call -- restore it and you are back where you started.
+        Returned rather than left to be looked up because the caller is about
+        to offer "redo this turn" and this is the only moment the answer is
+        free: it was written a line ago.
         """
         async with self._session() as session:
             snapshot = await session.get(Checkpoint, checkpoint_id)
@@ -1044,24 +1302,116 @@ class DocumentRepo:
             if snapshot is None or row is None or snapshot.document_id != document_id:
                 raise KeyError(checkpoint_id)
 
+            # Where the document stood before this call, kept so the restore
+            # can itself be reversed. An ordinary checkpoint: it is the same
+            # thing, and it means redo needs no second mechanism.
+            undo_point = str(uuid.uuid4())
+            session.add(
+                Checkpoint(
+                    id=undo_point,
+                    document_id=document_id,
+                    version=row.version,
+                    doc=row.doc,
+                    label="before restore",
+                    turn_id=None,
+                )
+            )
+
             restored = load_doc(snapshot.doc)
             digest = content_hash(restored)
             row.doc = snapshot.doc
             row.version += 1
             row.content_hash = digest
+            session.add(
+                DocumentOp(
+                    document_id=document_id,
+                    version=row.version,
+                    seq=0,
+                    op={"op": "restore", "checkpoint": checkpoint_id},
+                    inverse={"op": "restore", "checkpoint": undo_point},
+                    actor=actor,
+                )
+            )
             await session.commit()
 
-            return DocumentState(
-                id=document_id,
-                doc=restored,
-                version=row.version,
-                content_hash=digest,
-                title=row.title,
-                settings=row.settings,
-                job_description=row.job_description,
-                canvas_id=row.canvas_id,
-                updated_at=row.updated_at,
+            return (
+                DocumentState(
+                    id=document_id,
+                    doc=restored,
+                    version=row.version,
+                    content_hash=digest,
+                    title=row.title,
+                    settings=row.settings,
+                    job_description=row.job_description,
+                    canvas_id=row.canvas_id,
+                    updated_at=row.updated_at,
+                ),
+                undo_point,
             )
+
+    async def undone_turn_checkpoint(
+        self, document_id: str, checkpoint_ids: set[str]
+    ) -> str | None:
+        """Which of these turn snapshots the document is currently sitting at.
+
+        Not "which id was last restored": that stops being the same question
+        after one round trip. Undo a turn, redo it, undo it again and the board
+        is back at the turn's starting state -- but it got there through a
+        snapshot the reverts made along the way, and the turn's own id is
+        nowhere in the last restore.
+
+        Every restore records the state it replaced as its own inverse, so
+        those snapshots form a chain back to the one that started it, and the
+        chain alternates: an even number of hops is the original state, an odd
+        number is the state the turn produced. Walking it is exact, which
+        comparing content is not -- opening a resume reflows it, and the layout
+        ops that writes change the document without changing a word of it.
+
+        And nothing counts as undone once real work has landed on top: putting
+        the turn back would discard whatever was typed after it.
+        """
+        if not checkpoint_ids:
+            return None
+
+        async with self._session() as session:
+            rows = list(
+                (
+                    await session.execute(
+                        select(DocumentOp)
+                        .where(
+                            DocumentOp.document_id == document_id,
+                            DocumentOp.op["op"].as_string() == "restore",
+                        )
+                        .order_by(DocumentOp.version, DocumentOp.seq)
+                    )
+                ).scalars()
+            )
+            if not rows or not rows[-1].inverse:
+                return None
+
+            since = (
+                await session.execute(
+                    select(DocumentOp).where(
+                        DocumentOp.document_id == document_id,
+                        DocumentOp.version > rows[-1].version,
+                    )
+                )
+            ).scalars()
+            if any((row.op or {}).get("op") not in _LAYOUT_ONLY for row in since):
+                return None
+
+        links = {
+            row.inverse["checkpoint"]: row.op["checkpoint"]
+            for row in rows
+            if row.inverse
+        }
+        here = rows[-1].op["checkpoint"]
+        hops = 0
+        while here in links:
+            here = links[here]
+            hops += 1
+
+        return here if hops % 2 == 0 and here in checkpoint_ids else None
 
     async def _ops_since(
         self, session: AsyncSession, document_id: str, version: int

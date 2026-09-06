@@ -141,6 +141,44 @@ export interface StoredMessage {
    * every board it reached rather than the last it happened to be on.
    */
   checkpoints?: { board_id: string; checkpoint_id: string }[];
+  /**
+   * Where to put every board back to, for a turn that is currently undone.
+   *
+   * A revert records the state it replaced as its own inverse, so the way back
+   * is already in the log and this only reports it. Without it a reload
+   * offered to undo a turn that had already been undone, and taking the offer
+   * put the document back where it already was.
+   */
+  redo?: { board_id: string; checkpoint_id: string }[];
+  /** Whether that turn is undone as the document currently stands. */
+  reverted?: boolean;
+  /**
+   * What the assistant was working through, as one block.
+   *
+   * Stored with the turn rather than rebuilt here: a reload used to leave every
+   * past turn as a bare paragraph, so the record of *how* the résumé came to
+   * say what it says survived only until the tab was refreshed.
+   */
+  thinking?: string | null;
+  /**
+   * What its tools did — one entry per call, in the order they ran, each with
+   * the status it finished in.
+   *
+   * Null, not empty, on a turn stored before this existed: an old transcript is
+   * silent about its tools rather than claiming there were none.
+   */
+  activity?:
+    | {
+        call_id: string;
+        name: string;
+        tier: string;
+        status: 'running' | 'applied' | 'rejected' | 'confirm' | 'done' | 'note';
+        label?: string;
+        detail?: string;
+        code?: string;
+        touched?: string[];
+      }[]
+    | null;
   /** Which version this turn acted on, and what it is called. */
   board_id?: string | null;
   board?: string | null;
@@ -262,14 +300,22 @@ export function createDocument(body: {
 export function applyOps(
   id: string,
   ops: DocOp[],
-  version: number
+  version: number,
+  /**
+   * Whether this batch is a gesture or a re-derivation.
+   *
+   * Only undo bookkeeping reads it. `layout` is the measure pass correcting
+   * frame geometry to match what the browser rendered -- not something a
+   * person did, and not something Ctrl+Z should land on.
+   */
+  actor: 'user' | 'layout' = 'user'
 ): Promise<ApplyResponse> {
   return request<ApplyResponse>(`/documents/${id}/ops`, {
     method: 'POST',
     // The version travels as an ETag so a stale write is refused rather than
     // silently clobbering whatever landed in between.
     headers: { 'If-Match': `W/"${version}-"` },
-    body: JSON.stringify({ ops }),
+    body: JSON.stringify({ ops, actor }),
   });
 }
 
@@ -310,11 +356,14 @@ export async function reverseHistory(
  * Restores as a *new* version rather than rewinding, so a client holding an
  * old ETag still gets a conflict instead of silently appearing current.
  */
+/** A revert, and the checkpoint that undoes the revert. */
+export type RevertResponse = DocumentResponse & { redo_checkpoint: string };
+
 export function revertToCheckpoint(
   id: string,
   checkpointId: string
-): Promise<DocumentResponse> {
-  return request<DocumentResponse>(`/documents/${id}/revert`, {
+): Promise<RevertResponse> {
+  return request<RevertResponse>(`/documents/${id}/revert`, {
     method: 'POST',
     body: JSON.stringify({ checkpoint_id: checkpointId }),
   });
@@ -384,8 +433,20 @@ export function confirmInvented(id: string, nids: string[] = []): Promise<Docume
   });
 }
 
-export function pdfUrl(id: string, template = 'ats', pageSize = 'A4'): string {
-  return `${BASE}/documents/${id}/pdf?template=${template}&pageSize=${pageSize}`;
+/**
+ * The route a browser prints, and the one the PDF export renders.
+ *
+ * One address for both, so the page that comes out of a printer and the file
+ * that comes out of Export are the same document rather than two renderings
+ * kept in step by hand. Relative, because the frame that loads it must be
+ * same-origin for `print()` to reach into it.
+ */
+export function printUrl(id: string): string {
+  return `/print/${id}`;
+}
+
+export function pdfUrl(id: string, pageSize = 'A4'): string {
+  return `${BASE}/documents/${id}/pdf?pageSize=${pageSize}`;
 }
 
 export interface UploadedAsset {
