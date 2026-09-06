@@ -4,15 +4,11 @@ An agentic resume editor: a chat sidebar beside a live document, where the AI
 calls typed tools that mutate a structured document and the page re-renders as
 each edit lands. Local-AI-first (Ollama by default), cloud providers optional.
 
-The model here is Pencil's, not ChatGPT's. The AI does not stream prose into a
-text box; it makes discrete, validated edits to a structured document, and you
-watch them happen one at a time.
+The assistant does not stream prose into a text box. It makes discrete,
+validated edits to a structured document, and you watch them happen one at a
+time.
 
 ![How ResumeWesume fits together](docs/architecture.png)
-
-<sub>The same map, pan/zoom/searchable:
-[`docs/architecture.html`](docs/architecture.html) — one self-contained file,
-open it in a browser.</sub>
 
 ## Status
 
@@ -80,9 +76,9 @@ which Windows does not, unless you installed it.
 </details>
 
 **The assistant needs a model.** If you are signed in to Claude Code on this
-machine, it uses that — no key, no configuration, drawing on your Claude plan
+machine, it uses that: no key, no configuration, drawing on your Claude plan
 rather than billing an API key. Nothing to do; the settings dialog will say
-"Claude subscription — ready".
+the Claude subscription as ready.
 
 Otherwise it runs locally, and the model needs tool calling and a context large
 enough to hold a turn. `models/` carries the recipes and explains why a bare
@@ -93,18 +89,18 @@ this app's prompt from the front, which is where the instructions are.
 ollama create mistral-nemo:12b-16k -f models/mistral-nemo-12b-16k.Modelfile
 ```
 
-An API key works too — OpenAI, Anthropic, Gemini, OpenRouter, Groq or
+An API key works too: OpenAI, Anthropic, Gemini, OpenRouter, Groq or
 DeepSeek, under **Settings** on the home page. So does any OpenAI-compatible
 server you point it at. A local model will do the job; expect it to write fewer
 skills and lean harder on the same verbs than Claude does.
 
 **If a `uv run` command dies with "uv trampoline failed to canonicalize script
-path", the virtualenv is stale** — its console-script `.exe`s embed an absolute
+path", the virtualenv is stale**. Its console-script `.exe`s embed an absolute
 path to the interpreter, so moving or renaming the checkout invalidates every
 one of them. `uv run scripts/dev.py --reinstall` rewrites them.
 
 Open <http://localhost:3000>. Either **Import a PDF** and check the parse before
-it lands, or pick a template — the card shows the résumé you get. Then edit a
+it lands, or pick a template. The card shows the résumé you get. Then edit a
 bullet, ask the assistant for a change, and hit **Export PDF**.
 
 Two things that surprise people. PDF export runs *backwards* through the stack
@@ -243,13 +239,13 @@ One SQLite file, on your machine, at the place your OS keeps application data:
 | Linux   | `$XDG_DATA_HOME/resumewesume/studio.db`, or `~/.local/share/resumewesume/` |
 
 Set `DATA_DIR` to put it somewhere else. A database left over from an older
-version — `apps/api/data/studio.db` — is moved here on the next start.
+version, `apps/api/data/studio.db`, is moved here on the next start.
 
 Nothing is stored anywhere else, so **that file is the only copy**. Copying it
 somewhere safe is a backup. Exporting a PDF is not: a PDF is a rendering, and
 nothing can turn one back into a document.
 
-The API can also write and read a portable copy — every résumé, every version,
+The API can also write and read a portable copy: every résumé, every version,
 the posting each is aimed at, and the images, as one JSON file:
 
 ```sh
