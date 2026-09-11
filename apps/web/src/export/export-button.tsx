@@ -25,6 +25,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { pdfUrl } from '@/lib/api';
+import { useStudio } from '@/store/studio';
 
 /** A filename someone can find again, from the document's own title. */
 export function filenameFor(title: string): string {
@@ -63,6 +64,14 @@ export function ExportButton({
     setState('running');
     onError(null);
     try {
+      // The PDF is rendered from the server's saved copy, so a manual edit
+      // still sitting in a focused field -- or mid-save -- would be missing
+      // from the file. Commit whatever is focused, then wait for the save to
+      // land before asking for the render.
+      if (typeof document !== 'undefined') {
+        (document.activeElement as HTMLElement | null)?.blur?.();
+      }
+      await useStudio.getState().settle();
       const response = await fetch(pdfUrl(documentId));
       if (!response.ok) {
         // The API's own message names the actual failure -- the web app

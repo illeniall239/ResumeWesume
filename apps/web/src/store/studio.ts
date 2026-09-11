@@ -217,6 +217,9 @@ interface StudioState {
   rename: (title: string) => Promise<void>;
   draft: (target: string, text: string) => void;
   clearDrafts: () => void;
+  /** Resolve once nothing is staged or in flight, so a reader of the saved
+   *  document (the PDF export) sees the latest edit. */
+  settle: () => Promise<void>;
   /** Drop the change flash. Called when a new instruction is given. */
   clearChanged: () => void;
   /** Accept the assistant's invented lines. Empty means all of them. */
@@ -534,6 +537,42 @@ export const useStudio = create<StudioState>((set, get) => ({
     const drafts = new Map(get().drafts);
     drafts.set(target, text);
     set({ drafts });
+  },
+
+  settle() {
+    const clean = () => {
+      const st = get();
+      return !st.saving && st.pending.length === 0 && st.local.length === 0;
+    };
+    return new Promise<void>((resolve) => {
+      // A field committing on blur stages its edit on the next tick, so give
+      // that a frame to happen before deciding the document is clean --
+      // otherwise a value typed a moment ago is judged "saved" while its POST
+      // has not even been queued.
+      const start =
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame
+          : (fn: () => void) => setTimeout(fn, 0);
+      start(() => {
+        if (clean()) return resolve();
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          unsub();
+          clearTimeout(cap);
+          resolve();
+        };
+        const unsub = useStudio.subscribe(() => {
+          if (clean()) finish();
+        });
+        // Never wedge the export: a save that failed leaves its ops queued in
+        // `local`, which would keep this pending forever. After a moment, let
+        // the export go with whatever did save; the save error surfaces on its
+        // own path.
+        const cap = setTimeout(finish, 4000);
+      });
+    });
   },
 
   clearDrafts() {
