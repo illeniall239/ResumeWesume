@@ -17,6 +17,24 @@ import type { StreamEvent } from '@/stream/ndjson';
 import { clearCanvasMessages, fetchCanvasMessages } from '@/lib/api';
 import { cancelTurn, startTurn } from '@/stream/ndjson';
 import { readsAsAPosting } from '@/chat/posting';
+
+/**
+ * The node the caret is actually in, or none.
+ *
+ * The one input to the agent's "is this line busy" gate, read from the live
+ * DOM so it cannot desync. A text node carries `data-nid`; a field carries
+ * `data-field` as `nid.field`, and the gate keys on the bare nid, so the part
+ * before the dot is what it wants. Anything else focused -- the composer, a
+ * button, the body after a re-render -- means nobody is editing the résumé.
+ */
+export function editingNode(): string[] {
+  if (typeof document === 'undefined') return [];
+  const active = document.activeElement as HTMLElement | null;
+  if (!active || active.getAttribute('contenteditable') === null) return [];
+  const field = active.getAttribute('data-field');
+  const nid = active.getAttribute('data-nid') ?? (field ? field.split('.')[0] : null);
+  return nid ? [nid] : [];
+}
 import { useStudio } from '@/store/studio';
 
 export interface ToolActivity {
@@ -196,8 +214,15 @@ export const useChat = create<ChatState>((set, get) => ({
           .messages.slice(-6)
           .filter((message) => message.text)
           .map((message) => ({ role: message.role, content: clip(message.text) })),
-        // The node the user has focus in. The agent is refused there.
-        busy_nids: studio.focused ? [studio.focused] : [],
+        // The node the caret is genuinely in right now. Read from the DOM,
+        // not from the `focused` store flag: that flag is set on focus and
+        // cleared on blur, and a line unmounted while focused -- which the
+        // skills list does on any reorder or re-render -- never fires its
+        // blur, so the flag sticks on a line that is gone. Every later turn
+        // then sent that stale nid and the agent was refused on a line
+        // nobody was editing. `document.activeElement` cannot go stale: if
+        // the caret is not in an editable node, nothing is busy.
+        busy_nids: editingNode(),
       },
       {
         onEvent: (event) => applyEvent(event, patch, set, assistantId),
