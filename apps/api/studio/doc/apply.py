@@ -17,7 +17,7 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from studio.doc.autolayout import restack
 from studio.doc.index import NodeIndex
@@ -40,6 +40,7 @@ from studio.doc.ops import (
     Tier,
 )
 from studio.doc.schema import (
+    SectionMeta,
     DEFAULT_SECTIONS,
     AnyElement,
     CustomItemNode,
@@ -54,6 +55,7 @@ from studio.doc.schema import (
     StudioDoc,
     TextBlockNode,
     TextNode,
+    prose_fields,
 )
 
 # Fields that assert who the user is or where they worked. Getting one of these
@@ -63,8 +65,41 @@ IDENTITY_FIELDS: frozenset[str] = frozenset(
     {"company", "title", "institution", "degree", "name"}
 )
 
+#: The models an entry tool addresses. An entry is a thing on the résumé with
+#: its own heading and its own dates.
+ENTRY_MODELS: tuple[type[BaseModel], ...] = (
+    ExperienceNode,
+    EducationNode,
+    ProjectNode,
+    CustomItemNode,
+)
+
 # Editable without consent: descriptive, low-blast-radius entry metadata.
-ENTRY_SOFT_FIELDS: frozenset[str] = frozenset({"years", "location", "role"})
+#
+# Derived, because it was a hand-written list of three and the schema had six.
+# `role` was missing from it, so a project's role -- which the engine would
+# have accepted as soft metadata -- was refused by the only tool that could
+# change it, and the assistant redirected to a tool that does not take it
+# either. `github`, `website` and `subtitle` were the same bug waiting: on the
+# page, and unreachable by anything.
+#
+# The rule is the whole of it: writing on an entry is descriptive unless it is
+# an identity claim. Add a field to a model and it lands on the right side of
+# that line without anybody deciding again.
+ENTRY_SOFT_FIELDS: frozenset[str] = frozenset(
+    field
+    for model in ENTRY_MODELS
+    for field in prose_fields(model)
+    if field not in IDENTITY_FIELDS
+)
+
+# How something is set, rather than what it says. Renaming a skills group or
+# listing it as bullets instead of a line changes presentation and asserts
+# nothing about the person, which is the same reasoning that already puts a
+# section heading at Tier A -- and the reason that reasoning had to be written
+# twice is that these fell through to the catch-all and were gated as claims.
+# A cosmetic change that asks for consent trains the user to grant it.
+PRESENTATION_FIELDS: frozenset[str] = frozenset({"display", "label", "style"})
 
 # Nodes whose text a Tier A tool may rewrite.
 TEXT_KINDS: frozenset[NodeKind] = frozenset(
@@ -216,6 +251,8 @@ def tier_of(op: DocOp, index: NodeIndex) -> Tier:
             return "C"
         if attribute in IDENTITY_FIELDS:
             return "C"
+        if attribute in PRESENTATION_FIELDS:
+            return "A"
         if attribute in ENTRY_SOFT_FIELDS:
             return "B"
         return "C"
@@ -344,12 +381,6 @@ def _resolve_container(
     return None, None
 
 
-#: The ops that change where things sit in the flow, and so where their frames
-#: belong. `set_section` is here for its `order` field, which moves a whole
-#: section past another one.
-_REORDERING = (Reorder, MoveNode, SetSection)
-
-
 def apply_ops(
     doc: StudioDoc,
     ops: list[DocOp],
@@ -386,8 +417,30 @@ def apply_ops(
     #
     # Only when the order actually moved. A re-stack on every batch would
     # quietly straighten geometry somebody had dragged by hand.
-    if any(isinstance(op, _REORDERING) for op in ops):
-        restack(working)
+    # The column's geometry is derived, so derive it.
+    #
+    # Where a flow frame sits is a pure function of the section order, the
+    # entry order, the measured heights and the size of the paper. Nothing
+    # authors it, so nothing needs to be asked whether it changed: re-deriving
+    # is how it is kept true, and doing it once here is the only reason the
+    # document and the page cannot drift apart.
+    #
+    # This used to run only for a list of ops we believed disturbed the flow.
+    # A list like that is worth exactly as much as the last edit to it -- add a
+    # tool, or use an old one a new way, and the page breaks with nothing to
+    # notice. That is how a two-page résumé came to have its second sheet
+    # pushed to the bottom.
+    #
+    # It is safe to run always because it moves only what it owns. A pinned
+    # frame, a hand-placed box, an image, a shape: all untouched. `arrange`
+    # pins what it arranges and a drag pins what it drags, which is what makes
+    # "placed by hand" a thing the engine can see rather than infer.
+    #
+    # And it settles which side owns what. The browser is the only thing that
+    # can measure text, so it sends heights; the server is the only thing that
+    # sees the whole document, so it decides positions. Before this they both
+    # computed positions, and every bug in this area was the two disagreeing.
+    restack(working)
 
     # Gate 6: the batch as a whole must still be a valid document. A single op
     # can be individually legal and still leave the document inconsistent.
@@ -644,6 +697,19 @@ def _do_set_style(index: NodeIndex, op: SetStyle) -> RejectedOp | None:
     if location is None:
         return _reject(op, RejectCode.UNKNOWN_NODE, f"No node {op.nid}")
     if location.kind is not NodeKind.BULLET:
+        # Where the setting actually is, when there is one. A skill is drawn as
+        # part of a run -- the whole group is a line or a list, and no single
+        # item is a bullet on its own -- so "skl_x is not a bullet" was true and
+        # a dead end: asked to list technical skills as bullets, the assistant
+        # tried this, was told no, and reported the product could not do it.
+        if location.kind is NodeKind.SKILL and location.parent_nid:
+            return _reject(
+                op,
+                RejectCode.KIND_MISMATCH,
+                f"{op.nid} is one item in a run, not a bullet of its own. "
+                f"Whether that run is a line or a list is set on the group: "
+                f"use set_list_display on {location.parent_nid}.",
+            )
         return _reject(
             op, RejectCode.KIND_MISMATCH, f"{op.nid} is not a bullet"
         )
@@ -999,6 +1065,35 @@ def _do_set_section(doc: StudioDoc, op: SetSection) -> RejectedOp | None:
             if op.order is not None:
                 section.order = op.order
             return None
+
+    # A section that exists as content but has no row in the order.
+    #
+    # `add_section` creates a custom section -- Certifications, Publications --
+    # in `doc.custom` and nothing else, so the document holds a section the
+    # order has never heard of. Both renderers already handle that by drawing
+    # it in a tail after everything the order accounts for, which is why it
+    # always landed last and why "put Certifications after Education" had
+    # nowhere to write the answer: `set_section` rejected the key outright.
+    #
+    # So the row is minted on first use rather than rejected. It is not
+    # inventing a section -- the section is already in the document, with
+    # content -- it is giving the thing a position it was always entitled to.
+    own = next((entry for entry in doc.custom if entry.key == op.key), None)
+    if own is not None:
+        # `before` stays None: there was no row, so undo removes it rather
+        # than restoring one. `invert` reads that.
+        doc.sections.append(
+            SectionMeta(
+                key=op.key,
+                label=own.label or op.key,
+                visible=True if op.visible is None else op.visible,
+                # Past everything, unless the caller says otherwise. The tool
+                # renumbers, so an explicit order is always the real intent.
+                order=op.order if op.order is not None else len(doc.sections),
+            )
+        )
+        return None
+
     return _reject(op, RejectCode.UNKNOWN_NODE, f"No section {op.key!r}")
 
 

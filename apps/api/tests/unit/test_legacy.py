@@ -1,8 +1,8 @@
-"""Import/export against the old ResumeData shape."""
+"""Reading the old ResumeData shape into a document."""
 
 from __future__ import annotations
 
-from studio.doc.legacy import from_resume_data, to_resume_data
+from studio.doc.legacy import from_resume_data
 from studio.doc.nodes import kind_of
 
 OLD = {
@@ -106,39 +106,3 @@ class TestImport:
     def test_garbage_input_does_not_raise(self) -> None:
         for junk in ({}, {"workExperience": "not a list"}, {"personalInfo": 42}):
             assert from_resume_data(junk) is not None
-
-
-class TestRoundTrip:
-    def test_export_rebuilds_aligned_parallel_arrays(self) -> None:
-        doc = from_resume_data(OLD)
-        out = to_resume_data(doc)
-        entry = out["workExperience"][0]
-        # Aligned by construction: both come from one iteration of the bullets.
-        assert len(entry["description"]) == len(entry["descriptionStyles"])
-        assert entry["descriptionStyles"] == ["bullet", "plain"]
-
-    def test_round_trip_preserves_content(self) -> None:
-        out = to_resume_data(from_resume_data(OLD))
-        assert out["personalInfo"]["name"] == OLD["personalInfo"]["name"]
-        assert out["summary"] == OLD["summary"]
-        assert out["workExperience"][0]["company"] == "Northwind Systems"
-        assert out["workExperience"][0]["description"] == OLD["workExperience"][0]["description"]
-        assert out["education"][0]["description"] == "Graduated with honors."
-        assert out["additional"]["technicalSkills"] == ["Python", "Go", "Kafka"]
-        assert out["additional"]["certificationsTraining"] == ["AWS Solutions Architect"]
-
-    def test_desync_is_repaired_by_a_round_trip(self) -> None:
-        """Legacy data with misaligned arrays comes back aligned — the schema
-        change fixes existing documents, not just new ones."""
-        broken = {
-            **OLD,
-            "workExperience": [
-                {
-                    **OLD["workExperience"][0],
-                    "description": ["one", "two", "three"],
-                    "descriptionStyles": ["plain"],
-                }
-            ],
-        }
-        entry = to_resume_data(from_resume_data(broken))["workExperience"][0]
-        assert len(entry["description"]) == len(entry["descriptionStyles"]) == 3

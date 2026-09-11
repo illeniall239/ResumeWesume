@@ -25,6 +25,7 @@ from typing import Any, Callable, ClassVar, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from studio.doc.apply import ENTRY_SOFT_FIELDS
 from studio.doc.arrange import ArrangeError, Paper, paper_of
 from studio.doc.arrange import arrange as arrange_ops
 from studio.doc.nodes import NodeKind, mint
@@ -41,7 +42,7 @@ from studio.doc.ops import (
     SetStyle,
     SetText,
 )
-from studio.doc.schema import StudioDoc
+from studio.doc.schema import SectionMeta, StudioDoc
 from studio.guards.grants import GrantScope, IntentGrant, normalise_key
 
 Tier = Literal["R", "A", "B", "C"]
@@ -266,12 +267,26 @@ def frames_bound_to(doc: StudioDoc, ref: str) -> list[str]:
     Content and layout are separate subtrees, so removing one leaves the other
     dangling unless the caller says otherwise. This is the lookup that lets a
     delete take its own boxes with it.
+
+    A custom section is asked for by key and drawn by nid, so both are accepted.
+    Only the key was, and the mismatch was silent in the worst way: hiding
+    Awards set the section's flag, found no frames to hide, and left the frame
+    on the page drawing content the document had just been told to stop
+    showing. Nothing was rejected -- the caller was simply answered with an
+    empty list, which is indistinguishable from "there are none".
     """
+    refs = {ref}
+    for section in doc.custom:
+        if section.key == ref:
+            refs.add(section.nid)
+        elif section.nid == ref:
+            refs.add(section.key)
+
     return [
         element.nid
         for page in doc.pages
         for element in page.elements
-        if getattr(element, "ref", None) == ref
+        if getattr(element, "ref", None) in refs
     ]
 
 
@@ -496,6 +511,68 @@ class SetBulletStyle(ToolSpec):
         return [SetStyle(nid=args.nid, style=args.style, reason=args.reason)]
 
 
+class SetListDisplayArgs(BaseModel):
+    nid: str = Field(
+        description="The skills group, or the custom section. An item in one "
+        "also works -- it is read as its group."
+    )
+    display: Literal["list", "inline", "auto"]
+    reason: str = ""
+
+
+class SetListDisplay(ToolSpec):
+    name = "set_list_display"
+    tier = "A"
+    description = """
+    Set a run of short items as a bulleted list or as one comma-separated line.
+    Use it for a skills group, or for a certifications, awards or languages
+    section. `list` puts each item on its own bulleted line; `inline` joins them
+    into a line; `auto` lets the page decide from their length.
+
+    A single skill is not a bullet on its own -- the whole run is a line or a
+    list -- so set_bullet_style does not apply to one.
+    """
+    Args = SetListDisplayArgs
+
+    def compile(self, args: SetListDisplayArgs, doc: StudioDoc) -> list[DocOp]:
+        return [
+            SetField(
+                target=f"{display_owner(doc, args.nid)}.display",
+                value=args.display,
+                reason=args.reason,
+            )
+        ]
+
+    def label(self, args: SetListDisplayArgs) -> str:
+        return {
+            "list": "listed as bullets",
+            "inline": "joined into a line",
+            "auto": "left to the page",
+        }[args.display]
+
+
+def display_owner(doc: StudioDoc, given: str) -> str:
+    """The node that carries the display setting for ``given``.
+
+    A model addresses what it can see, and what an outline shows for a skill is
+    the item. The setting is not on the item -- one skill has no shape of its
+    own, the run does -- so a call naming one would be rejected for a field the
+    node does not have, which reads as "this cannot be done" rather than "aim
+    one level up".
+
+    Returns ``given`` unchanged when it owns nothing and when it is unknown:
+    the engine says what is wrong with an address far better than a guess here
+    would, and it is the only thing holding the real index.
+    """
+    for group in doc.skills:
+        if given == group.nid or any(item.nid == given for item in group.items):
+            return group.nid
+    for section in doc.custom:
+        if given == section.nid or any(line.nid == given for line in section.strings):
+            return section.nid
+    return given
+
+
 # --- Tier B: claims ---------------------------------------------------------
 
 
@@ -663,6 +740,106 @@ class RemoveSkill(ToolSpec):
         return f"removed {args.skill}"
 
 
+class ReorderSkillsArgs(BaseModel):
+    # `parent`, not `group`, and deliberately: `reorder_bullets` names the list
+    # it permutes with the same word, and the pen reads it. `targetOf` turns a
+    # `parent` into a position on the sheet through `data-nid`, which the
+    # skills group carries -- so the pen goes and stands on the group while it
+    # is reordered, exactly as it does for bullets, with no client change.
+    parent: str = Field(
+        default="technical",
+        description=(
+            "The skills group: its node id, or its key -- technical, languages, "
+            "certifications, awards."
+        ),
+    )
+    order: list[str] = Field(
+        description=(
+            "Every skill in the group, in the new order. Node ids or the skill "
+            "text; anything you leave out keeps its place at the end."
+        )
+    )
+    reason: str = ""
+
+
+class ReorderSkills(ToolSpec):
+    """Put a skills group in a new order, in one call.
+
+    Without this, reordering was expressible only as demolition: the model had
+    no way to say "these, in this order", so it removed all fifteen skills and
+    added them back one at a time. Thirty tool calls, thirty ops, a turn that
+    took minutes, an undo stack with thirty entries in it, and every skill's
+    `source` reset from `resume` to whatever the re-add claimed -- which is the
+    field the grounding notice reads to decide which lines nobody vouched for.
+    The list also passed through a state where it was empty, so a turn that
+    failed halfway left the section gone.
+
+    It was never a missing capability underneath. `Reorder` has always accepted
+    a skill group as its parent -- `_resolve_container` maps a `SkillGroup` to
+    its items -- and `salvage.py` already repairs `reorder_skills` arguments by
+    name. Only the tool was missing, so the model could not ask.
+
+    Tier A: a permutation adds nothing, removes nothing and claims nothing.
+    """
+
+    name = "reorder_skills"
+    tier = "A"
+    description = (
+        "Reorder a skills group. Give every skill in the new order, by id or by "
+        "text. Use this rather than removing and re-adding them."
+    )
+    Args = ReorderSkillsArgs
+
+    def compile(self, args: ReorderSkillsArgs, doc: StudioDoc) -> list[DocOp]:
+        group = next(
+            (
+                candidate
+                for candidate in doc.skills
+                if args.parent in (candidate.nid, candidate.key)
+            ),
+            None,
+        )
+        if group is None:
+            known = ", ".join(sorted(candidate.key for candidate in doc.skills))
+            raise ToolError(
+                f"No skills group {args.parent!r}."
+                + (f" This resume has: {known}." if known else ""),
+                code="unknown_node",
+            )
+
+        # Accept the words as readily as the ids. A model that has just read the
+        # document back has the text in front of it and the ids only if it
+        # tracked them, and being strict here is what pushed it towards
+        # remove-and-re-add in the first place.
+        by_key = {normalise_key(item.text): item.nid for item in group.items}
+        known_nids = {item.nid for item in group.items}
+
+        order: list[str] = []
+        unknown: list[str] = []
+        for entry in args.order:
+            nid = entry if entry in known_nids else by_key.get(normalise_key(entry))
+            if nid is None:
+                unknown.append(entry)
+            elif nid not in order:
+                order.append(nid)
+
+        # Named something that is not there: say which, rather than silently
+        # dropping it. `Reorder` would salvage the rest and the model would
+        # never learn that half its list went nowhere.
+        if unknown:
+            missing = ", ".join(repr(entry) for entry in unknown)
+            raise ToolError(
+                f"Not in {group.key!r}: {missing}. Reorder what is there, and "
+                "add or remove separately.",
+                code="unknown_node",
+            )
+
+        return [Reorder(parent=group.nid, order=order, reason=args.reason)]
+
+    def label(self, args: ReorderSkillsArgs) -> str:
+        return "reordered skills"
+
+
 class SetEntryFieldArgs(BaseModel):
     nid: str
     # "role" was on this list and is not a field an entry has -- the job title
@@ -672,7 +849,19 @@ class SetEntryFieldArgs(BaseModel):
     # field="role", being told the entry had no such field, and calling it again
     # until the turn stalled with nothing changed. It was using the vocabulary
     # we published.
-    field: Literal["years", "location"]
+    # `role` belongs here, and the engine always said so: `ENTRY_SOFT_FIELDS`
+    # lists it beside `years` and `location`. Only this tool disagreed -- the
+    # Literal left it out and the validator below actively refused the word,
+    # redirecting to `set_entry_identity`, which does not accept it either. So
+    # a project's role could not be changed by any route, which is what "make
+    # Founder into Creator" ran into.
+    # Derived from the engine, not restated. This Literal was a hand-copy of a
+    # classification `apply.py` already owned, and it drifted: it listed three
+    # fields where the schema had six, so a project's role -- which the engine
+    # would have taken -- was refused here, and the assistant was redirected to
+    # a tool that does not accept it either. The engine's answer is the only
+    # answer now, so the two cannot disagree again.
+    field: Literal[tuple(sorted(ENTRY_SOFT_FIELDS))]  # type: ignore[valid-type]
     value: str
     expect: str | None = None
     reason: str = ""
@@ -685,16 +874,20 @@ class SetEntryFieldArgs(BaseModel):
         A bare Literal error lists the two valid values and leaves the model to
         infer that the thing it wanted is somewhere else entirely.
         """
+        # "role" is no longer redirected: a project's role is soft metadata and
+        # is accepted above. Only a *job* title goes to `set_entry_identity`,
+        # because an employer and a job title are factual claims about someone's
+        # history and are consent-gated for that reason.
         if isinstance(value, str) and value.strip().lower() in {
-            "role",
             "title",
             "position",
             "job_title",
             "jobtitle",
         }:
             raise ValueError(
-                "the job title is not entry metadata -- use set_entry_identity "
-                "with title= to change it"
+                "a job title is a factual claim, not entry metadata -- use "
+                "set_entry_identity with title= to change it. A project's role "
+                "is set here, with role=."
             )
         return value
 
@@ -703,8 +896,9 @@ class SetEntryField(ToolSpec):
     name = "set_entry_field"
     tier = "B"
     description = """
-    Change descriptive metadata on an entry: dates or location. Employer and
-    job title are identity and need set_entry_identity instead.
+    Change descriptive metadata on an entry: dates, location, a project's role
+    or its links, a custom entry's subtitle. Employer, job title, institution
+    and degree are identity claims and need set_entry_identity instead.
     """
     Args = SetEntryFieldArgs
 
@@ -957,6 +1151,16 @@ class AddSectionArgs(BaseModel):
         default_factory=list,
         description="One line each. Only what the user gave you.",
     )
+    # Where it goes, said at the moment it is made. Without these a new section
+    # could only land at the end and then be moved by a second call, which is
+    # two turns of work for "add Certifications after Education" and, before
+    # the order row existed, was not possible at all.
+    before: str | None = Field(
+        default=None, description="Put the new section immediately before this one."
+    )
+    after: str | None = Field(
+        default=None, description="Put the new section immediately after this one."
+    )
     reason: str = ""
 
 
@@ -974,13 +1178,26 @@ class AddSection(ToolSpec):
         key = _slug(args.label)
         if any(section.key == key for section in doc.custom):
             raise ToolError(f"There is already a {args.label!r} section.")
+        if any(section.key == key for section in doc.sections):
+            raise ToolError(f"{args.label!r} is already a section of this resume.")
+        # Both together reads as "between these two", which is how the ask is
+        # actually phrased. `after` anchors; see `SetSectionTool.compile`.
+        anchor = args.after or args.before
+        known = {section.key for section in doc.sections}
+        if anchor is not None and anchor not in known:
+            raise ToolError(
+                f"No section {anchor!r} to sit beside. This resume has: "
+                f"{', '.join(sorted(known))}.",
+                code="unknown_node",
+            )
 
-        return [
+        nid = mint(NodeKind.CUSTOM_SECTION)
+        ops: list[DocOp] = [
             InsertNode(
                 parent="custom",
                 index=-1,
                 node={
-                    "nid": mint(NodeKind.CUSTOM_SECTION),
+                    "nid": nid,
                     "key": key,
                     "label": args.label,
                     # `stringList` rather than `itemList`: a certification or an
@@ -991,11 +1208,50 @@ class AddSection(ToolSpec):
                         {"nid": mint(NodeKind.SKILL), "text": text, "source": "user"}
                         for text in args.items
                     ],
+                    # Every field the renderer reads, not only the ones the
+                    # server needs. The server fills defaults on validation, but
+                    # the client mirror splices this node in verbatim -- so an
+                    # omitted `items` reaches `CustomBlock`, which maps over it
+                    # unguarded, as an undefined. The section rendered correctly
+                    # the moment the server's document arrived and threw
+                    # "section.items is not iterable" in the meantime.
+                    "items": [],
+                    "text": None,
                 },
                 reason=args.reason,
-            ),
-            *cover_for(doc, "custom"),
+            )
         ]
+
+        # Give it a row in the order. Without one the section exists as content
+        # and nowhere in the arrangement, so both renderers draw it in a tail
+        # after everything the order accounts for -- always last, and
+        # `set_section` used to reject the key outright, so it could not even be
+        # moved afterwards. A section nobody can place is a section stuck at the
+        # bottom of the résumé forever.
+        order = len(doc.sections)
+        if anchor is not None:
+            rest = [meta.key for meta in ordered_sections_meta(doc)]
+            order = rest.index(anchor) + (
+                0 if anchor == section_key(doc, args.before or "") else 1
+            )
+        ops.append(SetSection(key=key, order=order, reason=args.reason))
+
+        # Then renumber everything the insertion displaced, so no two sections
+        # share a position -- the tie that made "between X and Y" a silent
+        # no-op everywhere else.
+        for index, meta in enumerate(ordered_sections_meta(doc)):
+            shifted = index + (1 if index >= order else 0)
+            if meta.order != shifted:
+                ops.append(
+                    SetSection(key=meta.key, order=shifted, reason=args.reason)
+                )
+
+        # The frame is bound to the section's nid, which is what `autolayout`
+        # places a custom section by and what the renderer looks it up by.
+        # Binding it to the literal "custom" produced a frame the layout never
+        # claimed, so a second custom section had nothing of its own to sit in.
+        ops.extend(cover_for(doc, nid))
+        return ops
 
     def label(self, args: AddSectionArgs) -> str:
         return f"added a {args.label} section"
@@ -1554,26 +1810,216 @@ class MoveEntry(ToolSpec):
 
 class SetSectionArgs(BaseModel):
     key: str
+    #: What the résumé calls this part of itself.
+    #:
+    #: The engine has been able to do this the whole time -- `set_field` takes
+    #: `section.<key>` and `_do_set_field` has a branch for it, written because
+    #: headings were "the one text on the page nobody could change". No tool
+    #: ever reached it, so they still were: every heading on every résumé,
+    #: unrenameable by the assistant, with the machinery for it already built.
+    label: str | None = Field(
+        default=None, description="Rename the heading, e.g. 'Selected Work'."
+    )
     visible: bool | None = None
-    order: int | None = None
+    # Where to put it, said the way a person says it. Prefer these to `order`.
+    before: str | None = Field(
+        default=None, description="Put this section immediately before that one."
+    )
+    after: str | None = Field(
+        default=None, description="Put this section immediately after that one."
+    )
+    order: int | None = Field(
+        default=None,
+        description=(
+            "Absolute position, counting from zero. Only when you genuinely mean "
+            "an index; `before`/`after` is what 'between X and Y' means."
+        ),
+    )
     reason: str = ""
 
 
+def section_key(doc: StudioDoc, given: str) -> str:
+    """The section key `given` names, accepting a custom section's node id.
+
+    Every other line of the document outline is addressed by nid, and a custom
+    section is shown there as `[cst_6bs82] Awards`. `set_section` is the one
+    tool keyed by section *key*, so a model asked to move that section reached
+    for the only identifier it had been given and was refused -- a reasonable
+    call, failed on a distinction nothing had told it about.
+
+    Returned unchanged when it is already a key, so this only ever widens what
+    is accepted.
+    """
+    for section in doc.custom:
+        if section.nid == given:
+            return section.key
+    return given
+
+
+def _renaming(
+    doc: StudioDoc, given: str, key: str, label: str, reason: str
+) -> list[DocOp]:
+    """Every field that holds the name of one part of the résumé.
+
+    There is more than one, which is why this is not a single ``set_field``.
+    A built-in section draws ``SectionMeta.label``; a custom section draws its
+    own ``label`` and keeps a ``SectionMeta`` row beside it that the outline
+    reads. Writing one and not the other renames the heading in the view the
+    assistant sees and not on the page, or the reverse -- the same disagreement
+    between the document and the sheet that every layout bug here has been.
+
+    A skills group is not a section at all. It is a row inside Skills with its
+    own name ("Technical Skills", "Languages"), addressed by nid, and nothing
+    could rename one.
+    """
+    for group in doc.skills:
+        if group.nid == given:
+            return [SetField(target=f"{group.nid}.label", value=label, reason=reason)]
+
+    ops: list[DocOp] = [SetField(target=f"section.{key}", value=label, reason=reason)]
+    for section in doc.custom:
+        if section.key == key:
+            ops.append(
+                SetField(target=f"{section.nid}.label", value=label, reason=reason)
+            )
+    return ops
+
+
+def renumber_sections(doc: StudioDoc, key: str, *, index: int) -> list[SectionMeta]:
+    """The full section order with ``key`` moved to ``index``, renumbered 0..n.
+
+    Returned as a list rather than applied, so the caller can emit one op per
+    section that actually moved and nothing else.
+    """
+    order = [meta.key for meta in ordered_sections_meta(doc) if meta.key != key]
+    index = max(0, min(index, len(order)))
+    order.insert(index, key)
+    by_key = {meta.key: meta for meta in doc.sections}
+    return [by_key[name] for name in order if name in by_key]
+
+
+def ordered_sections_meta(doc: StudioDoc) -> list[SectionMeta]:
+    """Every section in render order, hidden ones included.
+
+    `autolayout.ordered_sections` drops the hidden ones because it is deciding
+    what to draw. Renumbering must not: a hidden section still holds a position,
+    and silently restacking around it would move it the moment it was shown.
+    """
+    return sorted(doc.sections, key=lambda meta: meta.order)
+
+
 class SetSectionTool(ToolSpec):
+    """Show, hide, or move a whole section.
+
+    Position is expressed relatively -- `before` / `after` -- and the arithmetic
+    is done here, because `order` is an absolute integer and asking a model to
+    compute one is asking it to fail quietly.
+
+    The failure it fails into: "put Projects between Education and Skills" when
+    those two are already 2 and 3. There is no integer between them, `order` is
+    an int so 2.5 is refused by the schema, and setting Projects to 3 is
+    *accepted* -- it collides with Skills, the tie breaks on declaration order,
+    the page does not change, and nothing anywhere reports a problem. The
+    assistant then says it moved the section. The document and the page
+    disagree, which is the same class of bug as a reorder that never reached
+    the sheet.
+
+    Getting it right required two `set_section` calls that renumbered both
+    sections, and nothing told the model that. So the tool renumbers instead:
+    one op per section that actually moves, no collisions possible.
+    """
+
     name = "set_section"
     tier = "A"
-    description = "Show, hide or reorder a whole section."
+    description = (
+        "Rename, show, hide or move a whole section. `label` renames the "
+        "heading; a skills group can be renamed the same way, by its nid. To "
+        "place a section, say `before` or `after` another section's key -- not "
+        "a number."
+    )
     Args = SetSectionArgs
 
     def compile(self, args: SetSectionArgs, doc: StudioDoc) -> list[DocOp]:
-        ops: list[DocOp] = [
-            SetSection(
-                key=args.key,
-                visible=args.visible,
-                order=args.order,
-                reason=args.reason,
+        # A skills group is a row inside Skills, not a section: it has a name
+        # of its own ("Technical Skills", "Languages") and is addressed by nid.
+        # Renaming one is the only thing this tool does to it, so it is settled
+        # before the section gate below -- which would reject the nid, as it
+        # rightly does for every other argument.
+        # By nid only. A group's key -- "certifications", "awards" -- is the
+        # same word a custom section uses for itself, so accepting keys here
+        # would rename the wrong thing on any résumé that has both.
+        group = next((row for row in doc.skills if row.nid == args.key), None)
+        if group is not None and args.label is not None:
+            return _renaming(doc, args.key, args.key, args.label, args.reason)
+
+        known = {meta.key for meta in doc.sections}
+        key = section_key(doc, args.key)
+        if key not in known:
+            raise ToolError(
+                f"No section {args.key!r}. This resume has: "
+                f"{', '.join(sorted(known))}.",
+                code="unknown_node",
             )
-        ]
+        # Both is not a mistake: "between Education and Skills" is the most
+        # natural way to say this, and a model asked for it answers with
+        # `after="education", before="skills"`. Refusing that was a real cost --
+        # the recovery observed was to drop *both*, and the section then landed
+        # at the foot of the resume, which is the failure the argument exists to
+        # prevent. `after` anchors, because the earlier of the pair is the
+        # stable one when something already sits between them.
+        anchor = args.after or args.before
+        if anchor is not None:
+            anchor = section_key(doc, anchor)
+
+        ops: list[DocOp] = []
+        if anchor is not None:
+            if anchor not in known:
+                raise ToolError(
+                    f"No section {anchor!r} to sit beside. This resume has: "
+                    f"{', '.join(sorted(known))}.",
+                    code="unknown_node",
+                )
+            if anchor == key:
+                raise ToolError(
+                    f"{args.key!r} cannot be placed relative to itself.",
+                    code="invalid_args",
+                )
+
+            rest = [
+                meta.key for meta in ordered_sections_meta(doc) if meta.key != key
+            ]
+            at = rest.index(anchor) + (
+                0 if anchor == section_key(doc, args.before or "") else 1
+            )
+            wanted = renumber_sections(doc, key, index=at)
+
+            # One op per section whose number actually changes. Emitting the
+            # whole table would put untouched sections in the undo stack and in
+            # the op log, which reads as the assistant having rearranged the
+            # resume when it moved one thing.
+            for index, meta in enumerate(wanted):
+                if meta.order != index:
+                    ops.append(
+                        SetSection(key=meta.key, order=index, reason=args.reason)
+                    )
+        elif args.order is not None:
+            # An absolute index, asked for outright. Renumbered the same way, so
+            # it cannot collide either.
+            wanted = renumber_sections(doc, key, index=args.order)
+            for index, meta in enumerate(wanted):
+                if meta.order != index:
+                    ops.append(
+                        SetSection(key=meta.key, order=index, reason=args.reason)
+                    )
+
+        if args.label is not None:
+            ops.extend(_renaming(doc, args.key, key, args.label, args.reason))
+
+        if args.visible is not None or not (ops or args.label is not None):
+            ops.insert(
+                0,
+                SetSection(key=key, visible=args.visible, reason=args.reason),
+            )
 
         # A section's visibility is a fact about content, but on a canvas the
         # frames are what actually draw it. Setting one without the other means
@@ -2096,6 +2542,7 @@ def _default_specs() -> list[ToolSpec]:
         RemoveBullet(),
         ReorderBullets(),
         SetBulletStyle(),
+        SetListDisplay(),
         MoveEntry(),
         SetSectionTool(),
         AddPage(),
@@ -2104,6 +2551,7 @@ def _default_specs() -> list[ToolSpec]:
         RemovePage(),
         AddSkill(),
         RemoveSkill(),
+        ReorderSkills(),
         SetEntryField(),
         SetPersonalInfo(),
         AddExperience(),

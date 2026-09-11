@@ -355,12 +355,26 @@ class TestNewSkillGroupsAndSections:
 
     def test_both_bring_a_frame_when_nothing_covers_them(self) -> None:
         """The coverage gate refuses content no frame draws, so the *first*
-        section of a kind has to arrive with somewhere to be drawn."""
-        tool = REGISTRY.get("add_section")
-        ops = tool.compile(tool.Args(label="Certifications"), doc())
+        section of a kind has to arrive with somewhere to be drawn.
 
-        assert len(ops) == 2
-        assert ops[1].node["ref"] == "custom"
+        Bound to the section's own nid, not to the literal "custom".
+        `autolayout` places a custom section by `own.nid` and the renderer
+        resolves it the same way, so a frame reffed "custom" was one the layout
+        never claimed -- it drew *every* custom section as one lump, which is
+        why a second one had nothing of its own to sit in and why neither could
+        be positioned.
+        """
+        tool = REGISTRY.get("add_section")
+        start = doc()
+        ops = tool.compile(tool.Args(label="Certifications"), start)
+
+        frames = [
+            op
+            for op in ops
+            if isinstance(getattr(op, "node", None), dict) and "ref" in op.node
+        ]
+        assert len(frames) == 1
+        assert frames[0].node["ref"] == ops[0].node["nid"]
 
 
 class TestShapesAndImages:

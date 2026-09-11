@@ -295,14 +295,6 @@ class TestFetch:
     async def test_missing_is_404(self, client: AsyncClient) -> None:
         assert (await client.get("/api/v1/documents/nope")).status_code == 404
 
-    async def test_legacy_projection_realigns_arrays(
-        self, client: AsyncClient
-    ) -> None:
-        created = await seed(client)
-        response = await client.get(f"/api/v1/documents/{created['id']}/legacy")
-        entry = response.json()["workExperience"][0]
-        assert len(entry["description"]) == len(entry["descriptionStyles"])
-
 
 class TestOps:
     async def test_edit_applies_and_bumps_version(self, client: AsyncClient) -> None:

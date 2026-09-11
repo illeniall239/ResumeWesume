@@ -101,8 +101,12 @@ export const TEMPLATES: TemplateInfo[] = [
   {
     id: 'profile',
     name: 'Profile',
-    note: 'Headshot and name up top, skills and study in a side rail.',
-    layout: 'sidebar_left',
+    // Was the one sidebar template. The rail is parked -- see `layout` in
+    // `autolayout.py`, which still places one -- and the note now describes
+    // what `.flow--profile` actually draws: a grid header with the picture
+    // beside three rows of name, and a rule under it.
+    note: 'Headshot beside your name and title, ruled off above the first section.',
+    layout: 'stack',
     photo: true,
   },
   {

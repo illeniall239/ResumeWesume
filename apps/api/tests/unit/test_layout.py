@@ -274,16 +274,47 @@ class TestLayoutOps:
         return next(e for e in doc.pages[0].elements if getattr(e, "ref", None) == ref)
 
     def test_geometry_moves_an_element(self) -> None:
+        """A drag, as the canvas actually sends one.
+
+        `use-drag` pushes `pinned` ahead of the geometry in the same batch,
+        because moving something by hand takes it out of the flow's care. The
+        pin is what makes the move stick: without it the frame is still part of
+        the column, and the column decides where its own frames go.
+        """
         doc = placed()
         frame = self.frame_of(doc, "skills")
         result, applied, rejected = apply_ops(
-            doc, [SetGeometry(nid=frame.nid, x=100.0, y=200.0)], all_tiers()
+            doc,
+            [
+                SetElementStyle(nid=frame.nid, patch={"pinned": True}),
+                SetGeometry(nid=frame.nid, x=100.0, y=200.0),
+            ],
+            all_tiers(),
         )
         assert rejected == []
         moved = self.frame_of(result, "skills")
         assert (moved.rect.x, moved.rect.y) == (100.0, 200.0)
         # Untouched fields keep their value: a move is not a resize.
         assert moved.rect.w == frame.rect.w
+
+    def test_an_unpinned_frame_dropped_anywhere_is_put_back(self) -> None:
+        """Geometry alone carries no intent to leave the flow.
+
+        The engine repairs a column it finds broken, whatever op broke it --
+        the guarantee being that no request can store a résumé with frames
+        printed over each other or hanging off the sheet, since the exported
+        PDF renders the stored document exactly as it stands.
+        """
+        doc = placed()
+        frame = self.frame_of(doc, "skills")
+        was = frame.rect.y
+
+        result, _, rejected = apply_ops(
+            doc, [SetGeometry(nid=frame.nid, x=100.0, y=200.0)], all_tiers()
+        )
+
+        assert rejected == []
+        assert self.frame_of(result, "skills").rect.y == was
 
     def test_geometry_expect_catches_a_stale_drag(self) -> None:
         doc = placed()
@@ -360,16 +391,50 @@ class TestLayoutOps:
         assert rejected == []
         assert [e.nid for e in result.pages[0].elements] == list(reversed(original))
 
-    def test_an_element_moves_between_pages(self) -> None:
+    def test_a_pinned_element_moves_between_pages_and_stays(self) -> None:
+        """Deliberate placement is what `pinned` means, and it is honoured.
+
+        Dragging a frame sets it (`use-drag`), and both the re-stack here and
+        the browser's measure pass skip anything carrying it -- so the page a
+        person put something on is the page it stays on.
+        """
         doc = placed()
-        second = PageNode(nid="pag_bbbbb")
-        doc.pages.append(second)
+        doc.pages.append(PageNode(nid="pag_bbbbb"))
         frame = self.frame_of(doc, "skills")
+        frame.pinned = True
+
         result, _, rejected = apply_ops(
             doc, [MoveNode(nid=frame.nid, parent="pag_bbbbb", index=0)], all_tiers()
         )
+
         assert rejected == []
         assert [e.nid for e in result.pages[1].elements] == [frame.nid]
+
+    def test_an_unpinned_frame_is_reclaimed_by_the_flow(self) -> None:
+        """The column decides where column frames sit, and says so immediately.
+
+        `move_node` onto a page is how pagination is *expressed* -- it is what
+        the browser emits when a frame no longer fits -- so a bare one carries
+        no intent to override the flow. The re-stack that follows every
+        reordering batch paginates from the measured heights and pulls a frame
+        that fits back onto the page it belongs on.
+
+        Before the re-stack paginated, this move survived and the document was
+        left with page two holding a frame the flow had already accounted for
+        on page one, which is how a two-page résumé ended up with its second
+        sheet pushed to the bottom.
+        """
+        doc = placed()
+        doc.pages.append(PageNode(nid="pag_bbbbb"))
+        frame = self.frame_of(doc, "skills")
+
+        result, _, rejected = apply_ops(
+            doc, [MoveNode(nid=frame.nid, parent="pag_bbbbb", index=0)], all_tiers()
+        )
+
+        assert rejected == []
+        assert result.pages[1].elements == []
+        assert frame.nid in [e.nid for e in result.pages[0].elements]
 
     def test_content_cannot_be_moved_onto_a_page(self) -> None:
         """A page holds elements. A job dropped straight onto one would be a

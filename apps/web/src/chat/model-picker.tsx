@@ -24,7 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import ProviderSettings from '@/settings/provider-settings';
 import { Caret, Caution, Check } from '@/ui/marks';
-import { modelOf, providerOf, shortLabel, useModels } from '@/store/models';
+import { describe, modelOf, providerOf, useModels } from '@/store/models';
 import type { ProviderInfo } from '@/lib/api';
 
 /** Panel width in px. Narrow enough for the 320px sidebar minimum. */
@@ -265,18 +265,20 @@ export function ModelPicker() {
         aria-expanded={open}
         aria-haspopup="listbox"
         title={
-          fallbackReason
-            ? `${fallbackReason} Running ${effective} instead.`
-            : selection
-              ? `Using ${selection}`
-              : `Using ${fallback} (from .env)`
+          !loaded
+            ? 'Finding out which model will answer'
+            : fallbackReason
+              ? `${fallbackReason} Running ${describe(effective, providers)} instead.`
+              : `Running ${describe(effective, providers)}`
         }
       >
-        {/* Labelled from `effective`, never from `selection`: a selection the
-            server has already rejected must not be displayed as though it
-            were live. */}
+        {/* Labelled from `effective`, never from `selection` or `fallback`: a
+            selection the server has rejected must not show as live, and the
+            .env fallback is not what runs when a Claude login is present. The
+            tooltip used to say "Using ollama/... (from .env)" over turns that
+            were answering on the subscription. */}
         <span className="picker__current">
-          {loaded ? shortLabel(effective || selection, fallback) : 'Loading…'}
+          {loaded ? describe(effective, providers) : 'Loading…'}
         </span>
         {fallbackReason && (
           <span className="picker__warn" title={fallbackReason}>

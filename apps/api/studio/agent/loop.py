@@ -308,6 +308,38 @@ class TurnRunner:
         # before it started working and the one it had after.
         prose = ProseStream(channel.emit)
 
+        # Where the assistant is writing right now, per call.
+        #
+        # A draft is visible for as long as the arguments take to stream, which
+        # is a second or more on a long bullet, and during it the page shows the
+        # new text arriving in the node. Typing into that node in that moment
+        # loses whichever of the two writes lands second -- so it is closed for
+        # editing while the pen is in it, and opened again the moment the call
+        # settles, whether it applied, was rejected, or never balanced at all.
+        #
+        # Keyed by call so two calls in one round cannot release each other's
+        # nodes, and drained in `finally` so a cancelled turn does not leave the
+        # document locked against the person who cancelled it.
+        writing: dict[str, set[str]] = {}
+
+        def hold(call_id: str, target: str) -> None:
+            held = writing.setdefault(call_id, set())
+            if target in held:
+                return
+            held.add(target)
+            channel.emit(ev.NodeLock(nids=[target], locked=True))
+
+        def release(*call_ids: str) -> None:
+            freed = sorted(
+                {
+                    target
+                    for call_id in (call_ids or tuple(writing))
+                    for target in writing.pop(call_id, ())
+                }
+            )
+            if freed:
+                channel.emit(ev.NodeLock(nids=freed, locked=False))
+
         try:
             while True:
                 self._budget.start_iteration()
@@ -336,6 +368,7 @@ class TurnRunner:
                         elif isinstance(event, CallProgress):
                             # Shown, not applied. The edit lands when the call
                             # balances, a moment later.
+                            hold(event.call_id, event.target)
                             channel.emit(
                                 ev.Drafting(
                                     call_id=event.call_id,
@@ -347,14 +380,19 @@ class TurnRunner:
                             channel.emit(ev.ThinkingDelta(text=event.text))
                         elif isinstance(event, AssembledCall):
                             executed_any = True
-                            applied, rejected, result_message = await self._execute(
-                                event,
-                                request,
-                                channel,
-                                ledger,
-                                grounder,
-                                repairs_per_call,
-                            )
+                            try:
+                                applied, rejected, result_message = (
+                                    await self._execute(
+                                        event,
+                                        request,
+                                        channel,
+                                        ledger,
+                                        grounder,
+                                        repairs_per_call,
+                                    )
+                                )
+                            finally:
+                                release(event.call_id)
                             applied_total += applied
                             applied_this_round += applied
                             rejected_total += rejected
@@ -399,9 +437,12 @@ class TurnRunner:
                 # wrote into its prose instead of the structured field.
                 for leftover in assembler.unfired():
                     executed_any = True
-                    applied, rejected, result_message = await self._execute(
-                        leftover, request, channel, ledger, grounder, repairs_per_call
-                    )
+                    try:
+                        applied, rejected, result_message = await self._execute(
+                            leftover, request, channel, ledger, grounder, repairs_per_call
+                        )
+                    finally:
+                        release(leftover.call_id)
                     applied_total += applied
                     applied_this_round += applied
                     rejected_total += rejected
@@ -587,6 +628,10 @@ class TurnRunner:
             # after this point, and an orphaned task logs a warning at exit.
             if parts_task is not None:
                 parts_task.cancel()
+            # And nothing stays closed for editing. A turn killed mid-draft
+            # would otherwise leave the node it was writing to unusable, with
+            # nothing left running to open it again.
+            release()
 
         # Outside the try, because a turn that ended at the wall clock or on a
         # provider error still changed the document, and what it changed is

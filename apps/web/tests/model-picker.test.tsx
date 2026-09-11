@@ -90,17 +90,27 @@ beforeEach(() => {
 const openPanel = () => fireEvent.click(screen.getByRole('button', { expanded: false }));
 
 describe('the trigger', () => {
-  it('shows the model, not the provider pair', () => {
+  it('names the provider and the model, so local or key or plan is never a guess', () => {
     render(<ModelPicker />);
-    expect(screen.getByText('qwen3:14b-16k')).toBeInTheDocument();
+    expect(screen.getByText('Ollama (local) · qwen3:14b-16k')).toBeInTheDocument();
   });
 
-  it('names the environment default when nothing is selected', () => {
-    seed({ selection: null, effective: 'ollama/qwen3:14b-16k' });
+  it('says what is running when nothing is selected, not what .env says', () => {
+    // A first-time user with a Claude login: nothing selected, .env pointing
+    // at Ollama, and every turn answering on the subscription. The control
+    // read `default` and the tooltip said "Using ollama/... (from .env)" --
+    // both wrong, and together they read as the login being ignored.
+    seed({
+      providers: [OLLAMA, OPENAI, { ...OLLAMA, id: 'claude_code', label: 'Claude subscription' }],
+      selection: null,
+      fallback: 'ollama/qwen3:14b-16k',
+      effective: 'claude_code/default',
+    });
     render(<ModelPicker />);
-    expect(
-      screen.getByTitle('Using ollama/qwen3:14b-16k (from .env)')
-    ).toBeInTheDocument();
+
+    expect(screen.getByText('Claude subscription · plan default')).toBeInTheDocument();
+    expect(screen.getByTitle('Running Claude subscription · plan default')).toBeInTheDocument();
+    expect(screen.queryByText(/from \.env/)).not.toBeInTheDocument();
   });
 });
 
@@ -116,8 +126,8 @@ describe('a selection that cannot run', () => {
     });
     render(<ModelPicker />);
 
-    expect(screen.getByText('qwen3:14b-16k')).toBeInTheDocument();
-    expect(screen.queryByText('gpt-4o')).not.toBeInTheDocument();
+    expect(screen.getByText('Ollama (local) · qwen3:14b-16k')).toBeInTheDocument();
+    expect(screen.queryByText(/gpt-4o/)).not.toBeInTheDocument();
   });
 
   it('says why, in the panel', () => {

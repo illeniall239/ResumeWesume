@@ -125,6 +125,10 @@ def _has_content(doc: StudioDoc, key: str) -> bool:
 #: reason a newspaper puts its long copy there.
 _RAIL_SECTIONS: frozenset[str] = frozenset({"skills", "education"})
 
+#: How far short of the full width a frame may be and still count as spanning
+#: it. Sub-point drift is float arithmetic, not a column.
+_SPAN_SLACK = 0.5
+
 #: Fraction of the content width the rail takes.
 _RAIL_FRACTION = 0.32
 
@@ -256,6 +260,39 @@ def layout(
     return [PageNode(nid=derived_id(NodeKind.PAGE, "1"), size="A4", elements=list(elements))]
 
 
+def reading_order(doc: StudioDoc) -> list[str]:
+    """Every ref the flow can hold, in the order a reader meets them.
+
+    The companion to ``layout``, and deliberately not the same walk. ``layout``
+    decides what to *create*, so it skips a section with nothing in it and one
+    the user has hidden -- there is no frame to make. This says where a frame
+    *belongs* if the page has one, which is a different question, and the only
+    one a re-stack can be answered by.
+
+    Deriving both from ``layout`` is what stranded frames. A hidden section
+    still owns a frame -- the content is intact and the coverage gate counts it
+    -- and that frame was not in ``layout``'s output, so nothing repositioned
+    it. Everything else stacked as though the section were not there and drew
+    straight over the top of it.
+
+    Hidden and empty sections are therefore included. A frame for one occupies
+    no height (see ``restack``) but it keeps its place in the sequence, so
+    showing the section again is a re-stack rather than a repair.
+    """
+    order = ["personal"]
+    for meta in sorted(doc.sections, key=lambda meta: meta.order):
+        own = next((section for section in doc.custom if section.key == meta.key), None)
+        if own is not None:
+            order.append(own.nid)
+            continue
+        order.append(meta.key)
+        for entry in _entries(doc, meta.key):
+            order.append(entry.nid)
+    if doc.blocks:
+        order.append("blocks")
+    return order
+
+
 def restack(doc: StudioDoc, *, page: PageSpec = A4) -> None:
     """Put the frames back in the document's own order, in place.
 
@@ -271,34 +308,188 @@ def restack(doc: StudioDoc, *, page: PageSpec = A4) -> None:
     and wrong in geometry, and the page would jump on every move.
 
     Anything without a ``ref`` -- a box or a line somebody placed by hand -- is
-    left exactly where it was. It is not part of the flow and never was.
+    left exactly where it was. It is not part of the flow and never was. Nor is
+    anything ``pinned``: the moment somebody drags a frame they own its
+    position, and the browser's own measure pass skips it for the same reason.
+
+    **It paginates.** ``layout`` returns one page with a continuous ``y``,
+    because pagination needs measured text and the server has none. Copying
+    those numbers onto frames that still sit on their original pages is only
+    correct while the resume fits on one sheet. On two, everything on page two
+    was handed a page-one coordinate -- offset by the whole height of page one
+    -- so the first frame landed near the foot of the sheet and the rest ran off
+    it entirely:
+
+        content area 28 .. 813
+        page 2 before   28, 178, 328, 350, 438
+        page 2 after   736, 886, 1036, 1058, 1146
+
+    That reached the PDF as well as the screen, because the print route renders
+    the stored document. The browser repaginated it on the next version, which
+    is why dragging anything appeared to "fix" the page -- and why the frame
+    that was dragged stayed broken, being pinned and therefore skipped.
     """
-    existing = {
-        element.ref: element
+    movable = [
+        element
         for node in doc.pages
         for element in node.elements
-        if getattr(element, "ref", None)
-    }
-    if not existing:
+        if getattr(element, "ref", None) and not getattr(element, "pinned", False)
+    ]
+    if not movable:
         return
 
+    existing = {element.ref: element for element in movable}
     fresh = layout(
         doc,
         page=page,
         heights={ref: element.rect.h for ref, element in existing.items()},
     )
-    placed = {
+    # `layout` for the column and the width, `reading_order` for the sequence.
+    #
+    # Not `layout` for both, which is what let a frame be stranded. `layout`
+    # derives frames from *content* and skips a section that is hidden or has
+    # nothing in it; this has to place what is *on the page*. When those two
+    # sets differ the frames in the difference were left at whatever position
+    # they last had, while everything else stacked around them as though they
+    # were not there -- so hiding Awards drew Education straight on top of it,
+    # and the section under that kept a gap the size of the hole.
+    geometry = {
         element.ref: element.rect
         for node in fresh
         for element in node.elements
         if getattr(element, "ref", None)
     }
-    for ref, element in existing.items():
-        rect = placed.get(ref)
-        if rect is None:
-            # A frame the walk no longer reaches: its node is gone, and gate 7
-            # is what decides whether that is allowed. Not this function's call.
-            continue
-        element.rect.x = rect.x
-        element.rect.y = rect.y
-        element.rect.w = rect.w
+    rank = {ref: index for index, ref in enumerate(reading_order(doc))}
+    flow = sorted(
+        movable,
+        # Anything the order does not name sorts to the end by where it already
+        # sits, so an unknown frame is still placed rather than stranded.
+        key=lambda element: (rank.get(element.ref, len(rank)), element.rect.y),
+    )
+
+    top = page.margin
+    bottom = page.margin + page.content_height
+    sheets: list[list[Any]] = [[]]
+
+    # One cursor per column, exactly as ``layout`` keeps one -- and for the
+    # same reason, which this did not have and needed.
+    #
+    # A single running cursor is right for a stack and wrong for a sidebar: it
+    # gave the rail a `y` below the whole main column, so Education and Skills
+    # were stacked *under* Experience instead of beside it. Nothing had shown
+    # it, because a sidebar could only be chosen when a document was created
+    # and this runs after every edit -- so the first edit to a two-column
+    # résumé pulled it into one, and the browser then measured the two-column
+    # render and sent geometry back that this flattened again, which is a loop
+    # that writes a version per round.
+    #
+    # A stack is the degenerate case rather than a separate path: every frame
+    # in it is full width, so every frame spans, and one cursor is what that
+    # comes to.
+    columns = {rect.x for rect in geometry.values()}
+    cursors: dict[float, float] = {}
+
+    def below_everything() -> float:
+        return max(cursors.values(), default=top)
+
+    for element in flow:
+        # A frame that draws nothing occupies nothing. Hiding a section keeps
+        # its frame -- the content is still there, and the coverage gate counts
+        # it -- but the sheet must not reserve room for something no reader
+        # will see, or hiding a section would leave its hole behind.
+        height = element.rect.h if element.visible else 0.0
+
+        # The column and the width come from `layout` where it has an opinion,
+        # which is how a sidebar arrangement keeps its rail. A frame `layout`
+        # did not emit keeps the ones it already has. Read before the position
+        # is chosen, because which column it lands in decides where it can go.
+        rect = geometry.get(element.ref)
+        if rect is not None:
+            element.rect.x = rect.x
+            element.rect.w = rect.w
+
+        # Full width: it sits below everything so far and both columns resume
+        # under it. The header is the one of these on an ordinary résumé, and a
+        # name is the one thing that is never in a column.
+        spans = element.rect.w >= page.content_width - _SPAN_SLACK
+        start = below_everything() if spans else cursors.get(element.rect.x, top)
+
+        # A frame moves whole or not at all -- the rule the flowing renderer
+        # used and the browser still uses, so the two cannot disagree about
+        # where a page breaks. One taller than a whole sheet is left to
+        # overflow rather than be split, which is what the browser does when it
+        # cannot honour a break.
+        if start + height > bottom and start > top and height <= page.content_height:
+            sheets.append([])
+            cursors = {}
+            start = top
+
+        element.rect.y = start
+        sheets[-1].append(element)
+
+        end = start + height + _GAP
+        if spans:
+            for column in columns | {element.rect.x}:
+                cursors[column] = end
+        else:
+            cursors[element.rect.x] = end
+
+    _redistribute(doc, sheets, page=page)
+
+
+def _redistribute(doc: StudioDoc, sheets: list[list[Any]], *, page: PageSpec) -> None:
+    """Move frames onto the sheet the stack put them on, and nothing else.
+
+    Two orders live on a page and they are not the same thing. ``rect.y`` is
+    where a frame is drawn; the position in ``elements`` is what is drawn on
+    top of what. Rebuilding the list from the stack got the first right by
+    destroying the second, so "bring to front" -- an ordinary reorder of this
+    very list -- was undone by the next re-stack.
+
+    So the list is edited, not rebuilt: an element that stays on its page keeps
+    its place in it, and only one that genuinely changes page is moved.
+
+    Anything the flow does not reach keeps its page and its position outright.
+    That is a hand-placed box or a pinned frame, and it is also the frame of a
+    *hidden* section -- which ``layout`` does not emit, and which the first
+    version of this dropped from the page altogether. The coverage gate caught
+    it, correctly: a frame that renders a job is not spare because the section
+    is currently switched off.
+    """
+    flowed: dict[str, int] = {}
+    for index, sheet in enumerate(sheets):
+        for element in sheet:
+            flowed[element.nid] = index
+
+    while len(doc.pages) < len(sheets):
+        doc.pages.append(
+            PageNode(
+                nid=derived_id(NodeKind.PAGE, str(len(doc.pages) + 1)),
+                size=doc.pages[0].size if doc.pages else "A4",
+                orientation=doc.pages[0].orientation if doc.pages else "portrait",
+                elements=[],
+            )
+        )
+
+    # Take out only what is moving, keeping every other element exactly where
+    # it sits in the list.
+    moving: dict[int, list[Any]] = {}
+    for index, node in enumerate(doc.pages):
+        staying = []
+        for element in node.elements:
+            target = flowed.get(element.nid)
+            if target is None or target == index:
+                staying.append(element)
+            else:
+                moving.setdefault(target, []).append(element)
+        node.elements = staying
+
+    # Put each migrant on its new page, in reading order, so a frame arriving
+    # from the page before lands above one that was already there.
+    for target, arrivals in moving.items():
+        order = {element.nid: position for position, element in enumerate(sheets[target])}
+        node = doc.pages[target]
+        node.elements = sorted(
+            [*node.elements, *arrivals],
+            key=lambda element: order.get(element.nid, len(order)),
+        )

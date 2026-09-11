@@ -1,4 +1,4 @@
-.PHONY: dev install api web test contracts check
+.PHONY: dev install api web test check
 
 # One command, both servers. `make` is not on Windows unless you install it,
 # so this target is a convenience -- `uv run scripts/dev.py` is the thing, and
@@ -20,12 +20,6 @@ test:
 	cd apps/api && uv run pytest
 	cd apps/web && npm run test
 
-# Regenerate the TypeScript contract from the Pydantic models. CI runs this and
-# fails on a dirty tree, so a schema change breaks the build instead of
-# surfacing as a runtime mystery in the browser.
-contracts:
-	cd apps/api && uv run python scripts/gen_contracts.py
-
-check: contracts test
+check: test
 	cd apps/web && npm run typecheck && npm run build
 	git diff --exit-code apps/web/src/contracts

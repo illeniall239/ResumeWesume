@@ -752,7 +752,9 @@ export function applyEvent(
     case 'done':
       // A draft outlives its call only when the call never landed -- truncated
       // mid-write, or rejected. Left on screen it would be text the document
-      // does not contain and undo cannot remove.
+      // does not contain and undo cannot remove. The lock that went with it
+      // goes too: the server releases every node as its call settles, and this
+      // is the backstop for a turn whose stream died before it could.
       useStudio.getState().clearDrafts();
       // Pen up. A pointer left on the sheet after the turn ends would claim
       // work is still happening there, which is the one thing it must never

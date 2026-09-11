@@ -86,8 +86,22 @@ class TestNodeIds:
         assert nid.startswith("blt_")
         assert kind_of(nid) is NodeKind.BULLET
 
-    def test_ids_are_unique(self) -> None:
-        assert len({mint(NodeKind.SKILL) for _ in range(500)}) == 500
+    def test_ids_are_drawn_from_a_space_too_large_to_collide_in_a_resume(
+        self,
+    ) -> None:
+        # This asserted 500 mints were all distinct, which is a coin flip, not
+        # a property: five characters of a 31-letter alphabet is 28.6M ids, so
+        # 500 draws collide about once in every 230 runs -- and it duly failed
+        # a full suite run once, for nothing. The real guarantee is two-part:
+        # the space is far larger than any document, and a collision that does
+        # happen is caught by the duplicate gate rather than written to disk
+        # (see `test_duplicate_nid_rejected`).
+        minted = [mint(NodeKind.SKILL) for _ in range(500)]
+
+        assert len(set(minted)) >= 499
+        # Random, not a counter: a sequence would repeat across two processes
+        # minting into the same document.
+        assert len({nid[4] for nid in minted}) > 20
 
     @pytest.mark.parametrize(
         "bad", ["", "blt", "blt_", "xyz_aaaaa", "blt_toolongsuffix", "blt_AAAAA", "blt_iiiii"]

@@ -24,7 +24,16 @@ strict there converts a recoverable shape problem into a failed turn.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, Union
+from types import UnionType
+from typing import (
+    Annotated,
+    Any,
+    Final,
+    Literal,
+    Union,
+    get_args,
+    get_origin,
+)
 
 from pydantic import BaseModel, Discriminator, Field, Tag, field_validator
 
@@ -42,6 +51,22 @@ SectionKey = Literal[
 #: that change carry it, and dropping it would fail their validation on load.
 SkillSource = Literal["original", "jd", "resume", "user"]
 BulletStyle = Literal["bullet", "plain"]
+
+#: How a run of short items is set: one comma-separated line, or a bulleted
+#: list. It governs a skills group and the ``strings`` of a custom section --
+#: certifications, awards, languages -- which are the same widget.
+#:
+#: Stored on the document because it is the author's choice, and there was no
+#: way to express it. The renderer decided by looking at the words: a group
+#: whose items carried commas or ran long was stacked, everything else was
+#: joined into a line. That reads well by default and is not a setting, so
+#: "list my technical skills as bullets" had no answer -- the only way to get
+#: a list was to write something long enough to trip the heuristic.
+#:
+#: ``auto`` is that heuristic, and stays the default so no stored document
+#: changes shape. The rule for it lives in the renderer alone; duplicating it
+#: here would be a second copy to drift out of step with the one that draws.
+ListDisplay = Literal["auto", "inline", "list"]
 
 #: How the résumé is set: type, rules, spacing and the shape of a section
 #: heading. Chosen when the document is created and stored on the document
@@ -94,6 +119,45 @@ Layout = Literal[
     "sidebar_left",
     "sidebar_right",
 ]
+
+
+#: Fields that hold an identifier or an asset reference rather than writing.
+#: Everything else typed ``str`` on a content model is something a person wrote
+#: and can be searched, read back and edited.
+_NOT_WRITING: Final = frozenset({"nid", "key", "photo"})
+
+
+def prose_fields(model: type[BaseModel]) -> tuple[str, ...]:
+    """The fields of ``model`` that hold writing, derived from its annotations.
+
+    The one definition of "is this text a person wrote". Five places used to
+    answer it by hand -- the outline, the search inventory, the full read, each
+    tool's ``Literal``, and the tier table -- and a field added to the schema
+    reached whichever of them somebody remembered. ``role`` reached none: a
+    project's role was unsearchable, missing from both views, and refused by
+    the only tool that could have changed it, while the engine had classified
+    it as ordinary metadata all along.
+
+    The rule is the annotation, so nothing has to be remembered. A ``Literal``
+    is a machine's enum -- a bullet style, a section kind, a template -- and is
+    never prose. A plain ``str`` or ``str | None`` is prose unless it is one of
+    the three identifiers above.
+    """
+    return tuple(
+        name
+        for name, info in model.model_fields.items()
+        if name not in _NOT_WRITING and _is_prose(info.annotation)
+    )
+
+
+def _is_prose(annotation: Any) -> bool:
+    if annotation is str:
+        return True
+    # ``str | None``, and nothing else: a union of anything wider is not a
+    # field somebody types into.
+    return get_origin(annotation) in (Union, UnionType) and set(
+        get_args(annotation)
+    ) == {str, type(None)}
 
 
 def _as_text(value: Any) -> str:
@@ -222,6 +286,14 @@ class SkillGroup(BaseModel):
     key: str = "technical"
     label: str = "Technical Skills"
     items: list[SkillItem] = Field(default_factory=list)
+    display: ListDisplay = "auto"
+
+    @field_validator("display", mode="before")
+    @classmethod
+    def _coerce_display(cls, value: Any) -> str:
+        # Anything unrecognised means "let the page decide", which is what a
+        # document written before this field existed says by saying nothing.
+        return value if value in ("inline", "list") else "auto"
 
 
 class CustomItemNode(BaseModel):
@@ -241,6 +313,16 @@ class CustomSectionNode(BaseModel):
     text: TextNode | None = None
     items: list[CustomItemNode] = Field(default_factory=list)
     strings: list[SkillItem] = Field(default_factory=list)
+    #: Applies to ``strings``. A Certifications section is a skills group that
+    #: happens to live in ``custom``, and it could not be listed either -- it
+    #: was comma-joined with no alternative at all, which is the shape the
+    #: renderer's own comment calls unreadable for credentials.
+    display: ListDisplay = "auto"
+
+    @field_validator("display", mode="before")
+    @classmethod
+    def _coerce_display(cls, value: Any) -> str:
+        return value if value in ("inline", "list") else "auto"
 
 
 class SectionMeta(BaseModel):

@@ -14,7 +14,6 @@ are precisely where the bugs live.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, AsyncIterator, Iterable
 
 from studio.agent.worklist import is_scope_probe
@@ -167,51 +166,3 @@ def turn(*parts: Iterable[ModelChunk]) -> list[ModelChunk]:
     for part in parts:
         out.extend(part)
     return out
-
-
-# --- cassettes --------------------------------------------------------------
-
-
-def _encode(chunk: ModelChunk) -> dict[str, Any]:
-    if isinstance(chunk, TextDelta):
-        return {"t": "text", "text": chunk.text}
-    if isinstance(chunk, ThinkingDelta):
-        return {"t": "thinking", "text": chunk.text}
-    if isinstance(chunk, ToolCallDelta):
-        return {
-            "t": "tool",
-            "index": chunk.index,
-            "id": chunk.id,
-            "name": chunk.name,
-            "arguments": chunk.arguments,
-        }
-    return {"t": "end", "finish_reason": chunk.finish_reason, "usage": chunk.usage}
-
-
-def _decode(raw: dict[str, Any]) -> ModelChunk:
-    kind = raw.get("t")
-    if kind == "text":
-        return TextDelta(text=raw.get("text", ""))
-    if kind == "thinking":
-        return ThinkingDelta(text=raw.get("text", ""))
-    if kind == "tool":
-        return ToolCallDelta(
-            index=raw.get("index", 0),
-            id=raw.get("id"),
-            name=raw.get("name"),
-            arguments=raw.get("arguments", ""),
-        )
-    return StreamEnd(
-        finish_reason=raw.get("finish_reason"), usage=raw.get("usage") or {}
-    )
-
-
-def save_cassette(path: Path, turns: list[list[ModelChunk]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = [[_encode(chunk) for chunk in turn_chunks] for turn_chunks in turns]
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def load_cassette(path: Path) -> list[list[ModelChunk]]:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    return [[_decode(raw) for raw in turn_chunks] for turn_chunks in payload]

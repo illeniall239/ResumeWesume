@@ -301,9 +301,36 @@ export function applyOp(doc: StudioDoc, op: DocOp): StudioDoc {
 
     case 'set_section': {
       const section = next.sections.find((candidate) => candidate.key === op.key);
-      if (!section) return doc;
-      if (op.visible !== null && op.visible !== undefined) section.visible = op.visible;
-      if (op.order !== null && op.order !== undefined) section.order = op.order;
+      if (section) {
+        if (op.visible !== null && op.visible !== undefined) section.visible = op.visible;
+        if (op.order !== null && op.order !== undefined) section.order = op.order;
+        return next;
+      }
+
+      // A section that exists as content but has no row in the order yet.
+      //
+      // `add_section` creates a custom section and, in the same batch, the row
+      // that positions it. The server mints the row when it meets that op; this
+      // mirror used to return the document untouched, so for the length of the
+      // turn the client held a section the order had never heard of -- and both
+      // renderers draw one of those in a tail after everything the order
+      // accounts for. Asked for Certifications after Education, the page showed
+      // it last while the server's copy had it in the right place, and the two
+      // only agreed once the turn's document arrived.
+      //
+      // Mirroring the server here is the whole job of this file: an optimistic
+      // edit that disagrees with the server is worse than no optimistic edit.
+      const own = next.custom.find((candidate) => candidate.key === op.key);
+      if (!own) return doc;
+      next.sections = [
+        ...next.sections,
+        {
+          key: op.key,
+          label: own.label || op.key,
+          visible: op.visible ?? true,
+          order: op.order ?? next.sections.length,
+        },
+      ];
       return next;
     }
 

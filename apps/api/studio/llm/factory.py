@@ -3,9 +3,9 @@
 The composition root for the model layer. Nothing above this module chooses a
 provider or knows one exists; they receive a ``ChatBackend``.
 
-Backends are cached per configuration fingerprint. Building one is cheap, but a
-stable instance means the circuit breaker accumulates state across requests,
-which is the only way it can observe that a provider is down.
+Backends are cached per configuration fingerprint. Building one is cheap; the
+cache keeps one instance per provider+model+key so nothing above here has to
+think about lifetime.
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from studio.llm.backend import ChatBackend, ModelSpec, StreamEnd, TextDelta
 from studio.llm.litellm_backend import LiteLLMBackend, probe_supports_tools
 from studio.llm import subscription
 from studio.llm.claude_code_backend import ClaudeCodeBackend
-from studio.llm.resilience import CircuitBreaker
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle: persistence imports nothing here
     from studio.persistence.providers import ProviderStore
@@ -57,18 +56,6 @@ class Resolution:
 @dataclass
 class BackendFactory:
     _cache: dict[str, ChatBackend] = field(default_factory=dict, init=False)
-    _breakers: dict[str, CircuitBreaker] = field(default_factory=dict, init=False)
-
-    def breaker_for(self, provider: str) -> CircuitBreaker:
-        """One breaker per provider.
-
-        Per provider, not per model: a dead Ollama daemon should not stop a
-        configured cloud provider from being tried, and two models on the same
-        dead daemon share a single fate.
-        """
-        if provider not in self._breakers:
-            self._breakers[provider] = CircuitBreaker()
-        return self._breakers[provider]
 
     def build(self, config: ProviderConfig) -> ChatBackend:
         key = config.fingerprint()
@@ -108,7 +95,7 @@ class BackendFactory:
         return backend
 
     def from_settings(self) -> ChatBackend:
-        return self.build(_default_config())
+        return self.build(default_config())
 
     async def effective(self, store: "ProviderStore | None") -> "Resolution":
         """What will actually run, and why, if it is not what was asked for.
@@ -120,7 +107,7 @@ class BackendFactory:
         which is exactly what it did, and is the worst kind of wrong, because
         the screen is confidently reporting the wrong model.
         """
-        default = _default_config()
+        default = default_config()
 
         if store is None:
             return Resolution(default, "")
@@ -196,11 +183,8 @@ class BackendFactory:
         """
         return self.build((await self.effective(store)).config)
 
-    def clear(self) -> None:
-        self._cache.clear()
 
-
-def _default_config() -> ProviderConfig:
+def default_config() -> ProviderConfig:
     """What to use when the user has not chosen anything.
 
     A Claude subscription already signed in on this machine is preferred over

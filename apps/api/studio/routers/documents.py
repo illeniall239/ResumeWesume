@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from studio.doc.apply import OpContext
 from studio.doc.autolayout import layout
-from studio.doc.legacy import from_resume_data, to_resume_data
+from studio.doc.legacy import from_resume_data
 from studio.doc.ops import DocOp
 from studio.ingest.pdf import ExtractionError, read_pages
 from studio.doc.schema import (
@@ -363,15 +363,6 @@ async def clear_conversation(request: Request, document_id: str) -> None:
     what was said about them.
     """
     await _repo(request).clear_conversation(document_id)
-
-
-@router.get("/{document_id}/legacy")
-async def get_legacy_shape(request: Request, document_id: str) -> dict[str, Any]:
-    """The old ResumeData shape, for the ported render templates."""
-    state = await _repo(request).get(document_id)
-    if state is None:
-        raise HTTPException(status_code=404, detail="Document not found")
-    return to_resume_data(state.doc)
 
 
 @router.post("/{document_id}/ops", response_model=ApplyResponse)

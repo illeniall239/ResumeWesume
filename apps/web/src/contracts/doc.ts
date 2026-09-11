@@ -1,8 +1,22 @@
-// GENERATED FILE — DO NOT EDIT.
-// Source: apps/api/studio/doc/{schema,ops}.py
-// Regenerate: cd apps/api && uv run python scripts/gen_contracts.py
+// The document schema, in the browser's language.
+//
+// Mirrors apps/api/studio/doc/{schema,ops}.py, which is the source of truth.
+// Edit this file when a model gains a field: the API suite's
+// test_contract_covers_the_models fails by name if one is missing here.
+//
+// It used to carry "GENERATED FILE — DO NOT EDIT" and did not: the generator
+// held a hand-typed copy of this file and overwrote it, so an edit made here
+// disappeared on the next run with CI reporting only a dirty tree.
 
 export type BulletStyle = 'bullet' | 'plain';
+
+/**
+ * How a run of short items is set: one comma-separated line, or a bulleted
+ * list. `auto` is the heuristic below in `mustStack` — the shape the page picks
+ * when the document does not say. Optional, because a document written before
+ * the field existed does not carry it and means `auto` by saying nothing.
+ */
+export type ListDisplay = 'auto' | 'inline' | 'list';
 
 export type SkillSource = 'original' | 'jd' | 'resume' | 'user';
 
@@ -75,6 +89,7 @@ export interface SkillGroup {
   key: string;
   label: string;
   items: SkillItem[];
+  display?: ListDisplay;
 }
 
 export interface CustomItemNode {
@@ -94,6 +109,8 @@ export interface CustomSectionNode {
   text: TextNode | null;
   items: CustomItemNode[];
   strings: SkillItem[];
+  /** Applies to `strings`. */
+  display?: ListDisplay;
 }
 
 export interface SectionMeta {

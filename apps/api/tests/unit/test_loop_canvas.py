@@ -283,9 +283,16 @@ class TestGuardsPreserveLayout:
         self, repo: DocumentRepo
     ) -> None:
         """The risk the plan flagged: a correction that carries stale `pages`
-        would silently undo a drag that landed during the turn."""
+        would silently undo a drag that landed during the turn.
+
+        Pinned, because that is what a drag is. `use-drag` sends `pinned` ahead
+        of the geometry in the same batch, and the pin is what tells the engine
+        the position was chosen rather than derived -- an unpinned frame is
+        still part of the column, and the column places its own frames.
+        """
         doc = paged_doc()
         doc.pages[0].elements[0].rect.x = 123.0
+        doc.pages[0].elements[0].pinned = True
 
         _, final, _ = await run_turn(
             repo,

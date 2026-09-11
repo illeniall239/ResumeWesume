@@ -25,7 +25,7 @@ import {
   saveCredentials,
   selectModel,
 } from '@/lib/api';
-import { modelOf, providerOf, shortLabel, useModels } from '@/store/models';
+import { describe as describeModel, modelOf, providerOf, useModels } from '@/store/models';
 
 const OLLAMA = {
   id: 'ollama',
@@ -78,9 +78,32 @@ describe('parsing a selection', () => {
     expect(modelOf('/model')).toBeNull();
   });
 
-  it('labels the control with the model, falling back to the env default', () => {
-    expect(shortLabel('openai/gpt-4o', 'ollama/qwen3')).toBe('gpt-4o');
-    expect(shortLabel(null, 'ollama/qwen3:14b-16k')).toBe('qwen3:14b-16k');
+  it('labels the control with the provider and the model, in that order', () => {
+    // A first-time user whose turns ran on their Claude login saw a control
+    // reading `default` and a terminal saying `provider=ollama`, and
+    // concluded the login had been ignored. Which of local, API key and
+    // subscription is answering is the one fact this label exists to state.
+    const providers = [
+      { id: 'claude_code', label: 'Claude subscription' },
+      { id: 'ollama', label: 'Ollama (local)' },
+      { id: 'openai', label: 'OpenAI' },
+    ] as never;
+
+    expect(describeModel('claude_code/default', providers)).toBe(
+      'Claude subscription · plan default'
+    );
+    expect(describeModel('claude_code/claude-sonnet-5', providers)).toBe(
+      'Claude subscription · claude-sonnet-5'
+    );
+    expect(describeModel('ollama/qwen3:14b-16k', providers)).toBe('Ollama (local) · qwen3:14b-16k');
+    expect(describeModel('openai/gpt-4o', providers)).toBe('OpenAI · gpt-4o');
+  });
+
+  it('never shows the raw sentinel as if it were a model name', () => {
+    // Before the catalogue has loaded the provider id stands in for its
+    // label; the sentinel is still spelled out rather than shown bare.
+    expect(describeModel('claude_code/default', [] as never)).toBe('claude_code · plan default');
+    expect(describeModel(null, [] as never)).toBe('No model');
   });
 });
 

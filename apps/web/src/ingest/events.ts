@@ -1,11 +1,10 @@
 /**
  * The import half of the NDJSON protocol.
  *
- * Hand-written, and deliberately not in `@/contracts/doc`. That file is
- * generated wholesale from a string literal in `scripts/gen_contracts.py`, so
- * anything added to it by hand disappears on the next `make contracts` run and
- * fails CI's `git diff --exit-code` with no obvious cause. The turn events are
- * typed the same way, in `stream/ndjson.ts`, for the same reason.
+ * Separate from `@/contracts/doc` because it describes the wire, not the
+ * document: these events exist only while an import is running and have no
+ * Pydantic model to mirror. The turn events are typed the same way, in
+ * `stream/ndjson.ts`.
  */
 
 import type { StreamEvent } from '@/stream/ndjson';

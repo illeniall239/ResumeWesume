@@ -212,10 +212,6 @@ textarea {
   color: var(--legend-faint);
 }
 
-.legend--lit {
-  color: var(--legend-dim);
-}
-
 /* --- controls -------------------------------------------------------------
    One control family. Rank between them is weight and lettering, never a
    container: the primary action is filled because it is the only filled thing
@@ -282,12 +278,6 @@ textarea {
   background: var(--brand-off);
   border-color: var(--brand-off);
   color: var(--brand-off-ink);
-}
-
-.ctl--danger:hover:not(:disabled) {
-  border-color: var(--rev-text);
-  color: var(--rev-text);
-  background: transparent;
 }
 
 .ctl--small {
@@ -3058,7 +3048,10 @@ textarea {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: 200px;
+  /* Wide enough for "Claude subscription · plan default" without an ellipsis:
+     the provider is the part that answers "local, key, or plan?", and it is
+     the part a cap would cut first. */
+  max-width: 268px;
   /* Sized to stand next to Send rather than inside a header strip: the same
      4px radius and the same 32px as the button it sits against, because two
      adjacent controls at different heights read as a mistake. */
@@ -3287,14 +3280,6 @@ textarea {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-}
-
-.settings__foot {
-  padding: 11px 16px;
-  border-top: 1px solid var(--hair-soft);
-  font-size: 11.5px;
-  line-height: 1.55;
-  color: var(--legend-faint);
 }
 
 .provider-row {

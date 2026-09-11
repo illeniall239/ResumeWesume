@@ -49,7 +49,7 @@ export const PREVIEW_DOC: StudioDoc = {
       title: 'Senior Backend Engineer',
       company: 'Northwind Systems',
       location: 'Austin, TX',
-      years: 'Mar 2021 — Present',
+      years: 'Mar 2021 - Present',
       bullets: [
         {
           nid: 'blt_9c21x',
@@ -73,7 +73,7 @@ export const PREVIEW_DOC: StudioDoc = {
       title: 'Backend Engineer',
       company: 'Cobalt Analytics',
       location: 'Remote',
-      years: 'Jun 2017 — Feb 2021',
+      years: 'Jun 2017 - Feb 2021',
       bullets: [
         {
           nid: 'blt_4v0hs',
@@ -93,7 +93,7 @@ export const PREVIEW_DOC: StudioDoc = {
       nid: 'edu_5h1nv',
       institution: 'University of Texas at Austin',
       degree: 'B.S. Computer Science',
-      years: '2013 — 2017',
+      years: '2013 - 2017',
       detail: null,
     },
   ],

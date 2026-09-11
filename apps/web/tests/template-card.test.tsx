@@ -7,10 +7,10 @@
  * `DocumentFlow`, "the gallery card, which renders one continuous flow,
  * advertised a layout the editor could not produce."
  *
- * These pin the two halves of the promise. The arrangement: a template with a
- * rail draws one, a single-column template does not. And the claim the gallery
- * makes in as many words -- that every template holds the same words in the
- * same order, so the text an ATS reads is identical whichever you pick.
+ * These pin what it promises. Every template is a single column, so no card
+ * may draw or describe a rail; and the claim the gallery makes in as many
+ * words -- that every template holds the same words in the same order, so the
+ * text an ATS reads is identical whichever you pick.
  */
 
 import { render } from '@testing-library/react';
@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import DocumentFlow from '@/render/document-flow';
 import { PREVIEW_DOC } from '@/render/preview-doc';
 import { TEMPLATES } from '@/render/templates';
-import { RAIL_SECTIONS, TemplateCard } from '@/render/template-card';
+import { TemplateCard } from '@/render/template-card';
 
 /**
  * Fail the render on a React warning rather than letting it scroll past.
@@ -78,44 +78,24 @@ describe('every card', () => {
 });
 
 describe('the arrangement a card shows', () => {
-  it('draws a single column with no rail', () => {
-    const { container } = card('plain');
+  it('draws a single column, because every template is one', () => {
+    // The card used to sort sections into a rail and a main column for the
+    // one sidebar template. That template is a stack now and the arrangement
+    // is parked, so a card claiming a rail would be advertising something the
+    // gallery cannot give you -- which is the exact failure `globals.css`
+    // records from the last time a two-column template was offered.
+    for (const template of TEMPLATES) {
+      const { container } = render(<TemplateCard doc={PREVIEW_DOC} template={template} />);
 
-    expect(container.querySelector('.preview-columns__rail')).toBeNull();
+      expect(container.querySelector('.preview-columns')).toBeNull();
+      expect(template.layout).toBe('stack');
+    }
   });
 
-  it('draws the rail a sidebar template says it has', () => {
-    // Profile's note promises "skills and study in a side rail". Before this
-    // the card rendered one flowing column and the promise was just words.
-    const { container } = card('profile');
-    const rail = headings(container.querySelector('.preview-columns__rail'));
-    const main = headings(container.querySelector('.preview-columns__main'));
-
-    expect(rail.length).toBeGreaterThan(0);
-    expect(main.length).toBeGreaterThan(0);
-    for (const heading of rail) expect(RAIL_SECTIONS.has(heading)).toBe(true);
-    for (const heading of main) expect(RAIL_SECTIONS.has(heading)).toBe(false);
-  });
-
-  it('spans the header across both columns', () => {
-    const { container } = card('profile');
-    const header = container.querySelector('.flow__header');
-
-    expect(header).not.toBeNull();
-    expect(header!.closest('.preview-columns__rail')).toBeNull();
-    expect(header!.closest('.preview-columns__main')).toBeNull();
-  });
-
-  it('loses no section to the split', () => {
-    // A card that quietly drops a section advertises a layout that eats one.
-    const stacked = headings(card('plain').container);
-    const { container } = card('profile');
-    const split = [
-      ...headings(container.querySelector('.preview-columns__rail')),
-      ...headings(container.querySelector('.preview-columns__main')),
-    ];
-
-    expect([...split].sort()).toEqual([...stacked].sort());
+  it('promises no side rail in any note', () => {
+    for (const template of TEMPLATES) {
+      expect(template.note.toLowerCase()).not.toContain('rail');
+    }
   });
 });
 

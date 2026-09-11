@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from studio.config import settings
-from studio.llm.factory import BackendFactory, health
+from studio.llm.factory import BackendFactory, default_config, health
 from studio.persistence.providers import ProviderStore
 from studio.persistence.repo import DocumentRepo
 from studio.routers import (
@@ -72,10 +72,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.imports = TurnRegistry()
     app.state.backends = BackendFactory()
 
+    # What the first turn will actually run on, not what .env says. With a
+    # Claude login on the machine the two differ, and this line read
+    # `provider=ollama` above turns that were answering on the subscription --
+    # so the one place a person looks to see what the app is using named the
+    # one thing it was not. A saved selection in Settings overrides this, and
+    # the picker in the app says which is in force.
+    default = default_config()
     logger.info(
-        "Studio API ready (provider=%s model=%s)",
-        settings.llm_provider,
-        settings.llm_model,
+        "Studio API ready. Default model: %s/%s%s",
+        default.provider,
+        default.model,
+        " (Claude login on this machine)" if default.provider == "claude_code" else " (from .env)",
     )
     try:
         yield

@@ -537,8 +537,12 @@ export const useStudio = create<StudioState>((set, get) => ({
   },
 
   clearDrafts() {
-    if (!get().drafts.size) return;
-    set({ drafts: new Map() });
+    // Locks go with them. Both say "a call is writing here", so one outliving
+    // the other means either text nobody can see the source of, or a node the
+    // user cannot type into with nothing writing to it -- and the second is
+    // the worse half, because it looks like the editor is broken.
+    if (!get().drafts.size && !get().locked.size) return;
+    set({ drafts: new Map(), locked: new Set() });
   },
 
   clearChanged() {

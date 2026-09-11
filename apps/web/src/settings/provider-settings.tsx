@@ -221,7 +221,7 @@ export function ProviderSettings({ onClose }: { onClose: () => void }) {
 
         <p className="settings__intro">
           Keys are stored on this machine and sent only to the provider they
-          belong to. They are never shown again once saved — the app keeps only
+          belong to. They are never shown again once saved; the app keeps only
           the last four characters so you can tell which key is installed.
         </p>
 

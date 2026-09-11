@@ -340,3 +340,76 @@ describe('inserting a node the server would have completed', () => {
     ).not.toThrow();
   });
 });
+
+describe('a section that has content but no row in the order', () => {
+  /**
+   * `add_section` creates a custom section and, in the same batch, the
+   * `set_section` that positions it. The server mints the row when it meets
+   * that op. This mirror used to return the document untouched instead, so for
+   * the length of the turn the client held a section the order had never heard
+   * of -- and both renderers draw one of those in a tail after everything the
+   * order accounts for.
+   *
+   * The visible cost: asked for Certifications after Education, the page showed
+   * it dead last while the server's copy had it in the right place, and the two
+   * only agreed once the turn's document arrived. An optimistic edit that
+   * disagrees with the server is worse than no optimistic edit.
+   */
+  function withCustom(): StudioDoc {
+    const start = doc();
+    return {
+      ...start,
+      custom: [
+        {
+          nid: 'cst_aaaaa',
+          key: 'certifications',
+          label: 'Certifications',
+          kind: 'stringList',
+          text: null,
+          items: [],
+          strings: [{ nid: 'skl_ccccc', text: 'IBM Data Analysis', source: 'user' }],
+        },
+      ] as StudioDoc['custom'],
+      sections: [
+        { key: 'summary', label: 'Summary', visible: true, order: 0 },
+        { key: 'education', label: 'Education', visible: true, order: 1 },
+      ],
+    };
+  }
+
+  it('mints the row rather than dropping the op', () => {
+    const after = applyOp(withCustom(), {
+      op: 'set_section',
+      key: 'certifications',
+      order: 1,
+    } as DocOp);
+
+    const row = after.sections.find((section) => section.key === 'certifications');
+    expect(row).toBeDefined();
+    expect(row?.order).toBe(1);
+    expect(row?.label).toBe('Certifications');
+  });
+
+  it('leaves a key that names nothing alone', () => {
+    // Not an invitation to invent sections: the content has to already exist.
+    const start = withCustom();
+    const after = applyOp(start, {
+      op: 'set_section',
+      key: 'publications',
+      order: 2,
+    } as DocOp);
+
+    expect(after.sections.map((section) => section.key)).toEqual(['summary', 'education']);
+  });
+
+  it('still updates a row that is already there', () => {
+    const after = applyOp(withCustom(), {
+      op: 'set_section',
+      key: 'education',
+      order: 5,
+    } as DocOp);
+
+    expect(after.sections.find((s) => s.key === 'education')?.order).toBe(5);
+    expect(after.sections).toHaveLength(2);
+  });
+});

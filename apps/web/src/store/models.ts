@@ -81,10 +81,25 @@ export function modelOf(selection: string | null): string | null {
   return cut > 0 ? selection.slice(cut + 1) : null;
 }
 
-/** How a selection reads in a one-line control: the model, not the pair. */
-export function shortLabel(selection: string | null, fallback: string): string {
-  const model = modelOf(selection ?? fallback);
-  return model ?? fallback;
+/**
+ * What is running, said so nobody has to guess.
+ *
+ * Provider first, in the words the settings dialog uses for it, then the
+ * model: "Claude subscription · plan default", "Ollama (local) · qwen3:14b".
+ * The old label was the model alone, which for the subscription's sentinel
+ * rendered as a model called `default` -- and a first-time user whose turns
+ * were running on their Claude login read that, and a terminal saying
+ * `provider=ollama`, and concluded the app had ignored the login. Which one
+ * of "local", "API key" and "subscription" is answering is the one fact the
+ * control exists to state.
+ */
+export function describe(effective: string | null, providers: ProviderInfo[]): string {
+  if (!effective) return 'No model';
+  const provider = providerOf(effective);
+  const model = modelOf(effective);
+  const label = providers.find((entry) => entry.id === provider)?.label ?? provider ?? '';
+  const shown = model === 'default' ? 'plan default' : (model ?? '');
+  return shown ? `${label} · ${shown}` : label;
 }
 
 export const useModels = create<ModelsState>((set, get) => ({

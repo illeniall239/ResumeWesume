@@ -1,15 +1,13 @@
-"""Conversion to and from Resume-Matcher's ``ResumeData`` shape.
+"""Reading Resume-Matcher's ``ResumeData`` shape into a document.
 
-Two reasons this exists rather than adopting the old shape outright:
+Parsers, and every résumé already in the wild, speak the old shape. This is
+where it becomes a ``StudioDoc``, and the only place node ids are created from
+nothing.
 
-*Import.* Parsers, and every resume already in the wild, speak the old shape.
-Minting ids on the way in is the only place ids need to be created from nothing.
-
-*Export.* The nine ported render templates and the PDF route consume
-``description``/``descriptionStyles`` parallel arrays. Rebuilding them here — at
-the boundary, from data that cannot be desynced — means the invariant that used
-to be defended in three separate layers is now enforced by construction and
-reconstructed once, at the edge.
+There was a ``to_resume_data`` beside it, written for render templates that
+were meant to consume the old parallel arrays. Nothing ever called it: the
+templates render from ``StudioDoc``, and the PDF prints the same page the
+browser shows. It went out with the ``GET /{id}/legacy`` route that exposed it.
 """
 
 from __future__ import annotations
@@ -207,109 +205,3 @@ def from_resume_data(data: dict[str, Any]) -> StudioDoc:
         custom=custom,
         sections=sections,
     )
-
-
-def _split_bullets(bullets: list[TextNode]) -> tuple[list[str], list[str]]:
-    """Rebuild the parallel arrays. Aligned by construction: same iteration."""
-    return [b.text for b in bullets], [b.style for b in bullets]
-
-
-def to_resume_data(doc: StudioDoc) -> dict[str, Any]:
-    """Render the old shape, for the ported templates and the PDF route."""
-    experience = []
-    for position, entry in enumerate(doc.experience, start=1):
-        description, styles = _split_bullets(entry.bullets)
-        experience.append(
-            {
-                "id": position,
-                "title": entry.title,
-                "company": entry.company,
-                "location": entry.location,
-                "years": entry.years,
-                "description": description,
-                "descriptionStyles": styles,
-            }
-        )
-
-    projects = []
-    for position, entry in enumerate(doc.projects, start=1):
-        description, styles = _split_bullets(entry.bullets)
-        projects.append(
-            {
-                "id": position,
-                "name": entry.name,
-                "role": entry.role,
-                "years": entry.years,
-                "github": entry.github,
-                "website": entry.website,
-                "description": description,
-                "descriptionStyles": styles,
-            }
-        )
-
-    education = [
-        {
-            "id": position,
-            "institution": entry.institution,
-            "degree": entry.degree,
-            "years": entry.years,
-            "description": entry.detail.text if entry.detail else "",
-        }
-        for position, entry in enumerate(doc.education, start=1)
-    ]
-
-    by_key = {group.key: [item.text for item in group.items] for group in doc.skills}
-    additional = {
-        "technicalSkills": by_key.get("technical", []),
-        "languages": by_key.get("languages", []),
-        "certificationsTraining": by_key.get("certifications", []),
-        "awards": by_key.get("awards", []),
-    }
-
-    # The way back out for a section we have no schema for. Without this the
-    # legacy shape was write-only for custom sections: `from_resume_data` read
-    # them and nothing ever wrote them, so any caller round-tripping a document
-    # through this payload dropped somebody's Publications on the floor.
-    custom_sections = {
-        section.key: {
-            "sectionType": section.kind,
-            "text": section.text.text if section.text else "",
-            "items": [
-                {
-                    "title": item.title,
-                    "subtitle": item.subtitle,
-                    "location": item.location,
-                    "years": item.years,
-                    **dict(
-                        zip(
-                            ("description", "descriptionStyles"),
-                            _split_bullets(item.bullets),
-                        )
-                    ),
-                }
-                for item in section.items
-            ],
-            "strings": [entry.text for entry in section.strings],
-        }
-        for section in doc.custom
-    }
-
-    return {
-        "personalInfo": doc.personal.model_dump(),
-        "summary": doc.summary.text if doc.summary else "",
-        "workExperience": experience,
-        "education": education,
-        "personalProjects": projects,
-        "additional": additional,
-        "customSections": custom_sections,
-        "sectionMeta": [
-            {
-                "id": meta.key,
-                "key": meta.key,
-                "displayName": meta.label,
-                "isVisible": meta.visible,
-                "order": meta.order,
-            }
-            for meta in doc.sections
-        ],
-    }

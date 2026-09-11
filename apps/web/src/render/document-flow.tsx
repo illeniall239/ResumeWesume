@@ -20,9 +20,11 @@ import type {
   CustomSectionNode,
   EducationNode,
   ExperienceNode,
+  ListDisplay,
   ProjectNode,
   SectionMeta,
   SkillGroup,
+  SkillItem,
   StudioDoc,
   TextBlockNode,
   TextNode,
@@ -114,12 +116,12 @@ export interface DocumentFlowProps {
 function classesFor(
   nid: string,
   changed?: ReadonlySet<string>,
-  locked?: ReadonlySet<string>,
+  isLocked?: boolean,
   unverified?: ReadonlySet<string>
 ): string {
   const parts = ['node'];
   if (changed?.has(nid)) parts.push('node--changed');
-  if (locked?.has(nid)) parts.push('node--locked');
+  if (isLocked) parts.push('node--locked');
   // Written by the assistant while the document was still a template, so the
   // words are invented rather than reported. Marked until the person says
   // otherwise -- the failure this exists to prevent is someone carrying a line
@@ -242,15 +244,18 @@ function Editable({
   onSplitLine?: (nid: string) => void;
   onRemoveLine?: (nid: string) => void;
 }) {
-  const isLocked = locked?.has(nid) ?? false;
-  const live = editable && !isLocked;
-
   // A tool call is writing here right now. Its text is shown in place of the
   // stored value so the words appear as they are typed -- and it is *only*
   // shown: `value` below is still what the document says, so a blur commits
   // the real text and a draft that never lands leaves nothing behind.
   const target = field ? `${nid}.${field}` : nid;
   const drafted = drafts?.get(target);
+  // Closed while the pen is in it, at whatever granularity the pen names.
+  // A field is addressed as `nid.field` and a text node by its id, which is
+  // exactly how a draft is keyed -- so the two agree by construction, and
+  // locking one field of an entry does not freeze the rest of it.
+  const isLocked = (locked?.has(target) || locked?.has(nid)) ?? false;
+  const live = editable && !isLocked;
   const shown = drafted ?? value;
   // An empty field shows what belongs in it whenever the document is being
   // worked on, not only while this particular run happens to be live. The hint
@@ -287,7 +292,7 @@ function Editable({
       // that assumes one node, one element.
       {...(field ? { 'data-field': `${nid}.${field}` } : { 'data-nid': nid })}
       className={[
-        classesFor(nid, changed, locked, unverified),
+        classesFor(nid, changed, isLocked, unverified),
         className,
         hinted ? 'editable' : null,
         drafted !== undefined ? 'node--drafting' : null,
@@ -594,16 +599,28 @@ function ProjectBlock({ entry, ...rest }: { entry: ProjectNode } & DocumentFlowP
 }
 
 /**
- * Whether a group's entries have to be stacked rather than comma-joined.
+ * Whether a run of short items is stacked rather than comma-joined.
  *
  * A skills group is a run of short tokens and reads best as one dense line —
  * that is also the shape an ATS parses most reliably. Certifications and awards
  * are not that: the entries are long and carry commas of their own, so joining
  * them with ", " produces a run of text where the boundary between two
  * credentials is indistinguishable from the comma inside one of them.
+ *
+ * That rule is a good default and was the *only* rule, which made the shape of
+ * a section a property of its words rather than a choice. "List my technical
+ * skills as bullets" could not be honoured at all — the setting did not exist,
+ * so the assistant reported the product could not do it, and the only way to
+ * get a list was to write an item long enough to trip the length test.
+ *
+ * A document that says which it wants is now obeyed. The heuristic is what
+ * `auto` means, and stays here alone: the server does not second-guess it,
+ * because two copies of one rule is two rules.
  */
-function mustStack(group: SkillGroup): boolean {
-  return group.items.some((item) => item.text.includes(',') || item.text.length > 48);
+function stacked(items: SkillItem[], display?: ListDisplay): boolean {
+  if (display === 'list') return true;
+  if (display === 'inline') return false;
+  return items.some((item) => item.text.includes(',') || item.text.length > 48);
 }
 
 function SkillsBlock({
@@ -641,7 +658,7 @@ function SkillsBlock({
     <>
       {groups.map((group) => {
         const field = fieldsOf(group.nid, rest);
-        return mustStack(group) ? (
+        return stacked(group.items, group.display) ? (
           <div
             key={group.nid}
             className="skills__row"
@@ -727,27 +744,54 @@ function CustomBlock({ section, ...rest }: { section: CustomSectionNode } & Docu
           </Fragment>
         );
       })}
-      {section.strings.length > 0 && (
-        <div className="skills__row">
-          {section.strings.map((entry, index) => (
-            <Fragment key={entry.nid}>
-              {index > 0 ? ', ' : ''}
-              <Editable
-                nid={entry.nid}
-                value={entry.text}
-                changed={rest.changed}
-                locked={rest.locked}
-                unverified={rest.unverified}
-                drafts={rest.drafts}
-                editable={rest.editable}
-                onEditText={rest.onEditText}
-                onFocusNode={rest.onFocusNode}
-              />
-            </Fragment>
-          ))}
-        </div>
-      )}
+      {section.strings.length > 0 && <StringList section={section} {...rest} />}
     </Section>
+  );
+}
+
+/**
+ * The `strings` of a custom section: certifications, awards, languages.
+ *
+ * The same widget as a skills group and drawn by the same rules, which it was
+ * not — this was comma-joined with no alternative, so a Certifications section
+ * got exactly the run of text `stacked` exists to prevent, and no setting could
+ * change it. One credential ending and the next beginning was indistinguishable
+ * from the comma inside one of them.
+ */
+function StringList({
+  section,
+  ...rest
+}: { section: CustomSectionNode } & Omit<DocumentFlowProps, 'doc'>) {
+  const entry = (line: SkillItem, as?: 'li') => (
+    <Editable
+      as={as}
+      nid={line.nid}
+      value={line.text}
+      changed={rest.changed}
+      locked={rest.locked}
+      unverified={rest.unverified}
+      drafts={rest.drafts}
+      editable={rest.editable}
+      onEditText={rest.onEditText}
+      onFocusNode={rest.onFocusNode}
+    />
+  );
+
+  return stacked(section.strings, section.display) ? (
+    <ul className="skills__list">
+      {section.strings.map((line) => (
+        <Fragment key={line.nid}>{entry(line, 'li')}</Fragment>
+      ))}
+    </ul>
+  ) : (
+    <div className="skills__row">
+      {section.strings.map((line, index) => (
+        <Fragment key={line.nid}>
+          {index > 0 ? ', ' : ''}
+          {entry(line)}
+        </Fragment>
+      ))}
+    </div>
   );
 }
 
