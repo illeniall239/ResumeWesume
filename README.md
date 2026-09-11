@@ -144,24 +144,6 @@ models/                 Ollama recipes with a context size that fits a turn
 scripts/dev.py          the one command that runs the whole thing
 ```
 
-## Verified against a real local model
-
-A two-bullet rewrite, qwen3:14b on Ollama, 55 seconds:
-
-```
-tool_start     rewrite_text (tier A)
-tool_args      {"nid": "blt_3sy3b", "value": "Improved performance of the
-               payments ledger", "expect": "Worked on the payments ledger…"}
-patch_applied  v2 ['blt_3sy3b']
-tool_start     rewrite_text (tier A)
-patch_applied  v3 ['blt_hc9a7']
-done           status=ok applied=2 rejected=0
-```
-
-Two separate patches, so the UI animates them one after another rather than
-jumping. Name, email, employer, job title, dates, skills and summary all
-unchanged.
-
 ## Bringing your own resume
 
 Upload a PDF and it is read section by section, with progress streaming as each
