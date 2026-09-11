@@ -32,10 +32,8 @@ You need [uv](https://docs.astral.sh/uv/) and [Node 20+](https://nodejs.org).
 If either is missing the script says which and where to get it, rather than
 failing somewhere further in.
 
-The API and the web app are two processes because PDF export runs *backwards*
-through the stack -- the API drives headless Chromium at the web app's own
-`/print/<id>` route -- so one process cannot do it. The script runs two and
-prefixes their logs so you can tell them apart.
+The API and the web app are two processes, and the script prefixes their logs
+so you can tell them apart.
 
 <details>
 <summary>Running the two by hand, or on ports of your own</summary>
@@ -65,7 +63,7 @@ which Windows does not, unless you installed it.
 
 **The assistant needs a model.** If you are signed in to Claude Code on this
 machine, it uses that: no key, no configuration, drawing on your Claude plan
-rather than billing an API key. Nothing to do; the settings dialog will say
+rather than billing an API key. Nothing to do; the settings dialog will show
 the Claude subscription as ready.
 
 Otherwise it runs locally, and the model needs tool calling and a context large
