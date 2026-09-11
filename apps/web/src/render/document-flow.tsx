@@ -639,6 +639,12 @@ function SkillsBlock({
       editable={rest.editable}
       onEditText={rest.onEditText}
       onFocusNode={rest.onFocusNode}
+      // The comma between skills is a separator the renderer draws, not text a
+      // caret can reach -- so removing a skill is how its comma goes. Backspace
+      // on an emptied skill removes the item; Enter adds one. The same gesture
+      // a bullet has, wired to the same handlers.
+      onSplitLine={rest.onSplitLine}
+      onRemoveLine={rest.onRemoveLine}
     />
   );
 

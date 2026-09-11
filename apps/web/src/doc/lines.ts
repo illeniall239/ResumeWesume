@@ -24,6 +24,10 @@ interface Owner {
   /** The nid `insert_node` addresses: the entry whose `bullets` these are. */
   parent: string;
   lines: { nid: string }[];
+  /** What a new line here is. A bullet carries a style; a skill carries a
+   *  source, and the two are different node kinds -- so an add has to know
+   *  which list it is adding to. */
+  kind: 'bullet' | 'skill';
 }
 
 /**
@@ -39,20 +43,23 @@ function ownerOf(doc: StudioDoc | null, nid: string): Owner | null {
 
   const lists: Owner[] = [];
   for (const entry of doc.experience ?? []) {
-    lists.push({ parent: entry.nid, lines: entry.bullets ?? [] });
+    lists.push({ parent: entry.nid, lines: entry.bullets ?? [], kind: 'bullet' });
   }
   for (const entry of doc.projects ?? []) {
-    lists.push({ parent: entry.nid, lines: entry.bullets ?? [] });
+    lists.push({ parent: entry.nid, lines: entry.bullets ?? [], kind: 'bullet' });
   }
   for (const section of doc.custom ?? []) {
     const entries = (section as { entries?: { nid: string; bullets?: { nid: string }[] }[] })
       .entries;
     for (const entry of entries ?? []) {
-      lists.push({ parent: entry.nid, lines: entry.bullets ?? [] });
+      lists.push({ parent: entry.nid, lines: entry.bullets ?? [], kind: 'bullet' });
     }
   }
+  for (const group of doc.skills ?? []) {
+    lists.push({ parent: group.nid, lines: group.items ?? [], kind: 'skill' });
+  }
   for (const block of doc.blocks ?? []) {
-    lists.push({ parent: block.nid, lines: block.lines ?? [] });
+    lists.push({ parent: block.nid, lines: block.lines ?? [], kind: 'bullet' });
   }
 
   return lists.find((list) => list.lines.some((line) => line.nid === nid)) ?? null;
@@ -76,16 +83,15 @@ export function addLineAfter(doc: StudioDoc | null, after: string): AddedLine | 
   if (!owner) return null;
 
   const at = owner.lines.findIndex((line) => line.nid === after);
-  const nid = mint('blt');
+  const nid = mint(owner.kind === 'skill' ? 'skl' : 'blt');
+  const node =
+    owner.kind === 'skill'
+      ? { nid, text: '', source: 'user' }
+      : { nid, text: '', style: 'bullet' };
   return {
     nid,
     ops: [
-      {
-        op: 'insert_node',
-        parent: owner.parent,
-        index: at + 1,
-        node: { nid, text: '', style: 'bullet' },
-      } as DocOp,
+      { op: 'insert_node', parent: owner.parent, index: at + 1, node } as DocOp,
     ],
   };
 }
