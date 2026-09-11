@@ -10,25 +10,13 @@ time.
 
 ![How ResumeWesume fits together](docs/architecture.png)
 
-## Status
+## See it work
 
-**Working end to end on a local model.** Ask for a change and watch each edit
-land in the document while the model is still talking. Verified against
-qwen3:14b via Ollama: a two-bullet rewrite applied in 55s as two separate
-patches, with nothing else in the document drifting.
+![Three asks on a real résumé, each edit landing on the page as it is made](docs/demo.gif)
 
-| Piece | State |
-|---|---|
-| Node identity, document schema | done |
-| The 10 primitive ops + `apply_ops` gates | done |
-| Legacy import/export | done |
-| Persistence with version/ETag concurrency | done |
-| API, PDF export, live document, inline editing | done |
-| Generated TypeScript contract | done |
-| Agent loop, tools, streaming | done |
-| Intent-scoped drift guards, grounding | done |
-| Chat pane with live incremental edits | done |
-| PDF import: parse, review, edit | done |
+A summary rewritten to lead with what was shipped, a Projects section typed in
+and placed between Education and Skills, and a skills list reordered with one
+swapped in. Then a real PDF out.
 
 ## Running it
 
