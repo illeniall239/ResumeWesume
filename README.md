@@ -226,3 +226,7 @@ it is, so running the same file twice does nothing the second time, and a
 restore after deleting one résumé by mistake brings back that one and steps
 over the rest. History is not included: a restored résumé starts with nothing
 to undo, and its words, layout, images and target posting are whole.
+
+## License
+
+[MIT](LICENSE). Use it, fork it, ship it; keep the copyright line.
